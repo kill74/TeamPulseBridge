@@ -322,7 +322,7 @@ go test -timeout 60s ./...
 go test -v -timeout 10s -run TestPubSubPublisherIntegration/PublishMessage ./internal/queue
 
 # Check emulator connectivity
-curl -v http://localhost:8085/v1/projects/test-project
+curl -v http://localhost:8085/v1/projects/test-project/topics
 ```
 
 ### Message Not Received

@@ -48,7 +48,7 @@ jobs:
           # Wait for emulator to be ready
           ready=0
           for i in {1..30}; do
-            if curl -f http://localhost:8085/v1/projects/test-project 2>/dev/null; then
+            if curl -f http://localhost:8085/v1/projects/test-project/topics 2>/dev/null; then
               echo "Pub/Sub Emulator is ready"
               ready=1
               break
@@ -120,7 +120,7 @@ jobs:
           done
 
           # Verify Pub/Sub emulator is accessible
-          curl -v http://localhost:8085/v1/projects/test-project || exit 1
+          curl -v http://localhost:8085/v1/projects/test-project/topics || exit 1
 
           # Cleanup
           docker compose -f docker-compose.integration.yml down
@@ -154,7 +154,7 @@ jobs:
           # Wait for emulator
           ready=0
           for i in {1..30}; do
-            if curl -f http://localhost:8085/v1/projects/test-project 2>/dev/null; then
+            if curl -f http://localhost:8085/v1/projects/test-project/topics 2>/dev/null; then
               echo "Pub/Sub Emulator is ready"
               ready=1
               break
