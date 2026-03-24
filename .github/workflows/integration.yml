@@ -1,0 +1,174 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/ingestion-gateway/**'
+      - '.github/workflows/integration.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/ingestion-gateway/**'
+      - '.github/workflows/integration.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-tests:
+    name: Integration Tests Against Pub/Sub Emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+          cache: true
+          cache-dependency-path: services/ingestion-gateway/go.sum
+
+      - name: Start Pub/Sub Emulator
+        run: |
+          docker run -d \
+            --name pubsub-emulator \
+            -p 8085:8085 \
+            google/cloud-sdk:emulators \
+            gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 &
+
+          # Wait for emulator to be ready
+          for i in {1..30}; do
+            if curl -f http://localhost:8085/v1/projects/test-project 2>/dev/null; then
+              echo "Pub/Sub Emulator is ready"
+              exit 0
+            fi
+            echo "Waiting for emulator... ($i/30)"
+            sleep 1
+          done
+
+          echo "Pub/Sub Emulator failed to start"
+          docker logs pubsub-emulator
+          exit 1
+
+      - name: Run Integration Tests
+        working-directory: services/ingestion-gateway
+        env:
+          PUBSUB_EMULATOR_HOST: localhost:8085
+          PUBSUB_PROJECT_ID: test-project
+        run: |
+          go test -v -race -coverpkg=./... -coverprofile=coverage.out -timeout 30s ./...
+
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./services/ingestion-gateway/coverage.out
+          flags: integration-tests
+          fail_ci_if_error: false
+
+      - name: Stop Pub/Sub Emulator
+        if: always()
+        run: docker stop pubsub-emulator || true
+
+  docker-compose-integration:
+    name: Docker Compose Integration Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run Docker Compose Integration Tests
+        working-directory: services/ingestion-gateway
+        run: |
+          # Build and start services
+          docker-compose -f docker-compose.integration.yml up -d --build
+
+          # Wait for services to be ready
+          docker-compose -f docker-compose.integration.yml ps
+
+          # Give services time to stabilize
+          sleep 5
+
+          # Run health check
+          for i in {1..20}; do
+            if curl -f http://localhost:8080/healthz 2>/dev/null; then
+              echo "Service is healthy"
+              break
+            fi
+            echo "Waiting for service... ($i/20)"
+            sleep 1
+          done
+
+          # Verify Pub/Sub emulator is accessible
+          curl -v http://localhost:8085/v1/projects/test-project || exit 1
+
+          # Cleanup
+          docker-compose -f docker-compose.integration.yml down
+
+  benchmark:
+    name: Benchmark Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+          cache: true
+          cache-dependency-path: services/ingestion-gateway/go.sum
+
+      - name: Start Pub/Sub Emulator
+        run: |
+          docker run -d \
+            --name pubsub-emulator \
+            -p 8085:8085 \
+            google/cloud-sdk:emulators \
+            gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 &
+
+          # Wait for emulator
+          for i in {1..30}; do
+            if curl -f http://localhost:8085/v1/projects/test-project 2>/dev/null; then
+              echo "Pub/Sub Emulator is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Pub/Sub Emulator failed to start"
+          exit 1
+
+      - name: Run Benchmarks
+        working-directory: services/ingestion-gateway
+        env:
+          PUBSUB_EMULATOR_HOST: localhost:8085
+          PUBSUB_PROJECT_ID: test-project
+        run: |
+          go test -v -run=^$ -bench=. -benchmem -benchtime=3s ./internal/handlers ./internal/queue
+
+      - name: Stop Pub/Sub Emulator
+        if: always()
+        run: docker stop pubsub-emulator || true

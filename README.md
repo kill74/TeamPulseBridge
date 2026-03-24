@@ -45,6 +45,10 @@ flowchart LR
 ```text
 .
 ├── docs/                          # RFC, ADRs, and planning artifacts
+├── infrastructure/                # Terraform IaC for GCP (staging/prod)
+│   ├── terraform/                 # Terraform modules and root config
+│   ├── scripts/                   # Deployment scripts
+│   └── docs/                      # Infrastructure documentation
 ├── services/
 │   └── ingestion-gateway/         # Go webhook ingestion service
 ├── deploy/
@@ -100,6 +104,33 @@ Then open:
 - `GET /metrics`
 - `GET /admin/configz`
 
+## Infrastructure as Code
+
+Production deployments managed via Terraform with complete GCP infrastructure:
+
+- **GKE Cluster**: Auto-scaling Kubernetes with regional HA (prod)
+- **Cloud SQL**: PostgreSQL with automated backups and pointin-time recovery
+- **Networking**: VPC with Cloud Armor, firewalls, and private service connections
+- **Monitoring**: Cloud Monitoring dashboards, uptime checks, and alerting
+- **Security**: Workload Identity, RBAC, network policies, and service accounts
+- **Storage**: GCS buckets with lifecycle management and encryption
+
+**Deploy staging environment:**
+
+```bash
+make infra-plan-staging
+make infra-deploy-staging
+```
+
+**Deploy production environment (requires confirmation):**
+
+```bash
+make infra-plan-prod
+make infra-deploy-prod
+```
+
+See [infrastructure/README.md](infrastructure/README.md) for complete setup guide.
+
 ## Security Defaults
 
 - HMAC/token verification for all webhook providers
@@ -145,8 +176,11 @@ make help
 ## Roadmap
 
 - Add integration tests against Pub/Sub emulator
-- Add Terraform modules for staging/prod environments
+- ✅ Add Terraform modules for staging/prod environments (complete)
 - Add contract tests for webhook payload compatibility
+- Implement GitOps workflow (ArgoCD or Flux)
+- Multi-region active-active deployment
+- Custom metrics and SLO dashboards
 
 ## License
 

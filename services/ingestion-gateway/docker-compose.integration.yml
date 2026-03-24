@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # Google Cloud Pub/Sub Emulator for testing
+  pubsub-emulator:
+    image: google/cloud-sdk:emulators
+    container_name: teampulse-pubsub-emulator
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
+    ports:
+      - '8085:8085'
+    environment:
+      PUBSUB_PROJECT_ID: test-project
+    healthcheck:
+      test:
+        ['CMD', 'curl', '-f', 'http://localhost:8085/v1/projects/test-project']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Optional: Service for testing against emulator
+  integration-test:
+    build:
+      context: ../../services/ingestion-gateway
+      dockerfile: Dockerfile
+    container_name: teampulse-integration-test
+    environment:
+      PORT: 8080
+      ENVIRONMENT: integration-test
+      QUEUE_BACKEND: pubsub
+      PUBSUB_PROJECT_ID: test-project
+      PUBSUB_TOPIC_ID: test-webhook-topic
+      REQUIRE_SECRETS: 'false'
+      ADMIN_AUTH_ENABLED: 'false'
+      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+    ports:
+      - '8080:8080'
+    depends_on:
+      pubsub-emulator:
+        condition: service_healthy
+    volumes:
+      - ../../services/ingestion-gateway:/app
+    command: go run ./cmd/server
+
+networks:
+  default:
+    name: teampulse-integration-network

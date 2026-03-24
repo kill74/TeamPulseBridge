@@ -23,10 +23,18 @@ coverage.out
 # Docker
 *.pid
 
-# Terraform (future)
+# Terraform
 .terraform/
+.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
+*.tfplan
+tfplan
+*.backup
+backend.conf.generated
+encryption-key-*.txt
+.terraformrc
+
 
 # Generated
 tmp/
