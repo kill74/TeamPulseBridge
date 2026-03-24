@@ -22,12 +22,14 @@ cd scripts
 ### 3. Deploy Production
 
 ```bash
-./deploy.sh prod --auto-approve
+./deploy.sh prod
 ```
+
+Production should require manual confirmation in normal workflows.
 
 ## Structure
 
-```
+```text
 terraform/
 ├── main.tf                  Root module definitions
 ├── variables.tf            Input variables with validation
@@ -87,7 +89,14 @@ After deployment, outputs are saved to `/tmp/outputs-{env}.json`:
 - Terraform >= 1.0
 - Google Cloud SDK
 - kubectl
-- gcloud authentication with Project Editor role
+- gcloud authentication with least-privilege deployment role
+
+Recommended before first apply:
+
+```bash
+terraform fmt -recursive
+terraform validate
+```
 
 ## Security Features
 
@@ -98,6 +107,42 @@ After deployment, outputs are saved to `/tmp/outputs-{env}.json`:
 ✅ Encryption at rest (GCS + SQL)
 ✅ Automated daily backups
 ✅ IAM least-privilege roles
+
+## Deployment Workflow (Recommended)
+
+Use this flow to reduce accidental drift and unsafe changes:
+
+1. Run `./init-backend.sh <env> ...` once per environment.
+2. Run `terraform fmt -recursive` and `terraform validate`.
+3. Run `./deploy.sh <env>` and review plan output carefully.
+4. Apply only after review/approval.
+5. Capture outputs and update dependent systems.
+
+For production, require peer review and change window before apply.
+
+## Day-2 Operations
+
+- Drift detection: run scheduled `terraform plan` in CI with no apply.
+- State hygiene: do not edit remote state manually.
+- Backup checks: periodically validate restore runbooks.
+- Cost checks: compare monthly deltas before/after major applies.
+
+## Failure Domains and Recovery
+
+- Staging favors cost and faster iteration.
+- Production favors HA and higher retention.
+- Keep `destroy.sh` restricted to approved operators and non-prod by default.
+
+## Common Commands
+
+```bash
+# Plan staging
+cd terraform
+terraform plan -var-file=environments/staging/terraform.tfvars
+
+# Plan prod
+terraform plan -var-file=environments/prod/terraform.tfvars
+```
 
 ## Monitoring
 

@@ -8,8 +8,7 @@ services:
     profiles:
       - pubsub-local
     healthcheck:
-      test:
-        ['CMD', 'curl', '-f', 'http://localhost:8085/v1/projects/test-project']
+      test: ['CMD-SHELL', 'bash -c "echo > /dev/tcp/127.0.0.1/8085"']
       interval: 5s
       timeout: 2s
       retries: 10

@@ -12,18 +12,18 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
-	"cloud.google.com/go/pubsub"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/guilhermesales/TeamPulseBridge/services/ingestion-gateway/internal/config"
-	"github.com/guilhermesales/TeamPulseBridge/services/ingestion-gateway/internal/handlers"
-	"github.com/guilhermesales/TeamPulseBridge/services/ingestion-gateway/internal/httpx"
-	"github.com/guilhermesales/TeamPulseBridge/services/ingestion-gateway/internal/queue"
-	"github.com/guilhermesales/TeamPulseBridge/services/ingestion-gateway/internal/testhelpers/pubsubtest"
+	"teampulsebridge/services/ingestion-gateway/internal/config"
+	"teampulsebridge/services/ingestion-gateway/internal/handlers"
+	"teampulsebridge/services/ingestion-gateway/internal/httpx"
+	"teampulsebridge/services/ingestion-gateway/internal/queue"
+	"teampulsebridge/services/ingestion-gateway/internal/testhelpers/pubsubtest"
 )
 
 // TestWebhookToPubSubIntegration tests the full flow from webhook ingestion to Pub/Sub.
@@ -31,6 +31,9 @@ import (
 func TestWebhookToPubSubIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("PUBSUB_EMULATOR_HOST") == "" {
+		t.Skip("skipping integration test: PUBSUB_EMULATOR_HOST is not set")
 	}
 
 	cfg := pubsubtest.DefaultEmulatorConfig()
@@ -75,8 +78,8 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		slackSig := fmt.Sprintf("v0=%s", hex.EncodeToString(signingSecret.Sum(nil)))
 
 		// Create webhook handler
-		metricsFn := func(source string, success bool, statusCode int) {}
-		slackHandler := handlers.NewSlackHandler(pubsubPublisher, webhookSecret, logger, metricsFn)
+		metricsFn := func(ctx context.Context, source string, status int) {}
+		slackHandler := handlers.NewWebhookHandler(config.Config{SlackSigningSecret: webhookSecret}, pubsubPublisher, logger, metricsFn)
 
 		// Act - make webhook request
 		req := httptest.NewRequest("POST", "/webhooks/slack", bytes.NewReader(body))
@@ -85,7 +88,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 
 		w := httptest.NewRecorder()
-		slackHandler.ServeHTTP(w, req)
+		http.HandlerFunc(slackHandler.HandleSlack).ServeHTTP(w, req)
 
 		// Assert webhook response
 		assert.Equal(t, http.StatusOK, w.Code, "handler should return 200")
@@ -139,8 +142,8 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		githubSig := fmt.Sprintf("sha256=%s", hex.EncodeToString(sig.Sum(nil)))
 
 		// Create webhook handler
-		metricsFn := func(source string, success bool, statusCode int) {}
-		githubHandler := handlers.NewGitHubHandler(pubsubPublisher, webhookSecret, logger, metricsFn)
+		metricsFn := func(ctx context.Context, source string, status int) {}
+		githubHandler := handlers.NewWebhookHandler(config.Config{GitHubWebhookSecret: webhookSecret}, pubsubPublisher, logger, metricsFn)
 
 		// Act
 		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(body))
@@ -148,7 +151,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 
 		w := httptest.NewRecorder()
-		githubHandler.ServeHTTP(w, req)
+		http.HandlerFunc(githubHandler.HandleGitHub).ServeHTTP(w, req)
 
 		// Assert
 		assert.Equal(t, http.StatusAccepted, w.Code, "handler should return 202")
@@ -183,8 +186,8 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		incorrectSig := "sha256=0000000000000000000000000000000000000000000000000000000000000000"
 
 		// Create handler
-		metricsFn := func(source string, success bool, statusCode int) {}
-		githubHandler := handlers.NewGitHubHandler(pubsubPublisher, webhookSecret, logger, metricsFn)
+		metricsFn := func(ctx context.Context, source string, status int) {}
+		githubHandler := handlers.NewWebhookHandler(config.Config{GitHubWebhookSecret: webhookSecret}, pubsubPublisher, logger, metricsFn)
 
 		// Act
 		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(body))
@@ -192,7 +195,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 
 		w := httptest.NewRecorder()
-		githubHandler.ServeHTTP(w, req)
+		http.HandlerFunc(githubHandler.HandleGitHub).ServeHTTP(w, req)
 
 		// Assert - should reject with 403
 		assert.Equal(t, http.StatusForbidden, w.Code, "handler should reject invalid signature")
@@ -210,8 +213,8 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 
 		// Arrange
 		webhookSecret := "test-github-secret"
-		metricsFn := func(source string, success bool, statusCode int) {}
-		githubHandler := handlers.NewGitHubHandler(pubsubPublisher, webhookSecret, logger, metricsFn)
+		metricsFn := func(ctx context.Context, source string, status int) {}
+		githubHandler := handlers.NewWebhookHandler(config.Config{GitHubWebhookSecret: webhookSecret}, pubsubPublisher, logger, metricsFn)
 
 		// Act - send multiple webhooks
 		for i := 0; i < 5; i++ {
@@ -229,7 +232,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 			req.Header.Set("X-Hub-Signature-256", githubSig)
 
 			w := httptest.NewRecorder()
-			githubHandler.ServeHTTP(w, req)
+			http.HandlerFunc(githubHandler.HandleGitHub).ServeHTTP(w, req)
 
 			assert.Equal(t, http.StatusAccepted, w.Code)
 		}
@@ -264,8 +267,8 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 
 		// Arrange
 		webhookSecret := "test-github-secret"
-		metricsFn := func(source string, success bool, statusCode int) {}
-		githubHandler := handlers.NewGitHubHandler(asyncPublisher, webhookSecret, logger, metricsFn)
+		metricsFn := func(ctx context.Context, source string, status int) {}
+		githubHandler := handlers.NewWebhookHandler(config.Config{GitHubWebhookSecret: webhookSecret}, asyncPublisher, logger, metricsFn)
 
 		// Act - send webhook with async publisher
 		payload := map[string]interface{}{
@@ -282,7 +285,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		req.Header.Set("X-Hub-Signature-256", githubSig)
 
 		w := httptest.NewRecorder()
-		githubHandler.ServeHTTP(w, req)
+		http.HandlerFunc(githubHandler.HandleGitHub).ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusAccepted, w.Code)
 
@@ -301,6 +304,9 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 func TestWebhookWithMiddleware(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("PUBSUB_EMULATOR_HOST") == "" {
+		t.Skip("skipping integration test: PUBSUB_EMULATOR_HOST is not set")
 	}
 
 	cfg := pubsubtest.DefaultEmulatorConfig()
@@ -333,12 +339,15 @@ func TestWebhookWithMiddleware(t *testing.T) {
 		sig.Write(payload)
 		githubSig := fmt.Sprintf("sha256=%s", hex.EncodeToString(sig.Sum(nil)))
 
-		metricsFn := func(source string, success bool, statusCode int) {}
-		handler := handlers.NewGitHubHandler(pubsubPublisher, webhookSecret, logger, metricsFn)
+		metricsFn := func(ctx context.Context, source string, status int) {}
+		handler := handlers.NewWebhookHandler(config.Config{GitHubWebhookSecret: webhookSecret}, pubsubPublisher, logger, metricsFn)
 
 		// Wrap with middleware
-		wrapped := httpx.RequestIDMiddleware(handler)
-		wrapped = httpx.PanicRecoveryMiddleware(wrapped)
+		wrapped := httpx.Chain(
+			http.HandlerFunc(handler.HandleGitHub),
+			httpx.RequestID(),
+			httpx.Recoverer(logger),
+		)
 
 		// Act
 		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(payload))
@@ -367,6 +376,10 @@ func TestWebhookWithMiddleware(t *testing.T) {
 
 // BenchmarkWebhookToPubSub benchmarks the end-to-end webhook to Pub/Sub flow.
 func BenchmarkWebhookToPubSub(b *testing.B) {
+	if os.Getenv("PUBSUB_EMULATOR_HOST") == "" {
+		b.Skip("skipping integration benchmark: PUBSUB_EMULATOR_HOST is not set")
+	}
+
 	cfg := pubsubtest.DefaultEmulatorConfig()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -382,8 +395,8 @@ func BenchmarkWebhookToPubSub(b *testing.B) {
 	pubsubPublisher := queue.NewPubSubPublisherDirect(pubsubClient, topic, logger)
 
 	webhookSecret := "test-secret"
-	metricsFn := func(source string, success bool, statusCode int) {}
-	githubHandler := handlers.NewGitHubHandler(pubsubPublisher, webhookSecret, logger, metricsFn)
+	metricsFn := func(ctx context.Context, source string, status int) {}
+	githubHandler := handlers.NewWebhookHandler(config.Config{GitHubWebhookSecret: webhookSecret}, pubsubPublisher, logger, metricsFn)
 
 	b.ResetTimer()
 
@@ -398,6 +411,6 @@ func BenchmarkWebhookToPubSub(b *testing.B) {
 		req.Header.Set("X-Hub-Signature-256", githubSig)
 
 		w := httptest.NewRecorder()
-		githubHandler.ServeHTTP(w, req)
+		http.HandlerFunc(githubHandler.HandleGitHub).ServeHTTP(w, req)
 	}
 }

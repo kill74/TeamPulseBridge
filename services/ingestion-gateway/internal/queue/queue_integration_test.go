@@ -3,16 +3,17 @@ package queue_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
-	"cloud.google.com/go/pubsub"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"log/slog"
 
-	"github.com/guilhermesales/TeamPulseBridge/services/ingestion-gateway/internal/queue"
-	"github.com/guilhermesales/TeamPulseBridge/services/ingestion-gateway/internal/testhelpers/pubsubtest"
+	"teampulsebridge/services/ingestion-gateway/internal/queue"
+	"teampulsebridge/services/ingestion-gateway/internal/testhelpers/pubsubtest"
 )
 
 // TestPubSubPublisherIntegration tests the PubSubPublisher against the Pub/Sub emulator.
@@ -20,6 +21,9 @@ import (
 func TestPubSubPublisherIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("PUBSUB_EMULATOR_HOST") == "" {
+		t.Skip("skipping integration test: PUBSUB_EMULATOR_HOST is not set")
 	}
 
 	cfg := pubsubtest.DefaultEmulatorConfig()
@@ -90,7 +94,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 
 		// Act & Assert
 		for i, source := range sources {
-			body := []byte(`{"event":{"id":"` + string(rune(i)) + `"}}`)
+			body := []byte(fmt.Sprintf(`{"event":{"id":"%d"}}`, i))
 			headers := map[string]string{"X-Source": source}
 
 			err := publisher.Publish(ctx, source, body, headers)
@@ -124,7 +128,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			largePayload.Events[i] = map[string]interface{}{
 				"id":   i,
-				"data": "This is event number " + string(rune(i)),
+				"data": fmt.Sprintf("This is event number %d", i),
 			}
 		}
 		body, err := json.Marshal(largePayload)
@@ -194,7 +198,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 		// Act - publish concurrently
 		for i := 0; i < messageCount; i++ {
 			go func(index int) {
-				body := []byte(`{"index":` + string(rune(index)) + `}`)
+				body := []byte(fmt.Sprintf(`{"index":%d}`, index))
 				err := publisher.Publish(ctx, "github", body, map[string]string{})
 				done <- err
 			}(i)
@@ -254,6 +258,9 @@ func TestAsyncPublisherWithPubSub(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
+	if os.Getenv("PUBSUB_EMULATOR_HOST") == "" {
+		t.Skip("skipping integration test: PUBSUB_EMULATOR_HOST is not set")
+	}
 
 	cfg := pubsubtest.DefaultEmulatorConfig()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -284,7 +291,7 @@ func TestAsyncPublisherWithPubSub(t *testing.T) {
 
 		// Act - publish messages without waiting for confirmation
 		for i := 0; i < messageCount; i++ {
-			body := []byte(`{"id":` + string(rune(i)) + `}`)
+			body := []byte(fmt.Sprintf(`{"id":%d}`, i))
 			// Async publish should not block
 			err := asyncPublisher.Publish(ctx, "github", body, map[string]string{})
 			require.NoError(t, err, "async publish should succeed")
@@ -310,7 +317,7 @@ func TestAsyncPublisherWithPubSub(t *testing.T) {
 		// Act - fill buffer and try to overflow
 		var lastErr error
 		for i := 0; i < 10; i++ {
-			body := []byte(`{"id":` + string(rune(i)) + `}`)
+			body := []byte(fmt.Sprintf(`{"id":%d}`, i))
 			err := smallBufferPublisher.Publish(ctx, "github", body, map[string]string{})
 			if err != nil {
 				lastErr = err
@@ -328,6 +335,9 @@ func TestAsyncPublisherWithPubSub(t *testing.T) {
 func TestPubSubPublisherWithoutTopic(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
+	}
+	if os.Getenv("PUBSUB_EMULATOR_HOST") == "" {
+		t.Skip("skipping integration test: PUBSUB_EMULATOR_HOST is not set")
 	}
 
 	cfg := pubsubtest.DefaultEmulatorConfig()

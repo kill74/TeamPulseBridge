@@ -44,21 +44,25 @@ jobs:
             --name pubsub-emulator \
             -p 8085:8085 \
             google/cloud-sdk:emulators \
-            gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 &
+            gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
 
           # Wait for emulator to be ready
+          ready=0
           for i in {1..30}; do
             if curl -f http://localhost:8085/v1/projects/test-project 2>/dev/null; then
               echo "Pub/Sub Emulator is ready"
-              exit 0
+              ready=1
+              break
             fi
             echo "Waiting for emulator... ($i/30)"
             sleep 1
           done
 
-          echo "Pub/Sub Emulator failed to start"
-          docker logs pubsub-emulator
-          exit 1
+          if [ "$ready" -ne 1 ]; then
+            echo "Pub/Sub Emulator failed to start"
+            docker logs pubsub-emulator
+            exit 1
+          fi
 
       - name: Run Integration Tests
         working-directory: services/ingestion-gateway
@@ -98,10 +102,10 @@ jobs:
         working-directory: services/ingestion-gateway
         run: |
           # Build and start services
-          docker-compose -f docker-compose.integration.yml up -d --build
+          docker compose -f docker-compose.integration.yml up -d --build
 
           # Wait for services to be ready
-          docker-compose -f docker-compose.integration.yml ps
+          docker compose -f docker-compose.integration.yml ps
 
           # Give services time to stabilize
           sleep 5
@@ -120,7 +124,7 @@ jobs:
           curl -v http://localhost:8085/v1/projects/test-project || exit 1
 
           # Cleanup
-          docker-compose -f docker-compose.integration.yml down
+          docker compose -f docker-compose.integration.yml down
 
   benchmark:
     name: Benchmark Suite
@@ -147,19 +151,24 @@ jobs:
             --name pubsub-emulator \
             -p 8085:8085 \
             google/cloud-sdk:emulators \
-            gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 &
+            gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
 
           # Wait for emulator
+          ready=0
           for i in {1..30}; do
             if curl -f http://localhost:8085/v1/projects/test-project 2>/dev/null; then
               echo "Pub/Sub Emulator is ready"
-              exit 0
+              ready=1
+              break
             fi
             sleep 1
           done
 
-          echo "Pub/Sub Emulator failed to start"
-          exit 1
+          if [ "$ready" -ne 1 ]; then
+            echo "Pub/Sub Emulator failed to start"
+            docker logs pubsub-emulator
+            exit 1
+          fi
 
       - name: Run Benchmarks
         working-directory: services/ingestion-gateway

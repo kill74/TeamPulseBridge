@@ -21,13 +21,13 @@ Production-style event ingestion bridge for engineering activity signals (Slack,
 
 ```mermaid
 flowchart LR
-	A[Slack / Teams / GitHub / GitLab] --> B[Ingestion Gateway]
-	B --> C[Queue Backend\nLog or PubSub]
-	B --> D[Metrics / Traces / Logs]
-	D --> E[Prometheus]
-	D --> F[OTLP Collector or Cloud]
-	E --> G[Grafana]
-	H[Admin JWT Guard] --> B
+  A[Slack / Teams / GitHub / GitLab] --> B[Ingestion Gateway]
+  B --> C[Queue Backend\nLog or PubSub]
+  B --> D[Metrics / Traces / Logs]
+  D --> E[Prometheus]
+  D --> F[OTLP Collector or Cloud]
+  E --> G[Grafana]
+  H[Admin JWT Guard] --> B
 ```
 
 ## Why This Repo Looks Professional
@@ -93,6 +93,22 @@ Then open:
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000` (admin/admin)
 
+### 5) Run Integration Tests (Pub/Sub Emulator)
+
+```bash
+make integration-test
+```
+
+Targeted runs:
+
+```bash
+make integration-test-queue
+make integration-test-handlers
+make integration-bench
+```
+
+The integration tests skip gracefully if `PUBSUB_EMULATOR_HOST` is not set.
+
 ## Core Service Endpoints
 
 - `POST /webhooks/slack`
@@ -144,6 +160,13 @@ See [infrastructure/README.md](infrastructure/README.md) for complete setup guid
 make help
 ```
 
+Useful day-to-day commands:
+
+- `make verify` for formatter, linter, unit tests, and race detector
+- `make integration-test` for emulator-backed integration checks
+- `make up` and `make down` for local stack lifecycle
+- `make infra-help` for infrastructure workflows
+
 ## Release and Delivery
 
 - `ci.yml` runs fmt/vet/tests/race/lint/vuln checks
@@ -175,7 +198,7 @@ make help
 
 ## Roadmap
 
-- Add integration tests against Pub/Sub emulator
+- ✅ Add integration tests against Pub/Sub emulator
 - ✅ Add Terraform modules for staging/prod environments (complete)
 - Add contract tests for webhook payload compatibility
 - Implement GitOps workflow (ArgoCD or Flux)
