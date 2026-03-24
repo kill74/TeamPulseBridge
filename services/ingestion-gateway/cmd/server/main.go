@@ -62,6 +62,10 @@ func main() {
 	admin := handlers.NewAdminHandler(cfg)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", handlers.ProductUI)
+	mux.HandleFunc("GET /assets/ui.css", handlers.ProductUIStyles)
+	mux.HandleFunc("GET /assets/ui.js", handlers.ProductUIScript)
+	mux.HandleFunc("POST /ui/smoke-test", handlers.NewUISmokeTestProxy(mux))
 	mux.HandleFunc("GET /healthz", handlers.Healthz)
 	mux.HandleFunc("GET /readyz", handlers.Readyz)
 	mux.Handle("GET /metrics", telemetry.MetricsHandler)

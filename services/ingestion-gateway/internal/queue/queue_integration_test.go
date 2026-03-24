@@ -224,7 +224,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 		// Arrange
 		source := "github"
 		headers := map[string]string{
-			"X-GitHub-Event":  "pull_request",
+			"X-GitHub-Event":    "pull_request",
 			"X-GitHub-Delivery": "12345-67890",
 		}
 		body := []byte(`{"action":"opened"}`)

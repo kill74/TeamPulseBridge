@@ -7,6 +7,7 @@ and publishes normalized webhook envelopes to the configured queue backend.
 
 ## API Surface
 
+- `GET /`
 - `POST /webhooks/slack`
 - `POST /webhooks/teams`
 - `POST /webhooks/github`
@@ -15,6 +16,20 @@ and publishes normalized webhook envelopes to the configured queue backend.
 - `GET /readyz`
 - `GET /metrics`
 - `GET /admin/configz`
+- `POST /ui/smoke-test` (operator UI internal proxy)
+
+### Built-in Product UI (`GET /`)
+
+The root route serves an operator console with:
+
+- live health/readiness checks,
+- admin config visibility checks,
+- optional JWT token mode for authenticated admin requests,
+- guarded webhook smoke testing (explicit enable switch),
+- extra-header injection for provider-specific test scenarios,
+- strict browser security headers and CSP,
+- versioned static UI assets (`/assets/ui.css` and `/assets/ui.js`),
+- server-side smoke-test proxy with per-IP rate limiting.
 
 ## Core Guarantees
 

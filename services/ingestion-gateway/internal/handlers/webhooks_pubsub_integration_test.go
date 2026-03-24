@@ -66,9 +66,9 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		timestamp := fmt.Sprintf("%d", time.Now().Unix())
 
 		slackPayload := map[string]interface{}{
-			"type": "url_verification",
+			"type":      "url_verification",
 			"challenge": "test-challenge-token",
-			"token": "test-token",
+			"token":     "test-token",
 		}
 		body, _ := json.Marshal(slackPayload)
 

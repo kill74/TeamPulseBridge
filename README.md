@@ -1,9 +1,9 @@
 # TeamPulse Bridge
 
-[![CI](https://github.com/guilhermesales/TeamPulseBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/guilhermesales/TeamPulseBridge/actions/workflows/ci.yml)
-[![Smoke](https://github.com/guilhermesales/TeamPulseBridge/actions/workflows/smoke.yml/badge.svg)](https://github.com/guilhermesales/TeamPulseBridge/actions/workflows/smoke.yml)
-[![Release](https://github.com/guilhermesales/TeamPulseBridge/actions/workflows/release.yml/badge.svg)](https://github.com/guilhermesales/TeamPulseBridge/actions/workflows/release.yml)
-[![Docs](https://github.com/guilhermesales/TeamPulseBridge/actions/workflows/docs.yml/badge.svg)](https://github.com/guilhermesales/TeamPulseBridge/actions/workflows/docs.yml)
+[![CI](https://github.com/kill74/TeamPulseBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/kill74/TeamPulseBridge/actions/workflows/ci.yml)
+[![Smoke](https://github.com/kill74/TeamPulseBridge/actions/workflows/smoke.yml/badge.svg)](https://github.com/kill74/TeamPulseBridge/actions/workflows/smoke.yml)
+[![Release](https://github.com/kill74/TeamPulseBridge/actions/workflows/release.yml/badge.svg)](https://github.com/kill74/TeamPulseBridge/actions/workflows/release.yml)
+[![Docs](https://github.com/kill74/TeamPulseBridge/actions/workflows/docs.yml/badge.svg)](https://github.com/kill74/TeamPulseBridge/actions/workflows/docs.yml)
 [![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)](./services/ingestion-gateway/go.mod)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
@@ -88,6 +88,7 @@ make up
 
 Then open:
 
+- Product UI: `http://localhost:8080/`
 - Service health: `http://localhost:8080/healthz`
 - Metrics: `http://localhost:8080/metrics`
 - Prometheus: `http://localhost:9090`
