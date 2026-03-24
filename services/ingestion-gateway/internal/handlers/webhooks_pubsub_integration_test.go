@@ -43,7 +43,9 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 	// Create Pub/Sub client and resources
 	pubsubClient, err := pubsubtest.NewPubSubClient(ctx, cfg)
 	require.NoError(t, err, "failed to create Pub/Sub client")
-	defer pubsubClient.Close()
+	t.Cleanup(func() {
+		assert.NoError(t, pubsubClient.Close())
+	})
 
 	topic, err := pubsubtest.CreateTopic(ctx, pubsubClient, "webhook-events")
 	require.NoError(t, err, "failed to create topic")
@@ -316,7 +318,9 @@ func TestWebhookWithMiddleware(t *testing.T) {
 	// Create Pub/Sub resources
 	pubsubClient, err := pubsubtest.NewPubSubClient(ctx, cfg)
 	require.NoError(t, err)
-	defer pubsubClient.Close()
+	t.Cleanup(func() {
+		assert.NoError(t, pubsubClient.Close())
+	})
 
 	topic, err := pubsubtest.CreateTopic(ctx, pubsubClient, "middleware-test")
 	require.NoError(t, err)
@@ -329,7 +333,8 @@ func TestWebhookWithMiddleware(t *testing.T) {
 
 	t.Run("WebhookWithRequestID", func(t *testing.T) {
 		// Purge
-		pubsubtest.PurgeSubscription(ctx, sub)
+		err := pubsubtest.PurgeSubscription(ctx, sub)
+		require.NoError(t, err)
 
 		// Arrange
 		webhookSecret := "test-secret"
@@ -386,7 +391,9 @@ func BenchmarkWebhookToPubSub(b *testing.B) {
 
 	// Setup
 	pubsubClient, _ := pubsubtest.NewPubSubClient(ctx, cfg)
-	defer pubsubClient.Close()
+	defer func() {
+		_ = pubsubClient.Close()
+	}()
 
 	topic, _ := pubsubtest.CreateTopic(ctx, pubsubClient, "bench-topic")
 	_, _ = pubsubtest.CreateSubscription(ctx, pubsubClient, "bench-sub", "bench-topic")

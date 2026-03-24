@@ -186,7 +186,7 @@ func NewMessageCollector() *MessageCollector {
 // Call Stop() to stop collection.
 func (mc *MessageCollector) Collect(ctx context.Context, sub *pubsub.Subscription) {
 	go func() {
-		sub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
+		_ = sub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
 			mc.messages = append(mc.messages, msg)
 			msg.Ack()
 		})

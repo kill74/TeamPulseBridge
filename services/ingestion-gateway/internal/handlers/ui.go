@@ -808,7 +808,9 @@ func NewUISmokeTestProxy(target http.Handler) http.HandlerFunc {
 		}
 
 		bodyReader := io.LimitReader(r.Body, uiSmokeMaxBodyBytes)
-		defer r.Body.Close()
+		defer func() {
+			_ = r.Body.Close()
+		}()
 
 		var req uiSmokeRequest
 		if err := json.NewDecoder(bodyReader).Decode(&req); err != nil {

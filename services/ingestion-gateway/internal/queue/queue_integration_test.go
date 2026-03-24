@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"log/slog"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"log/slog"
 
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
 	"teampulsebridge/services/ingestion-gateway/internal/testhelpers/pubsubtest"
@@ -33,7 +34,9 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 	// Create client
 	client, err := pubsubtest.NewPubSubClient(ctx, cfg)
 	require.NoError(t, err, "failed to create Pub/Sub client")
-	defer client.Close()
+	t.Cleanup(func() {
+		assert.NoError(t, client.Close())
+	})
 
 	// Create topic for testing
 	topic, err := pubsubtest.CreateTopic(ctx, client, "test-webhook-topic")
@@ -269,7 +272,9 @@ func TestAsyncPublisherWithPubSub(t *testing.T) {
 	// Create client
 	client, err := pubsubtest.NewPubSubClient(ctx, cfg)
 	require.NoError(t, err, "failed to create Pub/Sub client")
-	defer client.Close()
+	t.Cleanup(func() {
+		assert.NoError(t, client.Close())
+	})
 
 	// Create topic
 	topic, err := pubsubtest.CreateTopic(ctx, client, "async-test-topic")
@@ -347,7 +352,9 @@ func TestPubSubPublisherWithoutTopic(t *testing.T) {
 	// Create client
 	client, err := pubsubtest.NewPubSubClient(ctx, cfg)
 	require.NoError(t, err, "failed to create Pub/Sub client")
-	defer client.Close()
+	t.Cleanup(func() {
+		assert.NoError(t, client.Close())
+	})
 
 	logger := slog.New(slog.NewTextHandler(nil, nil))
 
