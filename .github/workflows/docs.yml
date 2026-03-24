@@ -1,0 +1,28 @@
+name: docs
+
+on:
+  pull_request:
+  push:
+    branches: ['main', 'master']
+
+jobs:
+  docs-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site-docs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build docs
+        run: mkdocs build --strict

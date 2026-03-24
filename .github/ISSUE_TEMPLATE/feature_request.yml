@@ -1,0 +1,45 @@
+name: Feature Request
+description: Propose a new capability
+labels: ['enhancement']
+body:
+  - type: input
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What user or business problem are we solving?
+      placeholder: We cannot replay dead-letter messages selectively by error class
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe API changes, config, and expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] Endpoint supports ...
+        - [ ] Tests cover ...
+        - [ ] Docs updated ...
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact Area
+      options:
+        - api
+        - security
+        - observability
+        - infrastructure
+        - developer-experience
+    validations:
+      required: true

@@ -1,0 +1,54 @@
+name: smoke
+
+on:
+  pull_request:
+  push:
+    branches: ['main', 'master']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and start stack
+        run: docker compose up -d --build
+
+      - name: Wait for health endpoint
+        shell: bash
+        run: |
+          for i in {1..40}; do
+            if curl -fsS http://localhost:8080/healthz >/dev/null; then
+              echo "healthz is up"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "healthz did not become ready in time"
+          exit 1
+
+      - name: Validate metrics endpoint
+        run: |
+          curl -fsS http://localhost:8080/metrics | head -n 20
+
+      - name: Show compose status
+        if: always()
+        run: docker compose ps
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+
+      - name: Shutdown stack
+        if: always()
+        run: docker compose down -v

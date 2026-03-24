@@ -1,0 +1,39 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Env / Secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Go
+bin/
+coverage.out
+*.test
+*.prof
+
+# Docker
+*.pid
+
+# Terraform (future)
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Generated
+tmp/
+dist/
+site/
+site-docs/site/
+
+# Python cache
+__pycache__/
+*.pyc

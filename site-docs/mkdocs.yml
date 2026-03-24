@@ -1,0 +1,39 @@
+site_name: TeamPulse Bridge
+site_description: Engineering docs for TeamPulse Bridge
+site_url: https://guilhermesales.github.io/TeamPulseBridge/
+repo_url: https://github.com/guilhermesales/TeamPulseBridge
+repo_name: guilhermesales/TeamPulseBridge
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - scheme: default
+      primary: teal
+      accent: indigo
+nav:
+  - Home: index.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Ingestion Gateway: architecture/ingestion-gateway.md
+  - ADRs:
+      - ADR Index: adr/index.md
+  - Runbooks:
+      - Local Development: runbooks/local-development.md
+      - Release Process: runbooks/release.md
+      - Branch Protection: runbooks/branch-protection.md
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.details

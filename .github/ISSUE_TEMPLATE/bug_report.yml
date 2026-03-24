@@ -1,0 +1,60 @@
+name: Bug Report
+description: Report a reproducible defect
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please provide enough detail for us to reproduce quickly.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: Short bug summary
+      placeholder: The webhook endpoint returns 500 for valid Slack signatures
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps including payload samples (sanitized)
+      placeholder: |
+        1. Start service with ...
+        2. Send POST to /webhooks/slack with ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - sev1-critical
+        - sev2-high
+        - sev3-medium
+        - sev4-low
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: v1.2.3 or commit SHA
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Go version, docker-compose version, cloud provider details

@@ -1,0 +1,68 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build changelog entry
+        id: changelog
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -n 1 || true)
+          {
+            echo "## ${TAG} - $(date +%Y-%m-%d)"
+            echo
+            if [ -n "$PREV_TAG" ]; then
+              git log --pretty=format:"- %s (%h)" "${PREV_TAG}..${TAG}"
+            else
+              git log --pretty=format:"- %s (%h)"
+            fi
+            echo
+          } > release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          generate_release_notes: true
+
+      - name: Update CHANGELOG.md
+        shell: bash
+        run: |
+          if [ ! -f CHANGELOG.md ]; then
+            echo "# Changelog" > CHANGELOG.md
+            echo >> CHANGELOG.md
+          fi
+          tmpfile=$(mktemp)
+          head -n 1 CHANGELOG.md > "$tmpfile"
+          echo >> "$tmpfile"
+          cat release-notes.md >> "$tmpfile"
+          echo >> "$tmpfile"
+          tail -n +2 CHANGELOG.md >> "$tmpfile"
+          mv "$tmpfile" CHANGELOG.md
+
+      - name: Commit changelog update
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore(release): update changelog for ${{ github.ref_name }}'
+          file_pattern: CHANGELOG.md

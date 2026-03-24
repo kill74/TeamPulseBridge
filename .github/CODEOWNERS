@@ -1,0 +1,16 @@
+# Global fallback
+
+- @guilhermesales
+
+# Service ownership
+
+/services/ingestion-gateway/ @guilhermesales
+
+# Infra and deployment
+
+/deploy/ @guilhermesales
+
+# Docs and ADRs
+
+/docs/ @guilhermesales
+/site-docs/ @guilhermesales
