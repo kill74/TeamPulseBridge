@@ -19,7 +19,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
@@ -41,10 +41,16 @@ jobs:
           } > release-notes.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           body_path: release-notes.md
           generate_release_notes: true
+
+      - name: Checkout default branch for changelog update
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
 
       - name: Update CHANGELOG.md
         shell: bash
@@ -62,7 +68,8 @@ jobs:
           mv "$tmpfile" CHANGELOG.md
 
       - name: Commit changelog update
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@b863ae1933cb653a53c021fe36dbb774e1fb9403 # v5
         with:
           commit_message: 'chore(release): update changelog for ${{ github.ref_name }}'
           file_pattern: CHANGELOG.md
+          branch: ${{ github.event.repository.default_branch }}
