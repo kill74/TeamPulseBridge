@@ -1,4 +1,20 @@
 services:
+  pubsub-emulator:
+    image: google/cloud-sdk:emulators
+    container_name: teampulse-pubsub-emulator
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
+    ports:
+      - '8085:8085'
+    profiles:
+      - pubsub-local
+    healthcheck:
+      test:
+        ['CMD', 'curl', '-f', 'http://localhost:8085/v1/projects/test-project']
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+
   ingestion-gateway:
     build:
       context: ./services/ingestion-gateway
@@ -10,8 +26,16 @@ services:
       QUEUE_BACKEND: log
       ADMIN_AUTH_ENABLED: 'false'
       ENVIRONMENT: local
+      # Uncomment below to enable Pub/Sub emulator backend
+      # QUEUE_BACKEND: pubsub
+      # PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+      # PUBSUB_PROJECT_ID: test-project
     ports:
       - '8080:8080'
+    # Uncomment the depends_on below to enable Pub/Sub integration
+    # depends_on:
+    #   pubsub-emulator:
+    #     condition: service_healthy
 
   prometheus:
     image: prom/prometheus:v2.54.1

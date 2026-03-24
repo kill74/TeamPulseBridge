@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: help verify lint test race run up down logs tidy fmt docs-build docs-serve infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod
+.PHONY: help verify lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod
 
 help:
 	@echo "Application Targets:"
@@ -16,6 +16,14 @@ help:
 	@echo "  make tidy          - Run go mod tidy"
 	@echo "  make docs-build    - Build MkDocs documentation"
 	@echo "  make docs-serve    - Serve documentation locally"
+	@echo ""
+	@echo "Integration Testing Targets:"
+	@echo "  make integration-test         - Run all integration tests"
+	@echo "  make integration-test-queue   - Run queue integration tests"
+	@echo "  make integration-test-handlers - Run webhooks integration tests"
+	@echo "  make integration-bench        - Run integration benchmarks"
+	@echo "  make integration-docker       - Run integration tests via docker-compose"
+	@echo "  make integration-clean        - Clean integration test resources"
 	@echo ""
 	@echo "Infrastructure Targets (see make infra-help for details):"
 	@echo "  make infra-help              - Show infrastructure targets"
@@ -58,6 +66,62 @@ docs-build:
 
 docs-serve:
 	cd site-docs && pip install -r requirements.txt && mkdocs serve
+
+# Integration Testing Targets
+
+integration-test:
+	@echo "Starting Pub/Sub Emulator..."
+	@docker run -d --name pubsub-emulator-make -p 8085:8085 google/cloud-sdk:emulators gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 > /dev/null 2>&1 || true
+	@sleep 3
+	cd services/ingestion-gateway && \
+		PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project \
+		go test -v -race -coverpkg=./... -coverprofile=coverage.out -timeout 30s ./...
+	@docker stop pubsub-emulator-make > /dev/null 2>&1 || true
+	@docker rm pubsub-emulator-make > /dev/null 2>&1 || true
+
+integration-test-queue:
+	@echo "Starting Pub/Sub Emulator..."
+	@docker run -d --name pubsub-emulator-queue -p 8085:8085 google/cloud-sdk:emulators gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 > /dev/null 2>&1 || true
+	@sleep 3
+	cd services/ingestion-gateway && \
+		PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project \
+		go test -v -race -timeout 30s ./internal/queue
+	@docker stop pubsub-emulator-queue > /dev/null 2>&1 || true
+	@docker rm pubsub-emulator-queue > /dev/null 2>&1 || true
+
+integration-test-handlers:
+	@echo "Starting Pub/Sub Emulator..."
+	@docker run -d --name pubsub-emulator-handlers -p 8085:8085 google/cloud-sdk:emulators gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 > /dev/null 2>&1 || true
+	@sleep 3
+	cd services/ingestion-gateway && \
+		PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project \
+		go test -v -race -timeout 30s ./internal/handlers
+	@docker stop pubsub-emulator-handlers > /dev/null 2>&1 || true
+	@docker rm pubsub-emulator-handlers > /dev/null 2>&1 || true
+
+integration-bench:
+	@echo "Starting Pub/Sub Emulator..."
+	@docker run -d --name pubsub-emulator-bench -p 8085:8085 google/cloud-sdk:emulators gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 > /dev/null 2>&1 || true
+	@sleep 3
+	cd services/ingestion-gateway && \
+		PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project \
+		go test -v -run=^$ -bench=. -benchmem -benchtime=5s ./internal/handlers ./internal/queue
+	@docker stop pubsub-emulator-bench > /dev/null 2>&1 || true
+	@docker rm pubsub-emulator-bench > /dev/null 2>&1 || true
+
+integration-docker:
+	cd services/ingestion-gateway && docker-compose -f docker-compose.integration.yml up -d --build
+	@sleep 5
+	@echo "Services running. Health checks:"
+	cd services/ingestion-gateway && docker-compose -f docker-compose.integration.yml ps
+	@curl -f http://localhost:8080/healthz || echo "Gateway not ready yet"
+	@curl -f http://localhost:8085/v1/projects/test-project || echo "Pub/Sub emulator check failed"
+	@echo "Integration environment ready. Run 'make integration-clean' to stop."
+
+integration-clean:
+	cd services/ingestion-gateway && docker-compose -f docker-compose.integration.yml down -v
+	@docker stop pubsub-emulator-make pubsub-emulator-queue pubsub-emulator-handlers pubsub-emulator-bench 2>/dev/null || true
+	@docker rm pubsub-emulator-make pubsub-emulator-queue pubsub-emulator-handlers pubsub-emulator-bench 2>/dev/null || true
 
 # Infrastructure Targets
 
