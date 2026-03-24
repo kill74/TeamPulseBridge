@@ -46,12 +46,11 @@ jobs:
       - name: Race tests
         run: go test -race ./...
 
-      - name: Setup golangci-lint
-        uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84 # v6
-        with:
-          version: v1.64.8
-          working-directory: services/ingestion-gateway
-          args: --config ../../.golangci.yml ./...
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+
+      - name: Run golangci-lint
+        run: golangci-lint run --config ../../.golangci.yml ./...
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest

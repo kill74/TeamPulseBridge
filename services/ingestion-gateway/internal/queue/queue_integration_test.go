@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 	sub, err := pubsubtest.CreateSubscription(ctx, client, "test-sub", "test-webhook-topic")
 	require.NoError(t, err, "failed to create subscription")
 
-	logger := slog.New(slog.NewTextHandler(nil, nil))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Create publisher (without async wrapper for testing synchronous behavior)
 	publisher := queue.NewPubSubPublisherDirect(client, topic, logger)
@@ -284,7 +285,7 @@ func TestAsyncPublisherWithPubSub(t *testing.T) {
 	sub, err := pubsubtest.CreateSubscription(ctx, client, "async-test-sub", "async-test-topic")
 	require.NoError(t, err, "failed to create subscription")
 
-	logger := slog.New(slog.NewTextHandler(nil, nil))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Create underlying publisher and wrap with async
 	innerPublisher := queue.NewPubSubPublisherDirect(client, topic, logger)
@@ -356,7 +357,7 @@ func TestPubSubPublisherWithoutTopic(t *testing.T) {
 		assert.NoError(t, client.Close())
 	})
 
-	logger := slog.New(slog.NewTextHandler(nil, nil))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Try to publish to non-existent topic
 	nonExistentTopic := client.Topic("this-topic-does-not-exist")

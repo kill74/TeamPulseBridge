@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/pubsub"
@@ -92,30 +93,59 @@ func CreateSubscription(ctx context.Context, client *pubsub.Client, subID, topic
 // ReceiveMessages receives up to count messages from a subscription.
 // It returns immediately if count messages are received before timeout.
 func ReceiveMessages(ctx context.Context, sub *pubsub.Subscription, count int, timeout time.Duration) ([]*pubsub.Message, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	var messages []*pubsub.Message
+	// Make callback execution deterministic and avoid concurrent appends during tests.
+	prevSynchronous := sub.ReceiveSettings.Synchronous
+	prevNumGoroutines := sub.ReceiveSettings.NumGoroutines
+	sub.ReceiveSettings.Synchronous = true
+	sub.ReceiveSettings.NumGoroutines = 1
+	defer func() {
+		sub.ReceiveSettings.Synchronous = prevSynchronous
+		sub.ReceiveSettings.NumGoroutines = prevNumGoroutines
+	}()
+
+	messages := make([]*pubsub.Message, 0, count)
+	var mu sync.Mutex
 	err := sub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
-		messages = append(messages, msg)
+		mu.Lock()
+		if len(messages) < count {
+			messages = append(messages, msg)
+		}
+		reachedTarget := len(messages) >= count
+		mu.Unlock()
+
 		msg.Ack()
 
 		// Stop receiving if we have enough messages
-		if len(messages) >= count {
+		if reachedTarget {
 			cancel()
 		}
 	})
 
+	mu.Lock()
+	collected := append([]*pubsub.Message(nil), messages...)
+	mu.Unlock()
+
 	// Context cancel is not an error when we got our messages
-	if err == context.Canceled && len(messages) >= count {
-		return messages, nil
+	if err == context.Canceled && len(collected) >= count {
+		return collected, nil
 	}
 
 	if err != nil {
-		return messages, fmt.Errorf("failed to receive messages: %w", err)
+		return collected, fmt.Errorf("failed to receive messages: %w", err)
 	}
 
-	return messages, nil
+	if len(collected) < count {
+		return collected, fmt.Errorf("received %d/%d messages before timeout", len(collected), count)
+	}
+
+	return collected, nil
 }
 
 // PurgeSubscription deletes all messages in a subscription.
@@ -170,6 +200,7 @@ func DeleteSubscription(ctx context.Context, client *pubsub.Client, subID string
 
 // MessageCollector collects messages from a subscription for easier testing.
 type MessageCollector struct {
+	mu       sync.Mutex
 	messages []*pubsub.Message
 	done     chan struct{}
 }
@@ -187,7 +218,9 @@ func NewMessageCollector() *MessageCollector {
 func (mc *MessageCollector) Collect(ctx context.Context, sub *pubsub.Subscription) {
 	go func() {
 		_ = sub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
+			mc.mu.Lock()
 			mc.messages = append(mc.messages, msg)
+			mc.mu.Unlock()
 			msg.Ack()
 		})
 		close(mc.done)
@@ -204,21 +237,29 @@ func (mc *MessageCollector) Stop(ctx context.Context, timeout time.Duration) []*
 	case <-ctx.Done():
 	}
 
-	return mc.messages
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	return append([]*pubsub.Message(nil), mc.messages...)
 }
 
 // Messages returns all collected messages so far (without stopping collection).
 func (mc *MessageCollector) Messages() []*pubsub.Message {
-	return mc.messages
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	return append([]*pubsub.Message(nil), mc.messages...)
 }
 
 // Count returns the number of collected messages.
 func (mc *MessageCollector) Count() int {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
 	return len(mc.messages)
 }
 
 // FindMessage finds the first message matching a predicate.
 func (mc *MessageCollector) FindMessage(predicate func(*pubsub.Message) bool) *pubsub.Message {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
 	for _, msg := range mc.messages {
 		if predicate(msg) {
 			return msg

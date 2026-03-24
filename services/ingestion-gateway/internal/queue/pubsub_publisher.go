@@ -19,7 +19,7 @@ type PubSubPublisher struct {
 type pubSubEnvelope struct {
 	Source      string            `json:"source"`
 	Headers     map[string]string `json:"headers"`
-	Body        []byte            `json:"body"`
+	Body        json.RawMessage   `json:"body"`
 	ReceivedAt  time.Time         `json:"received_at"`
 	Schema      string            `json:"schema"`
 	SchemaValue int               `json:"schema_value"`

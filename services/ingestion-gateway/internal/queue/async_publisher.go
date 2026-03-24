@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"sync"
 )
@@ -24,6 +25,9 @@ type AsyncPublisher struct {
 }
 
 func NewAsyncPublisher(inner Publisher, buffer int, logger *slog.Logger) *AsyncPublisher {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	p := &AsyncPublisher{
 		inner:  inner,
 		logger: logger,
