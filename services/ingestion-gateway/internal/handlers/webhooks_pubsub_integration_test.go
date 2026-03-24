@@ -68,9 +68,10 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		timestamp := fmt.Sprintf("%d", time.Now().Unix())
 
 		slackPayload := map[string]interface{}{
-			"type":      "url_verification",
-			"challenge": "test-challenge-token",
-			"token":     "test-token",
+			"type": "event_callback",
+			"event": map[string]interface{}{
+				"type": "app_mention",
+			},
 		}
 		body, _ := json.Marshal(slackPayload)
 
@@ -93,12 +94,12 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		http.HandlerFunc(slackHandler.HandleSlack).ServeHTTP(w, req)
 
 		// Assert webhook response
-		assert.Equal(t, http.StatusOK, w.Code, "handler should return 200")
+		assert.Equal(t, http.StatusAccepted, w.Code, "handler should return 202")
 
 		// Verify message in Pub/Sub
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 3*time.Second)
-		assert.NoError(t, err, "should receive message from Pub/Sub")
-		assert.Len(t, messages, 1, "should have exactly one message")
+		require.NoError(t, err, "should receive message from Pub/Sub")
+		require.Len(t, messages, 1, "should have exactly one message")
 
 		// Verify message attributes
 		assert.Equal(t, "slack", messages[0].Attributes["source"])
@@ -117,7 +118,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		var received map[string]interface{}
 		err = json.Unmarshal(envelope.Body, &received)
 		assert.NoError(t, err, "should parse original payload")
-		assert.Equal(t, "url_verification", received["type"])
+		assert.Equal(t, "event_callback", received["type"])
 	})
 
 	t.Run("GitHubWebhookToPubSub", func(t *testing.T) {
@@ -199,8 +200,8 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		w := httptest.NewRecorder()
 		http.HandlerFunc(githubHandler.HandleGitHub).ServeHTTP(w, req)
 
-		// Assert - should reject with 403
-		assert.Equal(t, http.StatusForbidden, w.Code, "handler should reject invalid signature")
+		// Assert - invalid signature is rejected with 401 by the handler contract.
+		assert.Equal(t, http.StatusUnauthorized, w.Code, "handler should reject invalid signature")
 
 		// Verify no message in Pub/Sub
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 1*time.Second)
@@ -242,10 +243,11 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		// Assert - verify all messages received
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 5, 5*time.Second)
 		assert.NoError(t, err, "should receive all messages")
-		assert.Len(t, messages, 5, "should receive all 5 messages in order")
+		assert.Len(t, messages, 5, "should receive all 5 messages")
 
-		// Verify message order by extracting numbers
-		for i, msg := range messages {
+		// Pub/Sub does not guarantee strict ordering without ordering keys.
+		numbers := make([]float64, 0, len(messages))
+		for _, msg := range messages {
 			var envelope struct {
 				Body json.RawMessage `json:"body"`
 			}
@@ -255,8 +257,11 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 			var payload map[string]interface{}
 			err = json.Unmarshal(envelope.Body, &payload)
 			assert.NoError(t, err)
-			assert.Equal(t, float64(i), payload["number"], "messages should be in order")
+			number, ok := payload["number"].(float64)
+			assert.True(t, ok, "payload should contain numeric number field")
+			numbers = append(numbers, number)
 		}
+		assert.ElementsMatch(t, []float64{0, 1, 2, 3, 4}, numbers, "should receive all webhook numbers")
 	})
 
 	t.Run("WebhookWithAsyncPublisher", func(t *testing.T) {

@@ -85,7 +85,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 		assert.NoError(t, err, "message should contain valid JSON envelope")
 		assert.Equal(t, "slack", envelope.Source)
 		assert.Equal(t, headers, envelope.Headers)
-		assert.Equal(t, body, envelope.Body)
+		assert.Equal(t, json.RawMessage(body), envelope.Body)
 	})
 
 	t.Run("PublishMultipleMessages", func(t *testing.T) {
