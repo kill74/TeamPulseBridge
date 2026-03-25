@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const uiAssetVersion = "20260324.2"
+const uiAssetVersion = "20260325.4"
 
 const (
 	uiSmokeMaxBodyBytes         = 256 * 1024
@@ -58,12 +58,20 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/ui.css?v={{.Version}}" />
 </head>
-<body class="grain">
+<body class="grain aurora">
   <main class="wrap">
+    <div class="ambient ambient-a"></div>
+    <div class="ambient ambient-b"></div>
+
     <section class="hero">
       <div class="chip">TeamPulse Bridge</div>
       <h1>Event Ingestion Console for Product and Ops Teams</h1>
       <p class="lede">A live operational view for webhook intake, reliability, and endpoint behavior. Use this console to validate service status, inspect available interfaces, and execute quick smoke checks.</p>
+      <div class="hero-meta">
+        <span id="overallState" class="pill pill-hero">service: checking</span>
+        <span id="refreshMode" class="pill pill-hero">auto refresh: on</span>
+        <span id="lastRefresh" class="pill pill-hero">last refresh: --</span>
+      </div>
     </section>
 
     <section class="grid">
@@ -79,6 +87,13 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
         <div class="statline">
           <span id="healthCode" class="pill">status: --</span>
           <span id="healthLatency" class="pill">latency: --</span>
+          <span id="healthSla" class="pill">sla(20): --</span>
+        </div>
+        <div class="trend">
+          <div class="label">Latency Trend (last 20 checks)</div>
+          <svg id="healthTrend" class="trend-svg" viewBox="0 0 260 56" preserveAspectRatio="none" role="img" aria-label="Health latency trend">
+            <path d="" />
+          </svg>
         </div>
       </article>
 
@@ -94,6 +109,13 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
         <div class="statline">
           <span id="readyCode" class="pill">status: --</span>
           <span id="readyLatency" class="pill">latency: --</span>
+          <span id="readySla" class="pill">sla(20): --</span>
+        </div>
+        <div class="trend">
+          <div class="label">Latency Trend (last 20 checks)</div>
+          <svg id="readyTrend" class="trend-svg" viewBox="0 0 260 56" preserveAspectRatio="none" role="img" aria-label="Readiness latency trend">
+            <path d="" />
+          </svg>
         </div>
       </article>
 
@@ -120,6 +142,7 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
         <div class="row row-top-gap">
           <input id="allowSend" class="switch" type="checkbox" aria-label="Enable webhook sends" />
           <span class="small">Enable webhook test sends (safety guard)</span>
+          <span id="smokeGuardState" class="pill">guard: locked</span>
         </div>
 
         <div class="actions">
@@ -147,7 +170,7 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
 
         <div class="field">
           <label class="label" for="result">Response</label>
-          <pre id="result" class="code">Ready.</pre>
+          <pre id="result" class="code" role="status" aria-live="polite">Ready.</pre>
         </div>
       </article>
 
@@ -169,10 +192,21 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
           <a class="ghost" href="/readyz" target="_blank" rel="noreferrer">Open Readiness</a>
           <a class="ghost" href="/admin/configz" target="_blank" rel="noreferrer">Open Admin Config</a>
         </div>
+
+        <h2 class="stack-heading">Keyboard Shortcuts</h2>
+        <p class="small">R = refresh status, S = save token, C = clear token. Disabled while typing in fields.</p>
+      </article>
+
+      <article class="card span-12 delay-5">
+        <h2>Incident Timeline</h2>
+        <p class="small">Recent operational transitions detected by this browser session.</p>
+        <ul id="incidentLog" class="timeline" aria-live="polite">
+          <li class="timeline-item muted">Waiting for first status sample...</li>
+        </ul>
       </article>
     </section>
 
-    <p class="footer">This UI is rendered by the Go service and secured with strict browser headers for production environments.</p>
+    <p class="footer">Rendered by the Go service with strict browser security headers and zero external UI runtime dependencies.</p>
   </main>
 
   <script defer src="/assets/ui.js?v={{.Version}}"></script>
@@ -180,17 +214,18 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
 </html>`))
 
 const productUICSS = `:root {
-  --bg: #0d1321;
-  --panel: #17233b;
-  --ink: #e9eef8;
-  --muted: #9fb0cd;
-  --line: #2f4163;
-  --ok: #36d399;
-  --warn: #ffbd4a;
-  --err: #ff6b6b;
-  --accent: #2dd4bf;
-  --shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
-  --radius: 16px;
+  --bg: #f7f8f5;
+  --ink: #1f2430;
+  --muted: #596277;
+  --line: #d4d8e2;
+  --panel: rgba(255, 255, 255, 0.82);
+  --ok: #169c6a;
+  --warn: #dc8c00;
+  --err: #d64545;
+  --accent: #0f6ad6;
+  --accent-2: #f66e3c;
+  --shadow: 0 20px 45px rgba(31, 36, 48, 0.12);
+  --radius: 18px;
 }
 
 * { box-sizing: border-box; }
@@ -199,9 +234,9 @@ html, body {
   margin: 0;
   min-height: 100%;
   background:
-    radial-gradient(1200px 700px at 90% -5%, rgba(45, 212, 191, 0.22), transparent 60%),
-    radial-gradient(900px 600px at -10% 10%, rgba(34, 197, 94, 0.2), transparent 60%),
-    linear-gradient(165deg, #0a1020 0%, #111b2f 55%, #0e1728 100%);
+    radial-gradient(1200px 620px at -8% -12%, rgba(246, 110, 60, 0.22), transparent 62%),
+    radial-gradient(940px 580px at 108% -16%, rgba(15, 106, 214, 0.2), transparent 62%),
+    linear-gradient(180deg, #f8f8f6 0%, #f2f5fb 55%, #ecf2ff 100%);
   color: var(--ink);
   font-family: "Space Grotesk", "Segoe UI", sans-serif;
 }
@@ -211,8 +246,8 @@ html, body {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  opacity: 0.08;
-  background-image: radial-gradient(#ffffff 0.65px, transparent 0.65px);
+  opacity: 0.06;
+  background-image: radial-gradient(#1f2430 0.55px, transparent 0.55px);
   background-size: 3px 3px;
   z-index: 0;
 }
@@ -225,19 +260,43 @@ html, body {
   padding: 34px 0 56px;
 }
 
+.ambient {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(28px);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.ambient-a {
+  width: 300px;
+  height: 300px;
+  top: 20px;
+  right: -70px;
+  background: rgba(15, 106, 214, 0.22);
+}
+
+.ambient-b {
+  width: 260px;
+  height: 260px;
+  bottom: 40px;
+  left: -80px;
+  background: rgba(246, 110, 60, 0.2);
+}
+
 .hero {
   display: grid;
-  gap: 18px;
+  gap: 16px;
   margin-bottom: 24px;
-  animation: rise 540ms cubic-bezier(.2,.8,.2,1) both;
+  animation: rise 560ms cubic-bezier(.2,.8,.2,1) both;
 }
 
 .chip {
   width: fit-content;
-  border: 1px solid rgba(157, 181, 219, 0.35);
-  background: rgba(23, 35, 59, 0.62);
-  backdrop-filter: blur(3px);
-  color: #d6e3fb;
+  border: 1px solid rgba(89, 98, 119, 0.32);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(5px);
+  color: #2e3649;
   border-radius: 999px;
   padding: 7px 12px;
   font: 500 12px/1 "IBM Plex Mono", monospace;
@@ -247,9 +306,9 @@ html, body {
 
 h1 {
   margin: 0;
-  font-size: clamp(1.8rem, 3.5vw, 3.25rem);
-  line-height: 1.06;
-  max-width: 16ch;
+  font-size: clamp(1.9rem, 3.6vw, 3.3rem);
+  line-height: 1.04;
+  max-width: 17ch;
   text-wrap: balance;
 }
 
@@ -261,31 +320,42 @@ h2 {
 
 .lede {
   margin: 0;
-  max-width: 70ch;
+  max-width: 72ch;
   color: var(--muted);
-  font-size: clamp(0.98rem, 1.2vw, 1.1rem);
+  font-size: clamp(0.98rem, 1.2vw, 1.08rem);
+}
+
+.hero-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pill-hero {
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(12, 1fr);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 14px;
 }
 
 .card {
-  background: linear-gradient(180deg, rgba(30, 44, 72, 0.92), rgba(20, 31, 53, 0.95));
-  border: 1px solid var(--line);
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.74);
   border-radius: var(--radius);
   padding: 16px;
   box-shadow: var(--shadow);
-  animation: rise 560ms cubic-bezier(.2,.8,.2,1) both;
+  backdrop-filter: blur(8px);
+  animation: rise 580ms cubic-bezier(.2,.8,.2,1) both;
 }
 
-.delay-1 { animation-delay: 80ms; }
-.delay-2 { animation-delay: 150ms; }
+.delay-1 { animation-delay: 90ms; }
+.delay-2 { animation-delay: 160ms; }
 .delay-3 { animation-delay: 220ms; }
-.delay-4 { animation-delay: 260ms; }
-.delay-5 { animation-delay: 320ms; }
+.delay-4 { animation-delay: 280ms; }
+.delay-5 { animation-delay: 340ms; }
 
 .small {
   color: var(--muted);
@@ -295,6 +365,7 @@ h2 {
 
 .span-4 { grid-column: span 4; }
 .span-8 { grid-column: span 8; }
+.span-12 { grid-column: span 12; }
 
 .kpi {
   display: grid;
@@ -308,16 +379,16 @@ h2 {
   height: 12px;
   border-radius: 50%;
   background: var(--warn);
-  box-shadow: 0 0 0 0 rgba(255, 189, 74, 0.45);
+  box-shadow: 0 0 0 0 rgba(220, 140, 0, 0.4);
   animation: pulse 1800ms ease-out infinite;
 }
 
-.dot.ok { background: var(--ok); box-shadow: 0 0 0 0 rgba(54, 211, 153, 0.45); }
-.dot.err { background: var(--err); box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.5); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 0 0 rgba(22, 156, 106, 0.42); }
+.dot.err { background: var(--err); box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.38); }
 
 .label {
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   margin-bottom: 3px;
@@ -325,7 +396,7 @@ h2 {
 }
 
 .value {
-  font-size: 1.15rem;
+  font-size: 1.16rem;
   font-weight: 700;
 }
 
@@ -340,16 +411,34 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 6px 9px;
-  color: var(--muted);
+  color: #525d75;
   font: 500 12px/1 "IBM Plex Mono", monospace;
-  background: rgba(13, 19, 33, 0.55);
+  background: #f8fbff;
+}
+
+.pill.ok {
+  color: #0f7f56;
+  background: #eefcf6;
+  border-color: #bae8d3;
+}
+
+.pill.warn {
+  color: #a45d00;
+  background: #fff7e8;
+  border-color: #f2d7ab;
+}
+
+.pill.err {
+  color: #a52e2e;
+  background: #fff1f1;
+  border-color: #efc1c1;
 }
 
 .actions {
   margin-top: 10px;
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
 }
 
 .actions-single { grid-template-columns: 1fr; }
@@ -359,59 +448,146 @@ button, .ghost {
   border: 1px solid transparent;
   border-radius: 11px;
   padding: 10px 12px;
-  color: #06131f;
+  color: #ffffff;
   font-family: "Space Grotesk", sans-serif;
   font-weight: 700;
-  background: linear-gradient(130deg, var(--accent), #7deac0);
-  transition: transform .16s ease, filter .16s ease;
+  background: linear-gradient(135deg, var(--accent), #3e8df0);
+  transition: transform .16s ease, filter .16s ease, box-shadow .16s ease;
   text-align: center;
   text-decoration: none;
   display: inline-block;
+  box-shadow: 0 8px 18px rgba(15, 106, 214, 0.23);
 }
 
 .ghost {
-  background: transparent;
-  color: var(--ink);
-  border-color: var(--line);
+  background: linear-gradient(135deg, #ffffff, #f6f8ff);
+  color: #2c3550;
+  border-color: #d9deea;
   font-weight: 600;
+  box-shadow: none;
 }
 
 .compact { padding: 8px 10px; }
 
-button:hover, .ghost:hover { transform: translateY(-1px); filter: brightness(1.03); }
+button:hover, .ghost:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.02);
+}
+
+button:active, .ghost:active {
+  transform: translateY(0);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  filter: grayscale(0.2);
+  box-shadow: none;
+}
+
+button:focus-visible,
+.ghost:focus-visible,
+.input:focus-visible,
+.switch:focus-visible {
+  outline: 2px solid rgba(15, 106, 214, 0.45);
+  outline-offset: 2px;
+}
 
 .code {
   margin: 0;
   white-space: pre-wrap;
   font: 500 12px/1.45 "IBM Plex Mono", monospace;
-  background: rgba(11, 17, 29, 0.8);
-  border: 1px solid var(--line);
-  color: #d8e6ff;
+  background: #1e2330;
+  border: 1px solid #343d52;
+  color: #f2f6ff;
   border-radius: 12px;
   padding: 11px;
   min-height: 146px;
 }
 
+.code.ok {
+  border-color: #2f8e6b;
+}
+
+.code.err {
+  border-color: #8e3636;
+}
+
+.trend {
+  margin-top: 10px;
+}
+
+.trend-svg {
+  width: 100%;
+  height: 56px;
+  display: block;
+  border-radius: 10px;
+  border: 1px solid #d7deec;
+  background: linear-gradient(180deg, #fbfdff, #f2f6ff);
+}
+
+.trend-svg path {
+  stroke: #0f6ad6;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.timeline {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.timeline-item {
+  border: 1px solid #d8ddea;
+  border-left: 4px solid #0f6ad6;
+  background: #f9fbff;
+  color: #2a3246;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: 500 12px/1.45 "IBM Plex Mono", monospace;
+}
+
+.timeline-item.warn {
+  border-left-color: #dc8c00;
+}
+
+.timeline-item.err {
+  border-left-color: #d64545;
+}
+
+.timeline-item.muted {
+  color: #6b748a;
+  border-left-color: #a8b0c2;
+}
+
 .input {
   width: 100%;
   border-radius: 11px;
-  border: 1px solid var(--line);
-  background: #0f1a2e;
-  color: var(--ink);
+  border: 1px solid #d7dbe6;
+  background: #ffffff;
+  color: #222938;
   padding: 10px 11px;
   font: 500 14px/1.45 "IBM Plex Mono", monospace;
   outline: none;
 }
 
 .input:focus {
-  border-color: #4fe7d2;
-  box-shadow: 0 0 0 3px rgba(79, 231, 210, 0.18);
+  border-color: #4b8ff0;
+  box-shadow: 0 0 0 3px rgba(75, 143, 240, 0.2);
 }
 
 .footer {
   margin-top: 18px;
-  color: var(--muted);
-  font-size: 0.9rem;
+  color: #65708a;
+  font-size: 0.89rem;
 }
 
 .field {
@@ -437,8 +613,8 @@ button:hover, .ghost:hover { transform: translateY(-1px); filter: brightness(1.0
   width: 42px;
   height: 24px;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  background: #122038;
+  border: 1px solid #cbd3e4;
+  background: #eff2f9;
   position: relative;
   transition: background .2s ease;
   cursor: pointer;
@@ -452,13 +628,14 @@ button:hover, .ghost:hover { transform: translateY(-1px); filter: brightness(1.0
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #dbe9ff;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
   transition: transform .2s ease;
 }
 
 .switch:checked {
-  background: #1e7f68;
-  border-color: #32bea0;
+  background: linear-gradient(135deg, #f66e3c, #f39f36);
+  border-color: #e97a22;
 }
 
 .switch:checked::before {
@@ -480,10 +657,81 @@ button:hover, .ghost:hover { transform: translateY(-1px); filter: brightness(1.0
   .span-4, .span-8 { grid-column: span 12; }
   .wrap { width: min(1180px, 94vw); }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
 `
 
 const productUIJS = `
 var refreshTimer = null;
+var smokeInFlight = false;
+var healthLatencyHistory = [];
+var readyLatencyHistory = [];
+var healthOkHistory = [];
+var readyOkHistory = [];
+var previousOverallState = '';
+var lastRefreshAt = 0;
+
+function setPillState(id, state) {
+  var el = document.getElementById(id);
+  if (!el) {
+    return;
+  }
+  el.classList.remove('ok', 'warn', 'err');
+  if (state) {
+    el.classList.add(state);
+  }
+}
+
+function pushMetric(history, value, maxLen) {
+  history.push(value);
+  while (history.length > maxLen) {
+    history.shift();
+  }
+}
+
+function renderTrend(svgId, history) {
+  var svg = document.getElementById(svgId);
+  if (!svg || !history.length) {
+    return;
+  }
+  var path = svg.querySelector('path');
+  var width = 260;
+  var height = 56;
+  var min = Math.min.apply(Math, history);
+  var max = Math.max.apply(Math, history);
+  var range = Math.max(1, max - min);
+  var step = history.length > 1 ? width / (history.length - 1) : width;
+  var d = history.map(function(v, i) {
+    var x = i * step;
+    var y = height - ((v - min) / range) * (height - 8) - 4;
+    return (i === 0 ? 'M' : 'L') + x.toFixed(2) + ' ' + y.toFixed(2);
+  }).join(' ');
+  path.setAttribute('d', d);
+}
+
+function addTimelineEvent(message, state) {
+  var log = document.getElementById('incidentLog');
+  if (!log) {
+    return;
+  }
+  var first = log.querySelector('.timeline-item.muted');
+  if (first) {
+    first.remove();
+  }
+  var li = document.createElement('li');
+  li.className = 'timeline-item' + (state ? ' ' + state : '');
+  li.textContent = '[' + new Date().toLocaleTimeString() + '] ' + message;
+  log.prepend(li);
+  while (log.children.length > 12) {
+    log.removeChild(log.lastChild);
+  }
+}
 
 function authHeader() {
   var token = document.getElementById('token').value.trim();
@@ -524,33 +772,129 @@ async function check(path, timeoutMs, withAuth) {
       latency: Math.round(performance.now() - started)
     };
   } catch (_) {
-    return {
-      status: 'ERR',
-      ok: false,
-      latency: Math.round(performance.now() - started)
-    };
+    // One fast retry smooths transient browser/network hiccups for operator dashboards.
+    try {
+      var retryRes = await fetch(path, { headers: withAuth ? authHeader() : {} });
+      return {
+        status: retryRes.status,
+        ok: retryRes.ok,
+        latency: Math.round(performance.now() - started)
+      };
+    } catch (_) {
+      return {
+        status: 'ERR',
+        ok: false,
+        latency: Math.round(performance.now() - started)
+      };
+    }
   } finally {
     clearTimeout(timer);
   }
 }
 
+function computeSLA(history) {
+  if (!history.length) {
+    return '--';
+  }
+  var success = history.filter(function(v) { return Boolean(v); }).length;
+  var pct = (success / history.length) * 100;
+  return pct.toFixed(0) + '%';
+}
+
+function paintSLA(id, history) {
+  var text = computeSLA(history);
+  var el = document.getElementById(id);
+  el.textContent = 'sla(20): ' + text;
+  if (text === '--') {
+    setPillState(id, 'warn');
+    return;
+  }
+  var value = Number(text.replace('%', ''));
+  if (value >= 99) {
+    setPillState(id, 'ok');
+  } else if (value >= 95) {
+    setPillState(id, 'warn');
+  } else {
+    setPillState(id, 'err');
+  }
+}
+
+function pushBool(history, value, maxLen) {
+  history.push(Boolean(value));
+  while (history.length > maxLen) {
+    history.shift();
+  }
+}
+
 async function refreshStatus() {
+  updateLastRefresh();
   var health = await check('/healthz', 2200, false);
   var ready = await check('/readyz', 2200, false);
 
   setStatus('health', health);
   setStatus('ready', ready);
+  if (typeof health.latency === 'number') {
+    pushMetric(healthLatencyHistory, health.latency, 20);
+    renderTrend('healthTrend', healthLatencyHistory);
+  }
+  if (typeof ready.latency === 'number') {
+    pushMetric(readyLatencyHistory, ready.latency, 20);
+    renderTrend('readyTrend', readyLatencyHistory);
+  }
+  pushBool(healthOkHistory, health.ok, 20);
+  pushBool(readyOkHistory, ready.ok, 20);
+  paintSLA('healthSla', healthOkHistory);
+  paintSLA('readySla', readyOkHistory);
 
   var admin = await check('/admin/configz', 2600, true);
   var adminCode = document.getElementById('adminCode');
   var adminState = document.getElementById('adminState');
   adminCode.textContent = 'status: ' + admin.status;
+  setPillState('adminCode', admin.status === 200 ? 'ok' : (admin.status === 401 || admin.status === 403 ? 'warn' : 'err'));
   if (admin.status === 200) {
     adminState.textContent = 'state: visible';
+    setPillState('adminState', 'ok');
   } else if (admin.status === 401 || admin.status === 403) {
     adminState.textContent = 'state: locked (auth required)';
+    setPillState('adminState', 'warn');
   } else {
     adminState.textContent = 'state: unavailable';
+    setPillState('adminState', 'err');
+  }
+
+  var overall = document.getElementById('overallState');
+  if (health.ok && ready.ok) {
+    overall.textContent = 'service: healthy';
+    setPillState('overallState', 'ok');
+    if (previousOverallState !== 'healthy') {
+      addTimelineEvent('Service transitioned to healthy', 'ok');
+      previousOverallState = 'healthy';
+    }
+  } else if (health.status === 'ERR' || ready.status === 'ERR') {
+    overall.textContent = 'service: unreachable';
+    setPillState('overallState', 'err');
+    if (previousOverallState !== 'unreachable') {
+      addTimelineEvent('Service became unreachable from browser', 'err');
+      previousOverallState = 'unreachable';
+    }
+  } else {
+    overall.textContent = 'service: degraded';
+    setPillState('overallState', 'warn');
+    if (previousOverallState !== 'degraded') {
+      addTimelineEvent('Service transitioned to degraded', 'warn');
+      previousOverallState = 'degraded';
+    }
+  }
+}
+
+function setResultState(state) {
+  var result = document.getElementById('result');
+  result.className = 'code';
+  if (state === 'ok') {
+    result.classList.add('ok');
+  }
+  if (state === 'err') {
+    result.classList.add('err');
   }
 }
 
@@ -575,10 +919,31 @@ async function sendSample(endpoint) {
   var result = document.getElementById('result');
 
   if (!document.getElementById('allowSend').checked) {
+    setResultState('err');
     result.textContent = 'Send blocked by safety guard. Enable "webhook test sends" first.';
     return;
   }
 
+  if (smokeInFlight) {
+    setResultState('err');
+    result.textContent = 'A smoke request is already in progress. Please wait.';
+    return;
+  }
+
+  var payloadObj;
+  try {
+    payloadObj = JSON.parse(payload);
+  } catch (_) {
+    setResultState('err');
+    result.textContent = 'Payload must be valid JSON before sending.';
+    return;
+  }
+
+  smokeInFlight = true;
+  setSmokeSendEnabled(false);
+  var started = performance.now();
+  setResultState('');
+  addTimelineEvent('Smoke request started for ' + endpoint, 'warn');
   result.textContent = 'Sending to ' + endpoint + '...';
   try {
     var headers = Object.assign({ 'Content-Type': 'application/json' }, authHeader(), parseExtraHeaders());
@@ -587,11 +952,12 @@ async function sendSample(endpoint) {
       headers: authHeader(),
       body: JSON.stringify({
         endpoint: endpoint,
-        payload: payload,
+        payload: JSON.stringify(payloadObj),
         headers: headers
       })
     });
     var body = await res.text();
+    var elapsed = Math.round(performance.now() - started);
     var parsed;
     try {
       parsed = JSON.parse(body);
@@ -601,14 +967,32 @@ async function sendSample(endpoint) {
     result.textContent = [
       'Endpoint: ' + endpoint,
       'Status: ' + (parsed.status || res.status),
+      'Latency: ' + elapsed + 'ms',
       '',
       (parsed.body || body || '(no response body)'),
       '',
       'Note: webhook providers usually require valid signatures/tokens.'
     ].join('\n');
+    setResultState(res.ok ? 'ok' : 'err');
+    addTimelineEvent('Smoke request completed for ' + endpoint + ' with status ' + (parsed.status || res.status), res.ok ? 'ok' : 'warn');
   } catch (err) {
+    setResultState('err');
     result.textContent = 'Request failed: ' + (err && err.message ? err.message : String(err));
+    addTimelineEvent('Smoke request failed for ' + endpoint, 'err');
+  } finally {
+    smokeInFlight = false;
+    setSmokeSendEnabled(document.getElementById('allowSend').checked);
   }
+}
+
+function setSmokeSendEnabled(enabled) {
+  document.querySelectorAll('button[data-endpoint]').forEach(function(btn) {
+    btn.disabled = !enabled;
+    btn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+  });
+  var state = document.getElementById('smokeGuardState');
+  state.textContent = enabled ? 'guard: enabled' : 'guard: locked';
+  setPillState('smokeGuardState', enabled ? 'ok' : 'warn');
 }
 
 function loadToken() {
@@ -629,8 +1013,32 @@ function setupAutoRefresh() {
   if (refreshTimer) {
     clearInterval(refreshTimer);
   }
-  if (document.getElementById('autoRefresh').checked) {
+  var enabled = document.getElementById('autoRefresh').checked;
+  localStorage.setItem('tpb.ui.autoRefresh', enabled ? '1' : '0');
+  document.getElementById('refreshMode').textContent = 'auto refresh: ' + (enabled ? 'on' : 'off');
+  if (enabled) {
     refreshTimer = setInterval(refreshStatus, 15000);
+  }
+}
+
+function updateLastRefresh() {
+  lastRefreshAt = Date.now();
+  document.getElementById('lastRefresh').textContent = 'last refresh: ' + new Date().toLocaleTimeString();
+}
+
+function updateFreshnessIndicator() {
+  if (!lastRefreshAt) {
+    return;
+  }
+  var ageSec = Math.floor((Date.now() - lastRefreshAt) / 1000);
+  var text = 'last refresh: ' + ageSec + 's ago';
+  document.getElementById('lastRefresh').textContent = text;
+  if (ageSec <= 20) {
+    setPillState('lastRefresh', 'ok');
+  } else if (ageSec <= 45) {
+    setPillState('lastRefresh', 'warn');
+  } else {
+    setPillState('lastRefresh', 'err');
   }
 }
 
@@ -642,9 +1050,18 @@ document.querySelectorAll('button[data-endpoint]').forEach(function(btn) {
 
 document.getElementById('manualRefresh').addEventListener('click', refreshStatus);
 document.getElementById('autoRefresh').addEventListener('change', setupAutoRefresh);
+document.getElementById('allowSend').addEventListener('change', function(ev) {
+  setSmokeSendEnabled(Boolean(ev.target.checked));
+});
 document.getElementById('saveToken').addEventListener('click', function() {
   persistToken();
   refreshStatus();
+});
+document.getElementById('token').addEventListener('keydown', function(ev) {
+  if (ev.key === 'Enter') {
+    persistToken();
+    refreshStatus();
+  }
 });
 document.getElementById('clearToken').addEventListener('click', function() {
   document.getElementById('token').value = '';
@@ -652,9 +1069,41 @@ document.getElementById('clearToken').addEventListener('click', function() {
   refreshStatus();
 });
 
+document.addEventListener('keydown', function(ev) {
+  var tag = document.activeElement && document.activeElement.tagName ? document.activeElement.tagName.toLowerCase() : '';
+  var isTyping = tag === 'input' || tag === 'textarea';
+  if (isTyping) {
+    return;
+  }
+  var key = ev.key ? ev.key.toLowerCase() : '';
+  if (key === 'r') {
+    ev.preventDefault();
+    refreshStatus();
+    return;
+  }
+  if (key === 's') {
+    ev.preventDefault();
+    persistToken();
+    refreshStatus();
+    return;
+  }
+  if (key === 'c') {
+    ev.preventDefault();
+    document.getElementById('token').value = '';
+    sessionStorage.removeItem('tpb.ui.jwt');
+    refreshStatus();
+  }
+});
+
 loadToken();
+if (localStorage.getItem('tpb.ui.autoRefresh') === '0') {
+  document.getElementById('autoRefresh').checked = false;
+}
 refreshStatus();
 setupAutoRefresh();
+updateLastRefresh();
+setSmokeSendEnabled(document.getElementById('allowSend').checked);
+setInterval(updateFreshnessIndicator, 1000);
 `
 
 func setUISecurityHeaders(w http.ResponseWriter) {
