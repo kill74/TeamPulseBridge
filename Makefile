@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: help verify lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod
+.PHONY: help verify lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
 
 help:
 	@echo "Application Targets:"
@@ -31,6 +31,12 @@ help:
 	@echo "  make infra-plan-*            - Plan infrastructure deployment"
 	@echo "  make infra-deploy-*          - Deploy infrastructure"
 	@echo "  make infra-destroy-*         - Destroy infrastructure (⚠️ dangerous)"
+	@echo ""
+	@echo "GitOps Targets (see make gitops-help for details):"
+	@echo "  make gitops-help             - Show GitOps targets"
+	@echo "  make gitops-render-*         - Render kustomize overlays (*=staging|prod|argocd)"
+	@echo "  make gitops-validate         - Validate all GitOps manifests"
+	@echo "  make gitops-bootstrap        - Bootstrap Argo CD on GKE"
 
 fmt:
 	cd services/ingestion-gateway && gofmt -w ./cmd ./internal
@@ -186,3 +192,35 @@ infra-destroy-staging:
 
 infra-destroy-prod:
 	cd infrastructure/scripts && bash destroy.sh prod
+
+# GitOps Targets
+
+gitops-help:
+	@echo "GitOps (Argo CD) Targets:"
+	@echo ""
+	@echo "Validation:"
+	@echo "  make gitops-render-staging   - Render staging overlay"
+	@echo "  make gitops-render-prod      - Render production overlay"
+	@echo "  make gitops-render-argocd    - Render Argo CD bootstrap manifests"
+	@echo "  make gitops-validate         - Render all GitOps manifests"
+	@echo ""
+	@echo "Bootstrap:"
+	@echo "  make gitops-bootstrap PROJECT_ID=<id> CLUSTER=<name> REGION=<region> [REPO_URL=<url>] [REVISION=<ref>]"
+
+gitops-render-staging:
+	kubectl kustomize deploy/k8s/overlays/staging
+
+gitops-render-prod:
+	kubectl kustomize deploy/k8s/overlays/prod
+
+gitops-render-argocd:
+	kubectl kustomize deploy/gitops/argocd
+
+gitops-validate: gitops-render-staging gitops-render-prod gitops-render-argocd
+	@echo "GitOps manifests rendered successfully"
+
+gitops-bootstrap:
+	@test -n "$(PROJECT_ID)" || (echo "PROJECT_ID is required" && exit 1)
+	@test -n "$(CLUSTER)" || (echo "CLUSTER is required" && exit 1)
+	@test -n "$(REGION)" || (echo "REGION is required" && exit 1)
+	bash infrastructure/scripts/bootstrap-gitops-argocd.sh $(PROJECT_ID) $(CLUSTER) $(REGION) $(REPO_URL) $(REVISION)

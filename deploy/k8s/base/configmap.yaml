@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingestion-gateway-config
+data:
+  PORT: '8080'
+  REQUEST_TIMEOUT_SEC: '15'
+  QUEUE_BUFFER: '4096'
+  QUEUE_BACKEND: 'pubsub'
+  REQUIRE_SECRETS: 'true'
+  ENVIRONMENT: 'staging'
+  ADMIN_AUTH_ENABLED: 'true'
+  PUBSUB_TOPIC_ID: 'teampulse-events'

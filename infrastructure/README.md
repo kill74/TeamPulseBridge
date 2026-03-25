@@ -4,6 +4,30 @@ Professional-grade infrastructure as code using Terraform for production GCP dep
 
 See [docs/README.md](docs/README.md) for complete setup and operation guide.
 
+## GitOps (Argo CD)
+
+Application delivery is defined declaratively and reconciled by Argo CD.
+
+Bootstrap Argo CD in a target GKE cluster:
+
+```bash
+bash scripts/bootstrap-gitops-argocd.sh <gcp-project-id> <gke-cluster-name> <gke-region>
+```
+
+GitOps manifests live in:
+
+- `../deploy/k8s/base`
+- `../deploy/k8s/overlays/staging`
+- `../deploy/k8s/overlays/prod`
+- `../deploy/gitops/argocd`
+
+To validate manifests before commit:
+
+```bash
+cd ..
+make gitops-validate
+```
+
 ## Quick Start
 
 ### 1. Initialize Backend

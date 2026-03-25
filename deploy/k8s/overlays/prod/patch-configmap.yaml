@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingestion-gateway-config
+data:
+  ENVIRONMENT: 'prod'
+  QUEUE_BUFFER: '8192'
+  REQUEST_TIMEOUT_SEC: '20'

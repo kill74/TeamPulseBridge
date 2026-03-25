@@ -27,6 +27,7 @@ nav:
   - Runbooks:
       - Local Development: runbooks/local-development.md
       - Release Process: runbooks/release.md
+      - GitOps with Argo CD: runbooks/gitops-argocd.md
       - Branch Protection: runbooks/branch-protection.md
 markdown_extensions:
   - admonition

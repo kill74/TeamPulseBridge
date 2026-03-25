@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: teampulse
+  namespace: argocd
+spec:
+  description: TeamPulse GitOps project
+  sourceRepos:
+    - https://github.com/kill74/TeamPulseBridge.git
+  destinations:
+    - namespace: ingestion-gateway-staging
+      server: https://kubernetes.default.svc
+    - namespace: ingestion-gateway-prod
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'

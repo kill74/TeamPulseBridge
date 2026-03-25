@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ingestion-gateway-prod
+resources:
+  - ../../base
+patches:
+  - path: patch-configmap.yaml
+  - path: patch-deployment.yaml
+  - path: patch-hpa.yaml
+  - path: patch-pdb.yaml
+labels:
+  - pairs:
+      app.kubernetes.io/environment: prod
+images:
+  - name: ghcr.io/kill74/teampulse-ingestion-gateway
+    newTag: v1.0.0

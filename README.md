@@ -148,6 +148,36 @@ make infra-deploy-prod
 
 See [infrastructure/README.md](infrastructure/README.md) for complete setup guide.
 
+## GitOps Deployment (Argo CD)
+
+This repository now includes a production-ready GitOps layout with Argo CD:
+
+- Kubernetes manifests with Kustomize base + overlays for `staging` and `prod`
+- Argo CD app-of-apps bootstrap for environment applications
+- Controlled sync policy: automated in staging, manual sync gate in production
+- Environment isolation by namespace (`ingestion-gateway-staging` and `ingestion-gateway-prod`)
+
+Paths:
+
+- `deploy/k8s/base`
+- `deploy/k8s/overlays/staging`
+- `deploy/k8s/overlays/prod`
+- `deploy/gitops/argocd`
+
+Render and validate manifests locally:
+
+```bash
+make gitops-validate
+```
+
+Bootstrap Argo CD on GKE:
+
+```bash
+make gitops-bootstrap PROJECT_ID=<gcp-project> CLUSTER=<gke-cluster> REGION=<gke-region>
+```
+
+See the operational runbook in `site-docs/docs/runbooks/gitops-argocd.md`.
+
 ## Security Defaults
 
 - HMAC/token verification for all webhook providers
@@ -202,7 +232,7 @@ Useful day-to-day commands:
 - ✅ Add integration tests against Pub/Sub emulator
 - ✅ Add Terraform modules for staging/prod environments (complete)
 - Add contract tests for webhook payload compatibility
-- Implement GitOps workflow (ArgoCD or Flux)
+- ✅ Implement GitOps workflow (Argo CD)
 - Multi-region active-active deployment
 - Custom metrics and SLO dashboards
 

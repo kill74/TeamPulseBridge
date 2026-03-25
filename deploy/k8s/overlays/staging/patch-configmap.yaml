@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingestion-gateway-config
+data:
+  ENVIRONMENT: 'staging'
+  QUEUE_BUFFER: '4096'

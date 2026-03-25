@@ -315,9 +315,19 @@ terraform apply
 ### Update Application
 
 ```bash
-# Deployment managed by CI/CD pipeline
-# Terraform manages infrastructure only
-# Deploy via: kubectl apply, Helm, or GitOps tool
+# Terraform manages infrastructure only.
+# Application delivery is managed by Argo CD GitOps.
+
+# 1) Bootstrap Argo CD once per cluster
+cd infrastructure/scripts
+./bootstrap-gitops-argocd.sh <gcp-project-id> <gke-cluster-name> <gke-region>
+
+# 2) Promote a new image by editing the overlay image tag
+# deploy/k8s/overlays/staging/kustomization.yaml
+# deploy/k8s/overlays/prod/kustomization.yaml
+
+# 3) Commit and push to main
+# Argo CD reconciles staging automatically; production requires manual sync
 ```
 
 ### Destroy Environment
