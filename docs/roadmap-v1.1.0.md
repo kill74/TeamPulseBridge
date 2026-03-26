@@ -1,7 +1,5 @@
 # Roadmap v1.1.0
 
-Owner perspective: senior engineering plan emphasizing reliability, safety, and operational leverage.
-
 ## 1. Reliability and Resilience
 
 - Add chaos drills for regional failover and recovery time validation.
