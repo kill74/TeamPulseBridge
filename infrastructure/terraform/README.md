@@ -34,3 +34,6 @@ Module guides:
 - Never commit real secrets in backend or tfvars files.
 - Keep environment drift low by using module inputs instead of ad-hoc edits.
 - Run `terraform fmt -recursive` before opening a pull request.
+- Production IAM exception flow: `security_additional_permissions` is deny-listed for high-privilege roles.
+- Production IAM exception flow: any non-empty exception requires `security_allow_production_iam_exceptions = true`.
+- Production IAM exception flow: `security_production_iam_exception_justification` must include ticket (for example `SEC-1234`) and expiry date (`YYYY-MM-DD`).

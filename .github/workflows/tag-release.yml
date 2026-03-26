@@ -4,9 +4,29 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Semantic version tag (example: v1.2.3)'
+        description: "Semantic version tag (example: v1.2.3)"
         required: true
         type: string
+      checklist_ci_green:
+        description: "Release checklist: CI and smoke checks are green on default branch"
+        required: true
+        type: boolean
+        default: false
+      checklist_risk_reviewed:
+        description: "Release checklist: risk level, blast radius, and rollout strategy reviewed"
+        required: true
+        type: boolean
+        default: false
+      checklist_rollback_ready:
+        description: "Release checklist: rollback path is documented and validated"
+        required: true
+        type: boolean
+        default: false
+      checklist_monitoring_ready:
+        description: "Release checklist: monitoring and post-deploy verification are ready"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -33,6 +53,47 @@ jobs:
             echo "Invalid SemVer tag: $VERSION"
             exit 1
           fi
+
+      - name: Enforce default branch dispatch
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" != "${{ github.event.repository.default_branch }}" ]]; then
+            echo "tag-release must run from default branch: ${{ github.event.repository.default_branch }}"
+            exit 1
+          fi
+
+      - name: Validate release checklist gates
+        shell: bash
+        run: |
+          if [[ "${{ github.event.inputs.checklist_ci_green }}" != "true" ]]; then
+            echo "Checklist gate failed: CI and smoke checks must be green"
+            exit 1
+          fi
+          if [[ "${{ github.event.inputs.checklist_risk_reviewed }}" != "true" ]]; then
+            echo "Checklist gate failed: risk review must be completed"
+            exit 1
+          fi
+          if [[ "${{ github.event.inputs.checklist_rollback_ready }}" != "true" ]]; then
+            echo "Checklist gate failed: rollback readiness must be confirmed"
+            exit 1
+          fi
+          if [[ "${{ github.event.inputs.checklist_monitoring_ready }}" != "true" ]]; then
+            echo "Checklist gate failed: monitoring and verification readiness must be confirmed"
+            exit 1
+          fi
+
+      - name: Publish checklist summary
+        shell: bash
+        run: |
+          {
+            echo "## Release Checklist Validation"
+            echo
+            echo "- Version: ${{ github.event.inputs.version }}"
+            echo "- CI and smoke green: ${{ github.event.inputs.checklist_ci_green }}"
+            echo "- Risk reviewed: ${{ github.event.inputs.checklist_risk_reviewed }}"
+            echo "- Rollback ready: ${{ github.event.inputs.checklist_rollback_ready }}"
+            echo "- Monitoring ready: ${{ github.event.inputs.checklist_monitoring_ready }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Ensure tag does not exist
         shell: bash

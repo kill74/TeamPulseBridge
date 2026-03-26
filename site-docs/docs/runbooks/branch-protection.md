@@ -17,6 +17,7 @@ Use these settings on the default branch to keep quality and release safety high
 - ci / verify
 - smoke / smoke-compose
 - docs / docs-build
+- pr-governance / governance
 
 ## Admin Settings
 
@@ -27,3 +28,4 @@ Use these settings on the default branch to keep quality and release safety high
 
 - Prefer squash merge for clean history
 - Require conventional commit style in PR title or commit message
+- Allow auto-merge only for Dependabot semver patch updates after required checks pass

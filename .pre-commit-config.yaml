@@ -1,0 +1,41 @@
+minimum_pre_commit_version: "3.7.0"
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: gofmt-ingestion-gateway
+        name: gofmt (ingestion-gateway)
+        entry: bash -c 'cd services/ingestion-gateway && gofmt -w ./cmd ./internal && git add ./cmd ./internal'
+        language: system
+        pass_filenames: false
+
+      - id: govet-ingestion-gateway
+        name: go vet (ingestion-gateway)
+        entry: bash -c 'cd services/ingestion-gateway && go vet ./...'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: terraform-fmt-check
+        name: terraform fmt check
+        entry: bash -c 'cd infrastructure/terraform && terraform fmt -check -recursive'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: checkov-iac-policy
+        name: checkov IaC policy checks
+        entry: bash -c 'checkov --config-file .checkov.yaml --framework terraform,kubernetes --directory infrastructure/terraform --directory deploy/k8s --directory deploy/gitops/argocd'
+        language: system
+        pass_filenames: false
+        stages: [manual]

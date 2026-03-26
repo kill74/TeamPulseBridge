@@ -16,6 +16,18 @@ Thanks for your interest in improving TeamPulse Bridge.
 3. Run local verification before opening a PR.
 4. Ensure CI checks pass.
 
+First-time setup (repository root):
+
+```bash
+make dev-setup
+```
+
+Fast local quality gate:
+
+```bash
+make dev-check
+```
+
 Recommended pre-PR command sequence (repository root):
 
 ```bash

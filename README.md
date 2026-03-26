@@ -37,7 +37,7 @@ flowchart LR
 - Async queue publisher abstraction (`log` and Google Pub/Sub backends)
 - Structured logging (`slog`), tracing (OpenTelemetry), and Prometheus metrics
 - JWT-protected admin/ops routes
-- CI pipeline with lint, tests, race detector, and vuln scan
+- CI pipeline with lint, tests, race detector, vuln scan, and policy-as-code checks (Terraform + Kubernetes)
 - Dockerized local stack with Prometheus + Grafana
 
 ## Repository Structure
@@ -81,6 +81,13 @@ Repository navigation guides:
 
 ```bash
 make verify
+```
+
+### 2.1) Developer Onboarding (Recommended)
+
+```bash
+make dev-setup
+make dev-check
 ```
 
 ### 3) Run Service Locally
@@ -209,17 +216,20 @@ Useful day-to-day commands:
 
 ## Release and Delivery
 
-- `ci.yml` runs fmt/vet/tests/race/lint/vuln checks
+- `ci.yml` runs Terraform fmt/validate, fmt/vet/tests/race/lint/vuln, and policy-as-code checks for Terraform and Kubernetes manifests
 - `smoke.yml` builds Docker images and validates `/healthz` and `/metrics`
-- `release.yml` creates GitHub Releases for `vX.Y.Z` tags and appends changelog entries
-- `tag-release.yml` lets you create SemVer tags from GitHub Actions manually
+- `release.yml` creates GitHub Releases for `vX.Y.Z` tags, publishes signed source artifacts, and appends changelog entries
+- `tag-release.yml` enforces automated release checklist gates before creating SemVer tags
 - `docs.yml` builds documentation with strict checks
 - `docs-deploy.yml` publishes docs to `gh-pages`
+- `pr-governance.yml` enforces PR title, labels, and required template sections
+- `dependabot.yml` automates weekly dependency updates for Go modules, GitHub Actions, and docs Python packages
+- `dependabot-automerge.yml` enables auto-merge only for Dependabot semver patch updates after required checks pass
 
 ### Cut a release
 
 1. Go to GitHub Actions.
-2. Run `tag-release` workflow with `version` like `v1.0.0`.
+2. Run `tag-release` workflow with `version` like `v1.0.0` and confirm all checklist gates.
 3. `release` workflow publishes the release and updates `CHANGELOG.md`.
 
 ## Docs Site
@@ -248,7 +258,7 @@ Useful day-to-day commands:
 ### Next Release Focus (v1.1.0)
 
 - Reliability game days and automated failover validation
-- Policy-as-code guardrails in CI for Terraform and Kubernetes
+- Policy-as-code guardrails in CI for Terraform and Kubernetes, plus production IAM exception controls
 - Expanded provider contract suite with schema drift detection
 - Security operations dashboard and alert tuning
 

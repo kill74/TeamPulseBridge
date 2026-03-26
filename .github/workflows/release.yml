@@ -3,11 +3,12 @@ name: release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 permissions:
   contents: write
   actions: write
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref_name }}
@@ -44,11 +45,87 @@ jobs:
         shell: bash
         run: cp release-notes.md /tmp/release-notes.md
 
+      - name: Build release artifacts
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          git archive --format=tar.gz --output "teampulsebridge-${VERSION}-source.tar.gz" "$TAG"
+          git archive --format=zip --output "teampulsebridge-${VERSION}-source.zip" "$TAG"
+          sha256sum \
+            "teampulsebridge-${VERSION}-source.tar.gz" \
+            "teampulsebridge-${VERSION}-source.zip" > SHA256SUMS
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.9.1
+
+      - name: Sign release artifacts (keyless)
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          cosign sign-blob --yes \
+            --output-signature "teampulsebridge-${VERSION}-source.tar.gz.sig" \
+            --output-certificate "teampulsebridge-${VERSION}-source.tar.gz.pem" \
+            "teampulsebridge-${VERSION}-source.tar.gz"
+
+          cosign sign-blob --yes \
+            --output-signature "teampulsebridge-${VERSION}-source.zip.sig" \
+            --output-certificate "teampulsebridge-${VERSION}-source.zip.pem" \
+            "teampulsebridge-${VERSION}-source.zip"
+
+          cosign sign-blob --yes \
+            --output-signature "SHA256SUMS.sig" \
+            --output-certificate "SHA256SUMS.pem" \
+            SHA256SUMS
+
+      - name: Verify signed artifacts
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          CERT_IDENTITY="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${TAG}"
+          CERT_ISSUER="https://token.actions.githubusercontent.com"
+
+          sha256sum -c SHA256SUMS
+
+          cosign verify-blob \
+            --signature "teampulsebridge-${VERSION}-source.tar.gz.sig" \
+            --certificate "teampulsebridge-${VERSION}-source.tar.gz.pem" \
+            --certificate-identity "$CERT_IDENTITY" \
+            --certificate-oidc-issuer "$CERT_ISSUER" \
+            "teampulsebridge-${VERSION}-source.tar.gz"
+
+          cosign verify-blob \
+            --signature "teampulsebridge-${VERSION}-source.zip.sig" \
+            --certificate "teampulsebridge-${VERSION}-source.zip.pem" \
+            --certificate-identity "$CERT_IDENTITY" \
+            --certificate-oidc-issuer "$CERT_ISSUER" \
+            "teampulsebridge-${VERSION}-source.zip"
+
+          cosign verify-blob \
+            --signature "SHA256SUMS.sig" \
+            --certificate "SHA256SUMS.pem" \
+            --certificate-identity "$CERT_IDENTITY" \
+            --certificate-oidc-issuer "$CERT_ISSUER" \
+            SHA256SUMS
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           body_path: release-notes.md
           generate_release_notes: true
+          files: |
+            teampulsebridge-*-source.tar.gz
+            teampulsebridge-*-source.tar.gz.sig
+            teampulsebridge-*-source.tar.gz.pem
+            teampulsebridge-*-source.zip
+            teampulsebridge-*-source.zip.sig
+            teampulsebridge-*-source.zip.pem
+            SHA256SUMS
+            SHA256SUMS.sig
+            SHA256SUMS.pem
 
       - name: Checkout default branch for changelog update
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

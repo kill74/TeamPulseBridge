@@ -4,6 +4,10 @@
 
 Describe what changed and why.
 
+## Linked Work
+
+- Issue/ADR/Ticket:
+
 ## Risk Level
 
 - [ ] low
@@ -18,12 +22,24 @@ Describe what changed and why.
 - [ ] docs
 - [ ] chore
 
+## Required Labels
+
+- [ ] One risk label is set (`risk:low`, `risk:medium`, or `risk:high`)
+- [ ] One type label is set (`type:*`)
+
 ## Validation
 
 - [ ] `go test ./...` passes
 - [ ] CI checks pass
 - [ ] Backward compatibility assessed
 - [ ] Rollback strategy documented
+- [ ] `make dev-check` passes locally
+
+## Rollout and Rollback
+
+- Rollout strategy:
+- Blast radius:
+- Rollback command/path:
 
 ## Security and Privacy
 
@@ -54,3 +70,4 @@ Reference: `docs/pr-checklists.md`
 - [ ] Docs updated
 - [ ] Changelog entry (if needed)
 - [ ] Linked issue/ADR
+- [ ] Monitoring/alerts verification steps included

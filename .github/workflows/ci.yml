@@ -2,9 +2,9 @@ name: ci
 
 on:
   push:
-    branches: ['main', 'master']
+    branches: ["main", "master"]
   pull_request:
-    branches: ['main', 'master']
+    branches: ["main", "master"]
 
 permissions:
   contents: read
@@ -14,6 +14,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  terraform-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init (backend disabled)
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate
+
   verify:
     runs-on: ubuntu-latest
     defaults:
@@ -27,7 +49,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.26.x'
+          go-version: "1.26.x"
           cache-dependency-path: services/ingestion-gateway/go.sum
 
       - name: Download dependencies
@@ -57,3 +79,30 @@ jobs:
 
       - name: Vulnerability check
         run: govulncheck -format text ./...
+
+  policy-as-code:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install checkov==3.2.469
+
+      - name: Terraform policy checks
+        run: |
+          checkov \
+            --config-file .checkov.yaml \
+            --framework terraform \
+            --directory infrastructure/terraform
+
+      - name: Kubernetes manifest policy checks
+        run: |
+          checkov \
+            --config-file .checkov.yaml \
+            --framework kubernetes \
+            --directory deploy/k8s \
+            --directory deploy/gitops/argocd

@@ -1,0 +1,11 @@
+quiet: true
+compact: true
+soft-fail: false
+
+# Focus on Terraform and Kubernetes policy-as-code checks in CI.
+framework:
+  - terraform
+  - kubernetes
+
+# Keep scans deterministic and scoped to IaC directories.
+download-external-modules: false

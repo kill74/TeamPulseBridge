@@ -113,6 +113,8 @@ module "security" {
   create_service_account_key = var.create_service_account_key
   pubsub_role                = var.security_pubsub_role
   permissions                = var.security_additional_permissions
+  allow_production_iam_exceptions = var.security_allow_production_iam_exceptions
+  production_iam_exception_justification = var.security_production_iam_exception_justification
   https_egress_cidrs         = var.security_https_egress_cidrs
   db_egress_cidrs            = var.security_db_egress_cidrs
 
@@ -270,6 +272,8 @@ module "security_secondary" {
   create_service_account_key = var.create_service_account_key
   pubsub_role                = var.security_pubsub_role
   permissions                = var.security_additional_permissions
+  allow_production_iam_exceptions = var.security_allow_production_iam_exceptions
+  production_iam_exception_justification = var.security_production_iam_exception_justification
   https_egress_cidrs         = var.security_https_egress_cidrs
   db_egress_cidrs            = var.security_db_egress_cidrs
 

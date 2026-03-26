@@ -2,15 +2,21 @@
 
 - @guilhermesales
 
-# Service ownership
+## Service ownership
 
 /services/ingestion-gateway/ @guilhermesales
 
-# Infra and deployment
+## Infra and deployment
 
 /deploy/ @guilhermesales
+/infrastructure/ @guilhermesales
 
-# Docs and ADRs
+## Docs and ADRs
 
 /docs/ @guilhermesales
 /site-docs/ @guilhermesales
+
+## Repository automation
+
+/.github/ @guilhermesales
+/Makefile @guilhermesales

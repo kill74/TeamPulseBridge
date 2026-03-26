@@ -62,6 +62,53 @@ variable "permissions" {
   description = "Additional IAM roles to grant"
   type        = list(string)
   default     = []
+  validation {
+    condition = alltrue([
+      for role in var.permissions :
+      !contains([
+        "roles/owner",
+        "roles/editor",
+        "roles/resourcemanager.projectIamAdmin",
+        "roles/iam.roleAdmin",
+        "roles/iam.securityAdmin",
+        "roles/iam.serviceAccountAdmin",
+        "roles/iam.serviceAccountKeyAdmin",
+        "roles/iam.serviceAccountTokenCreator",
+        "roles/iam.workloadIdentityPoolAdmin",
+        "roles/orgpolicy.policyAdmin",
+      ], role)
+    ])
+    error_message = "permissions contains a deny-listed role. Remove high-privilege roles (owner/editor/IAM admin variants)."
+  }
+  validation {
+    condition = var.environment != "prod" || length(var.permissions) == 0 || (
+      var.allow_production_iam_exceptions &&
+      length(trimspace(var.production_iam_exception_justification)) >= 20 &&
+      length(regexall("[A-Z]{2,10}-[0-9]{1,6}", var.production_iam_exception_justification)) > 0 &&
+      length(regexall("20[0-9]{2}-[01][0-9]-[0-3][0-9]", var.production_iam_exception_justification)) > 0
+    )
+    error_message = "In production, additional IAM roles require allow_production_iam_exceptions=true and a justification with at least 20 characters including a ticket (e.g. SEC-1234) and expiry date (YYYY-MM-DD)."
+  }
+}
+
+variable "allow_production_iam_exceptions" {
+  description = "Allow additional IAM role grants in production when a documented exception is required"
+  type        = bool
+  default     = false
+}
+
+variable "production_iam_exception_justification" {
+  description = "Required justification for production IAM exceptions (ticket, risk acceptance, and expiry)"
+  type        = string
+  default     = ""
+  validation {
+    condition = var.environment != "prod" || !var.allow_production_iam_exceptions || (
+      length(trimspace(var.production_iam_exception_justification)) >= 20 &&
+      length(regexall("[A-Z]{2,10}-[0-9]{1,6}", var.production_iam_exception_justification)) > 0 &&
+      length(regexall("20[0-9]{2}-[01][0-9]-[0-3][0-9]", var.production_iam_exception_justification)) > 0
+    )
+    error_message = "production_iam_exception_justification must include at least 20 characters, a ticket (e.g. SEC-1234), and an expiry date (YYYY-MM-DD) when production IAM exceptions are enabled."
+  }
 }
 
 variable "pubsub_role" {
@@ -73,9 +120,8 @@ variable "pubsub_role" {
       "roles/pubsub.publisher",
       "roles/pubsub.subscriber",
       "roles/pubsub.viewer",
-      "roles/pubsub.editor",
     ], var.pubsub_role)
-    error_message = "pubsub_role must be one of: roles/pubsub.publisher, roles/pubsub.subscriber, roles/pubsub.viewer, roles/pubsub.editor."
+    error_message = "pubsub_role must be one of: roles/pubsub.publisher, roles/pubsub.subscriber, roles/pubsub.viewer."
   }
 }
 

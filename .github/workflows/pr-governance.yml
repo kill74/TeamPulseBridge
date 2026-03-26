@@ -1,0 +1,91 @@
+name: pr-governance
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-governance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate PR title (conventional commit style)
+        uses: amannn/action-semantic-pull-request@v5
+        with:
+          types: |
+            feat
+            fix
+            docs
+            chore
+            refactor
+            test
+            ci
+            perf
+            build
+            revert
+          requireScope: false
+
+      - name: Validate labels and PR template sections
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const actor = context.actor || "";
+
+            if (actor === "dependabot[bot]") {
+              core.info("Skipping label/template governance checks for Dependabot PR.");
+              return;
+            }
+
+            const labels = (pr.labels || []).map((l) => l.name.toLowerCase());
+            const body = pr.body || "";
+
+            const missing = [];
+
+            const hasRiskLabel = labels.some((l) => l === "risk:low" || l === "risk:medium" || l === "risk:high");
+            const hasTypeLabel = labels.some((l) => l.startsWith("type:"));
+
+            if (!hasRiskLabel) {
+              missing.push("Add one risk label: risk:low, risk:medium, or risk:high.");
+            }
+
+            if (!hasTypeLabel) {
+              missing.push("Add one type label (for example: type:feat, type:fix, type:docs, type:chore).");
+            }
+
+            const requiredSections = [
+              "## Summary",
+              "## Linked Work",
+              "## Risk Level",
+              "## Validation",
+              "## Rollout and Rollback",
+              "## Security and Privacy",
+              "## Observability",
+            ];
+
+            for (const section of requiredSections) {
+              if (!body.includes(section)) {
+                missing.push(`Missing required PR section: ${section}`);
+              }
+            }
+
+            const requiresRolloutDetails = ["- Rollout strategy:", "- Blast radius:", "- Rollback command/path:"];
+            for (const field of requiresRolloutDetails) {
+              if (!body.includes(field)) {
+                missing.push(`Missing rollout/rollback field: ${field}`);
+              }
+            }
+
+            if (missing.length > 0) {
+              core.setFailed(missing.join("\n"));
+            } else {
+              core.info("PR governance checks passed.");
+            }

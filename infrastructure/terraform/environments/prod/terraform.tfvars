@@ -61,6 +61,11 @@ enable_pod_security_policy = true
 create_service_account_key = false
 security_pubsub_role = "roles/pubsub.publisher"
 security_additional_permissions = []
+# Production IAM exceptions are blocked by default.
+# Enable only with approved risk acceptance and bounded expiry.
+# security_allow_production_iam_exceptions = true
+# security_additional_permissions = ["roles/pubsub.subscriber"]
+# security_production_iam_exception_justification = "SEC-1234 temporary subscriber access for incident replay until 2026-12-31"
 security_https_egress_cidrs = [
 	"199.36.153.8/30",
 	"10.0.0.0/8",

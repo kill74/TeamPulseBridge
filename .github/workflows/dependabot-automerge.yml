@@ -1,0 +1,58 @@
+name: dependabot-automerge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dependabot-automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  enable-automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for safe patch updates
+        if: steps.metadata.outputs.update-type == 'version-update:semver-patch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            await github.graphql(
+              `mutation($pullRequestId: ID!) {
+                enablePullRequestAutoMerge(input: {
+                  pullRequestId: $pullRequestId,
+                  mergeMethod: SQUASH
+                }) {
+                  pullRequest {
+                    number
+                    autoMergeRequest {
+                      enabledAt
+                    }
+                  }
+                }
+              }`,
+              {
+                pullRequestId: context.payload.pull_request.node_id,
+              }
+            );
+
+            core.notice(`Auto-merge enabled for Dependabot patch PR #${prNumber}.`);
+
+      - name: Skip non-patch updates
+        if: steps.metadata.outputs.update-type != 'version-update:semver-patch'
+        run: |
+          echo "Auto-merge skipped: only semver patch updates are auto-merged." >> "$GITHUB_STEP_SUMMARY"
+          echo "Detected update type: ${{ steps.metadata.outputs.update-type }}" >> "$GITHUB_STEP_SUMMARY"

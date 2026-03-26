@@ -1,9 +1,13 @@
 SHELL := /bin/sh
 
-.PHONY: help verify lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
+.PHONY: help dev-setup dev-check precommit-install precommit-run verify lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
 
 help:
 	@echo "Application Targets:"
+	@echo "  make dev-setup     - Install local developer tooling and git hooks"
+	@echo "  make dev-check     - Run fast local quality gates"
+	@echo "  make precommit-install - Install pre-commit hooks"
+	@echo "  make precommit-run - Run pre-commit hooks on all files"
 	@echo "  make fmt           - Format all Go code"
 	@echo "  make lint          - Run golangci-lint"
 	@echo "  make test          - Run unit tests"
@@ -37,6 +41,28 @@ help:
 	@echo "  make gitops-render-*         - Render kustomize overlays (*=staging|prod|argocd)"
 	@echo "  make gitops-validate         - Validate all GitOps manifests"
 	@echo "  make gitops-bootstrap        - Bootstrap Argo CD on GKE"
+
+dev-setup:
+	@command -v go >/dev/null 2>&1 || (echo "Go is required" && exit 1)
+	@command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1)
+	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469
+	@python3 -m pre_commit install --install-hooks
+	@python3 -m pre_commit install -t pre-push
+	@echo "Developer setup completed"
+
+precommit-install:
+	@command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1)
+	@python3 -m pip install --upgrade pip pre-commit
+	@python3 -m pre_commit install --install-hooks
+	@python3 -m pre_commit install -t pre-push
+
+precommit-run:
+	@command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1)
+	@python3 -m pre_commit run --all-files
+
+dev-check:
+	@$(MAKE) precommit-run
+	@$(MAKE) verify
 
 fmt:
 	cd services/ingestion-gateway && gofmt -w ./cmd ./internal
