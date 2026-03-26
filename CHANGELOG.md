@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.1 - 2026-03-26
+
+- ci(release): preserve release notes across checkout and commit changelog via git (89e5176)
+- Update roadmap-v1.1.0.md (1f95bab)
+
+
 All notable changes to this project will be documented in this file.
 
 The format is inspired by Keep a Changelog and this project uses Semantic Versioning.
