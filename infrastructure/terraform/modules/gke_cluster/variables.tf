@@ -155,6 +155,18 @@ variable "deletion_protection" {
   default     = true
 }
 
+variable "manage_kubernetes_bootstrap_resources" {
+  description = "Create Kubernetes bootstrap resources (RBAC bindings) from this module"
+  type        = bool
+  default     = true
+}
+
+variable "generate_local_kubeconfig" {
+  description = "Generate local kubeconfig helper file from cluster CA"
+  type        = bool
+  default     = true
+}
+
 variable "network_dependency" {
   description = "Explicit network dependency"
   type        = any

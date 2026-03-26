@@ -72,6 +72,30 @@ Professional-grade Terraform infrastructure for staging and production GCP envir
 **Infrastructure as Code**: Version-controlled, reproducible deployments
 **State Management**: Remote GCS backend with encryption
 
+## Active-Active Multi-Region Topology
+
+The root Terraform module supports optional active-active deployment in two regions.
+
+Configuration knobs:
+
+- `enable_multi_region = true`
+- `region` and `secondary_region`
+- `secondary_gke_subnet_cidr`, `secondary_pods_cidr`, `secondary_services_cidr`, `secondary_db_subnet_cidr`
+- `secondary_app_domain` (optional)
+
+Behavior when enabled:
+
+1. Primary stack is deployed in `region`.
+2. Secondary stack is deployed in `secondary_region`.
+3. Additional outputs are exposed for secondary cluster/database and topology summary.
+
+Important: Multi-region compute does not automatically guarantee globally consistent data writes.
+Choose one of these patterns explicitly before production rollout:
+
+- Single-writer database with regional failover.
+- Multi-writer datastore with conflict resolution.
+- Region-local write path + asynchronous replication for eventually consistent workloads.
+
 ## File Structure
 
 ```

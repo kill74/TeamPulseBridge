@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -13,6 +14,59 @@ type JWTConfig struct {
 	Issuer   string
 	Audience string
 	Secret   string
+	OnReject func(r *http.Request, reason string, status int)
+}
+
+type AdminCIDRConfig struct {
+	Enabled           bool
+	CIDRs             []string
+	TrustedProxyCIDRs []string
+	OnReject          func(r *http.Request, reason string, status int)
+}
+
+func RequireAdminCIDRAllowlist(cfg AdminCIDRConfig) Middleware {
+	if !cfg.Enabled || len(cfg.CIDRs) == 0 {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	nets := make([]*net.IPNet, 0, len(cfg.CIDRs))
+	for _, cidr := range cfg.CIDRs {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(cidr))
+		if err != nil {
+			continue
+		}
+		nets = append(nets, network)
+	}
+	if len(nets) == 0 {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	trustedProxyNets := parseCIDRs(cfg.TrustedProxyCIDRs)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !isAdminPath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			ip := net.ParseIP(ClientIPFromRequest(r, trustedProxyNets))
+			if ip == nil {
+				if cfg.OnReject != nil {
+					cfg.OnReject(r, "admin_cidr_invalid_ip", http.StatusForbidden)
+				}
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			for _, network := range nets {
+				if network.Contains(ip) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			http.Error(w, "forbidden", http.StatusForbidden)
+			if cfg.OnReject != nil {
+				cfg.OnReject(r, "admin_cidr_forbidden", http.StatusForbidden)
+			}
+		})
+	}
 }
 
 func RequireAdminJWT(cfg JWTConfig) Middleware {
@@ -21,29 +75,42 @@ func RequireAdminJWT(cfg JWTConfig) Middleware {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !strings.HasPrefix(r.URL.Path, "/admin") && r.URL.Path != "/metrics" {
+			if !isAdminPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			authz := strings.TrimSpace(r.Header.Get("Authorization"))
 			if authz == "" || !strings.HasPrefix(strings.ToLower(authz), "bearer ") {
+				if cfg.OnReject != nil {
+					cfg.OnReject(r, "admin_jwt_missing", http.StatusUnauthorized)
+				}
 				http.Error(w, "missing bearer token", http.StatusUnauthorized)
 				return
 			}
 			tokenString := strings.TrimSpace(authz[len("Bearer "):])
 			if tokenString == "" {
+				if cfg.OnReject != nil {
+					cfg.OnReject(r, "admin_jwt_missing", http.StatusUnauthorized)
+				}
 				http.Error(w, "missing bearer token", http.StatusUnauthorized)
 				return
 			}
 
 			if err := validateToken(tokenString, cfg); err != nil {
+				if cfg.OnReject != nil {
+					cfg.OnReject(r, "admin_jwt_invalid", http.StatusUnauthorized)
+				}
 				http.Error(w, "invalid token", http.StatusUnauthorized)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func isAdminPath(path string) bool {
+	return strings.HasPrefix(path, "/admin") || path == "/metrics"
 }
 
 func validateToken(tokenString string, cfg JWTConfig) error {

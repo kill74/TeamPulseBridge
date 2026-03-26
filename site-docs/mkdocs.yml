@@ -26,7 +26,9 @@ nav:
       - ADR Index: adr/index.md
   - Runbooks:
       - Local Development: runbooks/local-development.md
+      - Multi-Region Active-Active: runbooks/multi-region-active-active.md
       - Release Process: runbooks/release.md
+      - SLO and Observability: runbooks/slo-observability.md
       - GitOps with Argo CD: runbooks/gitops-argocd.md
       - Branch Protection: runbooks/branch-protection.md
 markdown_extensions:

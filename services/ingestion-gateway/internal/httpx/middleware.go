@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -18,6 +20,88 @@ const requestIDKey contextKey = "request_id"
 var reqCounter uint64
 
 type Middleware func(http.Handler) http.Handler
+
+type RateLimitConfig struct {
+	Enabled           bool
+	General           int
+	Admin             int
+	TrustedProxyCIDRs []string
+	OnReject          func(r *http.Request, reason string, status int)
+	Now               func() time.Time
+	Window            time.Duration
+	CleanupN          int
+}
+
+type rateWindow struct {
+	windowStart int64
+	count       int
+}
+
+type ipRateLimiter struct {
+	mu      sync.Mutex
+	entries map[string]rateWindow
+	now     func() time.Time
+	window  time.Duration
+	windowS int64
+	hits    uint64
+	cleanup int
+}
+
+func newIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN int) *ipRateLimiter {
+	if now == nil {
+		now = time.Now
+	}
+	if window <= 0 {
+		window = time.Minute
+	}
+	if cleanupEveryN <= 0 {
+		cleanupEveryN = 1024
+	}
+	return &ipRateLimiter{
+		entries: make(map[string]rateWindow, 256),
+		now:     now,
+		window:  window,
+		windowS: int64(window / time.Second),
+		cleanup: cleanupEveryN,
+	}
+}
+
+func (l *ipRateLimiter) allow(key string, limit int) bool {
+	if limit <= 0 {
+		return false
+	}
+	now := l.now().Unix()
+	windowStart := now - (now % l.windowS)
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	entry, ok := l.entries[key]
+	if !ok || entry.windowStart != windowStart {
+		l.entries[key] = rateWindow{windowStart: windowStart, count: 1}
+		l.maybeCleanupLocked(windowStart)
+		return true
+	}
+	if entry.count >= limit {
+		return false
+	}
+	entry.count++
+	l.entries[key] = entry
+	l.maybeCleanupLocked(windowStart)
+	return true
+}
+
+func (l *ipRateLimiter) maybeCleanupLocked(currentWindowStart int64) {
+	h := atomic.AddUint64(&l.hits, 1)
+	if h%uint64(l.cleanup) != 0 {
+		return
+	}
+	for key, entry := range l.entries {
+		if currentWindowStart-entry.windowStart > l.windowS {
+			delete(l.entries, key)
+		}
+	}
+}
 
 type statusRecorder struct {
 	http.ResponseWriter
@@ -92,6 +176,98 @@ func AccessLog(logger *slog.Logger) Middleware {
 			)
 		})
 	}
+}
+
+func RateLimit(cfg RateLimitConfig) Middleware {
+	if !cfg.Enabled {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	limiter := newIPRateLimiter(cfg.Now, cfg.Window, cfg.CleanupN)
+	trusted := parseCIDRs(cfg.TrustedProxyCIDRs)
+	general := cfg.General
+	admin := cfg.Admin
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := ClientIPFromRequest(r, trusted)
+			limit := general
+			scope := "general"
+			if strings.HasPrefix(r.URL.Path, "/admin") || r.URL.Path == "/metrics" {
+				limit = admin
+				scope = "admin"
+			}
+			if !limiter.allow(scope+"|"+ip, limit) {
+				if cfg.OnReject != nil {
+					cfg.OnReject(r, "rate_limit_exceeded", http.StatusTooManyRequests)
+				}
+				w.Header().Set("Retry-After", "60")
+				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func ClientIPFromRequest(r *http.Request, trustedProxyNets []*net.IPNet) string {
+	if len(trustedProxyNets) == 0 {
+		return clientIPNoProxyTrust(r)
+	}
+	remoteHost, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		remoteHost = strings.TrimSpace(r.RemoteAddr)
+	}
+	remoteIP := net.ParseIP(remoteHost)
+	if remoteIP != nil && ipInNets(remoteIP, trustedProxyNets) {
+		xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
+		if xff != "" {
+			parts := strings.Split(xff, ",")
+			if len(parts) > 0 {
+				if ip := strings.TrimSpace(parts[0]); net.ParseIP(ip) != nil {
+					return ip
+				}
+			}
+		}
+		if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(xr) != nil {
+			return xr
+		}
+	}
+	return clientIPNoProxyTrust(r)
+}
+
+func clientIPNoProxyTrust(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	if r.RemoteAddr != "" {
+		return r.RemoteAddr
+	}
+	return "unknown"
+}
+
+func parseCIDRs(cidrs []string) []*net.IPNet {
+	if len(cidrs) == 0 {
+		return nil
+	}
+	result := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(cidr))
+		if err != nil {
+			continue
+		}
+		result = append(result, network)
+	}
+	return result
+}
+
+func ipInNets(ip net.IP, nets []*net.IPNet) bool {
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func RequestIDFromContext(ctx context.Context) string {

@@ -10,6 +10,18 @@ variable "region" {
   default     = "us-central1"
 }
 
+variable "enable_multi_region" {
+  description = "Enable active-active multi-region topology"
+  type        = bool
+  default     = false
+}
+
+variable "secondary_region" {
+  description = "Secondary GCP region for active-active topology"
+  type        = string
+  default     = ""
+}
+
 # Project Configuration
 variable "project_name" {
   description = "Project name"
@@ -46,10 +58,22 @@ variable "gke_subnet_cidr" {
   default     = "10.0.0.0/24"
 }
 
+variable "secondary_gke_subnet_cidr" {
+  description = "CIDR for secondary region GKE subnet"
+  type        = string
+  default     = "10.10.0.0/24"
+}
+
 variable "pods_cidr" {
   description = "CIDR for pods secondary range"
   type        = string
   default     = "10.1.0.0/16"
+}
+
+variable "secondary_pods_cidr" {
+  description = "CIDR for secondary region pods secondary range"
+  type        = string
+  default     = "10.11.0.0/16"
 }
 
 variable "services_cidr" {
@@ -58,10 +82,22 @@ variable "services_cidr" {
   default     = "10.2.0.0/16"
 }
 
+variable "secondary_services_cidr" {
+  description = "CIDR for secondary region services secondary range"
+  type        = string
+  default     = "10.12.0.0/16"
+}
+
 variable "db_subnet_cidr" {
   description = "CIDR for database subnet"
   type        = string
   default     = "10.3.0.0/24"
+}
+
+variable "secondary_db_subnet_cidr" {
+  description = "CIDR for secondary region database subnet"
+  type        = string
+  default     = "10.13.0.0/24"
 }
 
 variable "enable_ssh_access" {
@@ -203,6 +239,52 @@ variable "create_service_account_key" {
   description = "Create service account key (not recommended for production)"
   type        = bool
   default     = false
+  validation {
+    condition     = !(var.create_service_account_key && var.environment == "prod")
+    error_message = "Service account keys are blocked in production. Use Workload Identity instead."
+  }
+}
+
+variable "security_pubsub_role" {
+  description = "Pub/Sub IAM role granted to app workload service account"
+  type        = string
+  default     = "roles/pubsub.publisher"
+  validation {
+    condition = contains([
+      "roles/pubsub.publisher",
+      "roles/pubsub.subscriber",
+      "roles/pubsub.viewer",
+      "roles/pubsub.editor",
+    ], var.security_pubsub_role)
+    error_message = "security_pubsub_role must be one of: roles/pubsub.publisher, roles/pubsub.subscriber, roles/pubsub.viewer, roles/pubsub.editor."
+  }
+}
+
+variable "security_additional_permissions" {
+  description = "Additional IAM project roles for app workload service account"
+  type        = list(string)
+  default     = []
+}
+
+variable "security_https_egress_cidrs" {
+  description = "Allowed HTTPS egress CIDRs for workload pods"
+  type        = list(string)
+  default = [
+    "199.36.153.8/30",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+  ]
+}
+
+variable "security_db_egress_cidrs" {
+  description = "Allowed PostgreSQL egress CIDRs for workload pods"
+  type        = list(string)
+  default = [
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+  ]
 }
 
 # Database Configuration
@@ -311,6 +393,12 @@ variable "uptime_check_regions" {
 variable "app_domain" {
   description = "Application domain for health checks"
   type        = string
+}
+
+variable "secondary_app_domain" {
+  description = "Secondary region application domain for health checks (optional)"
+  type        = string
+  default     = ""
 }
 
 variable "health_check_path" {

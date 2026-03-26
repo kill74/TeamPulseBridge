@@ -55,6 +55,87 @@ func TestRequireAdminJWT_SkipsWebhookPaths(t *testing.T) {
 	}
 }
 
+func TestRequireAdminCIDRAllowlist_AllowsAdminRequestFromAllowedCIDR(t *testing.T) {
+	h := RequireAdminCIDRAllowlist(AdminCIDRConfig{Enabled: true, CIDRs: []string{"10.0.0.0/8"}})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/configz", nil)
+	req.RemoteAddr = "10.1.2.3:1234"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestRequireAdminCIDRAllowlist_RejectsAdminRequestOutsideCIDR(t *testing.T) {
+	h := RequireAdminCIDRAllowlist(AdminCIDRConfig{Enabled: true, CIDRs: []string{"10.0.0.0/8"}})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.RemoteAddr = "192.168.1.10:1234"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+}
+
+func TestRequireAdminCIDRAllowlist_SkipsWebhookPaths(t *testing.T) {
+	h := RequireAdminCIDRAllowlist(AdminCIDRConfig{Enabled: true, CIDRs: []string{"10.0.0.0/8"}})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", nil)
+	req.RemoteAddr = "192.168.1.10:1234"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rr.Code)
+	}
+}
+
+func TestRequireAdminCIDRAllowlist_DoesNotTrustXFFWithoutTrustedProxy(t *testing.T) {
+	h := RequireAdminCIDRAllowlist(AdminCIDRConfig{Enabled: true, CIDRs: []string{"10.0.0.0/8"}})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/configz", nil)
+	req.RemoteAddr = "203.0.113.10:1234"
+	req.Header.Set("X-Forwarded-For", "10.1.2.3")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+}
+
+func TestRequireAdminCIDRAllowlist_TrustsXFFFromTrustedProxy(t *testing.T) {
+	h := RequireAdminCIDRAllowlist(AdminCIDRConfig{
+		Enabled:           true,
+		CIDRs:             []string{"10.0.0.0/8"},
+		TrustedProxyCIDRs: []string{"203.0.113.0/24"},
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.RemoteAddr = "203.0.113.10:1234"
+	req.Header.Set("X-Forwarded-For", "10.1.2.3")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
 func mintToken(t *testing.T, cfg JWTConfig) string {
 	t.Helper()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{

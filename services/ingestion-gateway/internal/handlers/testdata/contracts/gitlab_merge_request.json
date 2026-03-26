@@ -1,0 +1,21 @@
+{
+  "object_kind": "merge_request",
+  "event_type": "merge_request",
+  "user": {
+    "id": 7,
+    "name": "Dev User",
+    "username": "devuser"
+  },
+  "project": {
+    "id": 21,
+    "name": "TeamPulseBridge",
+    "path_with_namespace": "kill74/TeamPulseBridge"
+  },
+  "object_attributes": {
+    "id": 555,
+    "iid": 12,
+    "title": "Add security telemetry",
+    "state": "opened",
+    "action": "open"
+  }
+}

@@ -1,0 +1,97 @@
+groups:
+  - name: ingestion-gateway-slo-recording
+    interval: 30s
+    rules:
+      - record: teampulse:webhook_requests:rate5m
+        expr: sum(rate(webhook_requests_total[5m]))
+
+      - record: teampulse:webhook_errors:rate5m
+        expr: sum(rate(webhook_requests_total{status=~"5.."}[5m]))
+
+      - record: teampulse:webhook_error_ratio:5m
+        expr: teampulse:webhook_errors:rate5m / clamp_min(teampulse:webhook_requests:rate5m, 0.001)
+
+      - record: teampulse:webhook_error_ratio:1h
+        expr: sum(rate(webhook_requests_total{status=~"5.."}[1h])) / clamp_min(sum(rate(webhook_requests_total[1h])), 0.001)
+
+      - record: teampulse:webhook_error_ratio:6h
+        expr: sum(rate(webhook_requests_total{status=~"5.."}[6h])) / clamp_min(sum(rate(webhook_requests_total[6h])), 0.001)
+
+      - record: teampulse:webhook_error_budget_burn:5m
+        expr: teampulse:webhook_error_ratio:5m / 0.001
+
+      - record: teampulse:webhook_error_budget_burn:1h
+        expr: teampulse:webhook_error_ratio:1h / 0.001
+
+      - record: teampulse:webhook_error_budget_burn:6h
+        expr: teampulse:webhook_error_ratio:6h / 0.001
+
+      - record: teampulse:webhook_availability:30d
+        expr: 1 - (sum(increase(webhook_requests_total{status=~"5.."}[30d])) / clamp_min(sum(increase(webhook_requests_total[30d])), 1))
+
+      - record: teampulse:webhook_error_budget_consumed:30d
+        expr: (1 - teampulse:webhook_availability:30d) / 0.001
+
+  - name: ingestion-gateway-slo-alerts
+    interval: 30s
+    rules:
+      - alert: IngestionGatewaySLOErrorBudgetFastBurn
+        expr: teampulse:webhook_error_budget_burn:5m > 14.4 and teampulse:webhook_error_budget_burn:1h > 14.4
+        for: 5m
+        labels:
+          severity: critical
+          service: ingestion-gateway
+        annotations:
+          summary: 'Ingestion Gateway consumindo orçamento de erro muito rápido'
+          description: 'Burn rate alto em 5m e 1h para SLO 99.9%.'
+
+      - alert: IngestionGatewaySLOErrorBudgetSlowBurn
+        expr: teampulse:webhook_error_budget_burn:1h > 3 and teampulse:webhook_error_budget_burn:6h > 3
+        for: 30m
+        labels:
+          severity: warning
+          service: ingestion-gateway
+        annotations:
+          summary: 'Ingestion Gateway consumindo orçamento de erro continuamente'
+          description: 'Burn rate sustentado em 1h e 6h para SLO 99.9%.'
+
+  - name: ingestion-gateway-security-recording
+    interval: 30s
+    rules:
+      - record: teampulse:security_rejections:rate1m
+        expr: sum(rate(security_rejections_total[1m]))
+
+      - record: teampulse:security_rejections:rate5m
+        expr: sum(rate(security_rejections_total[5m]))
+
+      - record: teampulse:security_rejections:rate5m_by_reason
+        expr: sum(rate(security_rejections_total[5m])) by (reason)
+
+      - record: teampulse:security_rejections:rate5m_by_status
+        expr: sum(rate(security_rejections_total[5m])) by (status)
+
+      - record: teampulse:security_rejections_ratio:5m
+        expr: teampulse:security_rejections:rate5m / clamp_min(sum(rate(webhook_requests_total[5m])), 0.001)
+
+  - name: ingestion-gateway-security-alerts
+    interval: 30s
+    rules:
+      - alert: IngestionGatewaySecurityRejectionsBurst
+        expr: teampulse:security_rejections:rate1m > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: ingestion-gateway
+        annotations:
+          summary: 'Ingestion Gateway com pico de rejeicoes de seguranca'
+          description: 'Taxa de rejeicoes de seguranca acima de 2 req/s no ultimo minuto por 5m.'
+
+      - alert: IngestionGatewayPotentialAdminAbuse
+        expr: sum(rate(security_rejections_total{reason=~"admin_.*"}[5m])) > 0.5
+        for: 10m
+        labels:
+          severity: critical
+          service: ingestion-gateway
+        annotations:
+          summary: 'Possivel abuso em endpoints administrativos'
+          description: 'Rejeicoes de seguranca com reason=admin_* acima de 0.5 req/s por 10m.'

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 // Config contains runtime values for webhook signature validation.
 type Config struct {
+	Environment         string
 	Port                string
 	SlackSigningSecret  string
 	GitHubWebhookSecret string
@@ -25,10 +27,16 @@ type Config struct {
 	AdminJWTIssuer      string
 	AdminJWTAudience    string
 	AdminJWTSecret      string
+	AdminAllowCIDRs     []string
+	TrustedProxyCIDRs   []string
+	RateLimitEnabled    bool
+	RateLimitRPM        int
+	AdminRateLimitRPM   int
 }
 
 func LoadFromEnv() Config {
 	return Config{
+		Environment:         envOrDefault("ENVIRONMENT", "dev"),
 		Port:                envOrDefault("PORT", "8080"),
 		SlackSigningSecret:  os.Getenv("SLACK_SIGNING_SECRET"),
 		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
@@ -44,6 +52,11 @@ func LoadFromEnv() Config {
 		AdminJWTIssuer:      os.Getenv("ADMIN_JWT_ISSUER"),
 		AdminJWTAudience:    os.Getenv("ADMIN_JWT_AUDIENCE"),
 		AdminJWTSecret:      os.Getenv("ADMIN_JWT_SECRET"),
+		AdminAllowCIDRs:     splitCSVEnv("ADMIN_ALLOW_CIDRS"),
+		TrustedProxyCIDRs:   splitCSVEnv("TRUSTED_PROXY_CIDRS"),
+		RateLimitEnabled:    boolOrDefault("RATE_LIMIT_ENABLED", true),
+		RateLimitRPM:        intOrDefault("RATE_LIMIT_RPM", 300),
+		AdminRateLimitRPM:   intOrDefault("ADMIN_RATE_LIMIT_RPM", 60),
 	}
 }
 
@@ -51,11 +64,34 @@ func (c Config) Validate() error {
 	if c.Port == "" {
 		return errors.New("PORT must not be empty")
 	}
+	port, err := strconv.Atoi(c.Port)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("PORT must be a valid TCP port (1-65535), got %q", c.Port)
+	}
 	if c.QueueBuffer <= 0 {
 		return fmt.Errorf("QUEUE_BUFFER must be > 0, got %d", c.QueueBuffer)
 	}
+	if c.QueueBuffer > 1_000_000 {
+		return fmt.Errorf("QUEUE_BUFFER is too high (%d); expected <= 1000000", c.QueueBuffer)
+	}
 	if c.RequestTimeoutSec <= 0 {
 		return fmt.Errorf("REQUEST_TIMEOUT_SEC must be > 0, got %d", c.RequestTimeoutSec)
+	}
+	if c.RequestTimeoutSec > 300 {
+		return fmt.Errorf("REQUEST_TIMEOUT_SEC is too high (%d); expected <= 300", c.RequestTimeoutSec)
+	}
+	if c.RateLimitEnabled {
+		if c.RateLimitRPM < 10 || c.RateLimitRPM > 100000 {
+			return fmt.Errorf("RATE_LIMIT_RPM must be between 10 and 100000, got %d", c.RateLimitRPM)
+		}
+		if c.AdminRateLimitRPM < 1 || c.AdminRateLimitRPM > c.RateLimitRPM {
+			return fmt.Errorf("ADMIN_RATE_LIMIT_RPM must be between 1 and RATE_LIMIT_RPM (%d), got %d", c.RateLimitRPM, c.AdminRateLimitRPM)
+		}
+	}
+	for _, cidr := range c.TrustedProxyCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("invalid TRUSTED_PROXY_CIDRS value %q: %w", cidr, err)
+		}
 	}
 	if c.QueueBackend != "log" && c.QueueBackend != "pubsub" {
 		return fmt.Errorf("QUEUE_BACKEND must be one of log|pubsub, got %q", c.QueueBackend)
@@ -66,6 +102,12 @@ func (c Config) Validate() error {
 		}
 		if c.PubSubTopicID == "" {
 			return errors.New("PUBSUB_TOPIC_ID is required when QUEUE_BACKEND=pubsub")
+		}
+		if strings.ContainsAny(c.PubSubProjectID, " \t\n\r") {
+			return errors.New("PUBSUB_PROJECT_ID must not contain whitespace")
+		}
+		if strings.ContainsAny(c.PubSubTopicID, " \t\n\r") {
+			return errors.New("PUBSUB_TOPIC_ID must not contain whitespace")
 		}
 	}
 	if c.AdminAuthEnabled {
@@ -82,8 +124,22 @@ func (c Config) Validate() error {
 		if len(missing) > 0 {
 			return fmt.Errorf("missing admin auth values: %s", strings.Join(missing, ", "))
 		}
+		if len(c.AdminJWTSecret) < 32 || isWeakSecret(c.AdminJWTSecret) {
+			return errors.New("ADMIN_JWT_SECRET must be at least 32 chars and not a weak/default value")
+		}
+		for _, cidr := range c.AdminAllowCIDRs {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				return fmt.Errorf("invalid ADMIN_ALLOW_CIDRS value %q: %w", cidr, err)
+			}
+		}
+		if !isNonProdEnvironment(c.Environment) && len(c.AdminAllowCIDRs) == 0 {
+			return errors.New("ADMIN_ALLOW_CIDRS is required when ADMIN_AUTH_ENABLED=true in production-like environments")
+		}
 	}
 	if !c.RequireSecrets {
+		if !isNonProdEnvironment(c.Environment) {
+			return fmt.Errorf("REQUIRE_SECRETS=false is only allowed in non-prod environments, got ENVIRONMENT=%q", c.Environment)
+		}
 		return nil
 	}
 
@@ -137,4 +193,57 @@ func boolOrDefault(key string, fallback bool) bool {
 		return false
 	}
 	return fallback
+}
+
+func splitCSVEnv(key string) []string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		candidate := strings.TrimSpace(p)
+		if candidate != "" {
+			out = append(out, candidate)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func isNonProdEnvironment(env string) bool {
+	v := strings.ToLower(strings.TrimSpace(env))
+	if v == "" {
+		return false
+	}
+	if strings.Contains(v, "dev") || strings.Contains(v, "test") || strings.Contains(v, "local") || strings.Contains(v, "ci") {
+		return true
+	}
+	return v == "staging" || v == "sandbox"
+}
+
+func isWeakSecret(secret string) bool {
+	v := strings.ToLower(strings.TrimSpace(secret))
+	if v == "" {
+		return true
+	}
+	weakValues := map[string]struct{}{
+		"change-me": {},
+		"changeme":  {},
+		"secret":    {},
+		"password":  {},
+		"admin":     {},
+		"test":      {},
+		"default":   {},
+	}
+	if _, ok := weakValues[v]; ok {
+		return true
+	}
+	if strings.Count(v, string(v[0])) == len(v) {
+		return true
+	}
+	return false
 }

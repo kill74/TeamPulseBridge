@@ -21,9 +21,10 @@ import (
 )
 
 type Telemetry struct {
-	MetricsHandler http.Handler
-	WebhookCounter metric.Int64Counter
-	shutdown       []func(context.Context) error
+	MetricsHandler        http.Handler
+	WebhookCounter        metric.Int64Counter
+	SecurityRejectCounter metric.Int64Counter
+	shutdown              []func(context.Context) error
 }
 
 func (t *Telemetry) Shutdown(ctx context.Context) error {
@@ -68,6 +69,12 @@ func Setup(ctx context.Context, logger *slog.Logger, serviceName string) (*Telem
 		return nil, fmt.Errorf("create metric counter: %w", err)
 	}
 	telemetry.WebhookCounter = counter
+
+	securityRejectCounter, err := meterProvider.Meter(serviceName).Int64Counter("security_rejections_total")
+	if err != nil {
+		return nil, fmt.Errorf("create security reject counter: %w", err)
+	}
+	telemetry.SecurityRejectCounter = securityRejectCounter
 
 	logger.Info("telemetry initialized", "otel_http_instrumentation", true)
 	return telemetry, nil

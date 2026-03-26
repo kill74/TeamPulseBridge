@@ -4,11 +4,17 @@ region      = "us-central1"
 environment = "staging"
 project_name = "teampulse"
 app_name    = "ingestion-gateway"
+enable_multi_region = false
+secondary_region = ""
 
 # Network
 gke_subnet_cidr = "10.0.0.0/24"
 pods_cidr       = "10.1.0.0/16"
 services_cidr   = "10.2.0.0/16"
+secondary_gke_subnet_cidr = "10.10.0.0/24"
+secondary_pods_cidr       = "10.11.0.0/16"
+secondary_services_cidr   = "10.12.0.0/16"
+secondary_db_subnet_cidr  = "10.13.0.0/24"
 
 # GKE Configuration (cost-optimized for staging)
 gke_initial_node_count = 1
@@ -38,6 +44,7 @@ log_retention_days     = 7
 
 # Application domain
 app_domain = "staging.api.example.com"
+secondary_app_domain = ""
 
 # Monitoring
 enable_uptime_checks = false
@@ -50,3 +57,5 @@ enable_ssh_access = false
 enable_network_policies = true
 enable_pod_security_policy = false  # Less strict in staging
 create_service_account_key = false
+security_pubsub_role = "roles/pubsub.publisher"
+security_additional_permissions = []

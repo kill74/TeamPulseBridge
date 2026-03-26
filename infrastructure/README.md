@@ -83,6 +83,37 @@ docs/
 | **Monitoring** | Email only  | Email + Slack |
 | **Cost/Month** | ~$110-180   | ~$520-900     |
 
+## Multi-Region Active-Active
+
+Terraform now supports an optional active-active topology with primary and secondary regions.
+
+Key flags in tfvars:
+
+- `enable_multi_region` (bool)
+- `secondary_region` (string)
+- `secondary_*_cidr` ranges (must not overlap with primary ranges)
+- `secondary_app_domain` (optional)
+
+When enabled, Terraform provisions a second stack in the secondary region:
+
+- VPC + subnets + firewall + Cloud NAT
+- GKE cluster and workload pool
+- Security controls and IAM bindings
+- Cloud SQL instance and regional monitoring
+- Storage buckets and alerting policies
+
+Recommended production model:
+
+1. Run ingress and application replicas in both regions.
+2. Route traffic through DNS or global load balancing with health checks.
+3. Keep Argo CD targets for both clusters synchronized.
+4. Periodically run failover and failback drills.
+
+Operational caution:
+
+- Ensure application state is either stateless, replicated, or conflict-safe.
+- Verify database strategy for cross-region consistency before enabling global writes.
+
 ## Modules
 
 | Module                | Purpose                               |

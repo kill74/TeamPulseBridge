@@ -4,11 +4,17 @@ region      = "us-central1"
 environment = "prod"
 project_name = "teampulse"
 app_name    = "ingestion-gateway"
+enable_multi_region = true
+secondary_region = "us-east1"
 
 # Network
 gke_subnet_cidr = "10.0.0.0/24"
 pods_cidr       = "10.1.0.0/16"
 services_cidr   = "10.2.0.0/16"
+secondary_gke_subnet_cidr = "10.10.0.0/24"
+secondary_pods_cidr       = "10.11.0.0/16"
+secondary_services_cidr   = "10.12.0.0/16"
+secondary_db_subnet_cidr  = "10.13.0.0/24"
 
 # GKE Configuration (HA-enabled for production)
 gke_initial_node_count = 3
@@ -38,6 +44,7 @@ log_retention_days     = 30
 
 # Application domain
 app_domain = "api.example.com"
+secondary_app_domain = "api-us-east1.example.com"
 
 # Monitoring (all enabled for production)
 enable_uptime_checks = true
@@ -52,3 +59,16 @@ enable_ssh_access = false
 enable_network_policies = true
 enable_pod_security_policy = true
 create_service_account_key = false
+security_pubsub_role = "roles/pubsub.publisher"
+security_additional_permissions = []
+security_https_egress_cidrs = [
+	"199.36.153.8/30",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+]
+security_db_egress_cidrs = [
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+]

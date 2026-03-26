@@ -48,6 +48,10 @@ The root route serves an operator console with:
 
 - `PORT` (default: `8080`)
 - `REQUEST_TIMEOUT_SEC` (default: `15`)
+- `RATE_LIMIT_ENABLED` (default: `true`)
+- `RATE_LIMIT_RPM` (default: `300`)
+- `ADMIN_RATE_LIMIT_RPM` (default: `60`)
+- `TRUSTED_PROXY_CIDRS` (optional comma-separated CIDRs; only these proxies are trusted for `X-Forwarded-For` and `X-Real-IP`)
 - `QUEUE_BUFFER` (default: `4096`)
 - `QUEUE_BACKEND` (default: `log`; options: `log|pubsub`)
 - `REQUIRE_SECRETS` (default: `true`)
@@ -73,6 +77,14 @@ The root route serves an operator console with:
 - `ADMIN_JWT_ISSUER`
 - `ADMIN_JWT_AUDIENCE`
 - `ADMIN_JWT_SECRET`
+- `ADMIN_ALLOW_CIDRS` (comma-separated CIDRs; required in production-like envs when admin auth is enabled)
+
+Security constraints:
+
+- `ADMIN_JWT_SECRET` must be at least 32 characters and must not be a weak default value.
+- `REQUIRE_SECRETS=false` is only accepted for non-production environments (`local`, `dev`, `test`, `ci`, `staging`, `sandbox`, and `integration-test` variants).
+- `/admin/*` and `/metrics` can be restricted by source IP via `ADMIN_ALLOW_CIDRS`.
+- `X-Forwarded-For`/`X-Real-IP` are only trusted when the immediate source IP matches `TRUSTED_PROXY_CIDRS`.
 
 ## Local Development
 

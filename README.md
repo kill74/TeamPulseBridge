@@ -231,10 +231,19 @@ Useful day-to-day commands:
 
 - ✅ Add integration tests against Pub/Sub emulator
 - ✅ Add Terraform modules for staging/prod environments (complete)
-- Add contract tests for webhook payload compatibility
+- ✅ Add contract tests for webhook payload compatibility
 - ✅ Implement GitOps workflow (Argo CD)
-- Multi-region active-active deployment
-- Custom metrics and SLO dashboards
+- ✅ Multi-region active-active deployment
+- ✅ Custom metrics and SLO dashboards
+
+### Next Release Focus (v1.1.0)
+
+- Reliability game days and automated failover validation
+- Policy-as-code guardrails in CI for Terraform and Kubernetes
+- Expanded provider contract suite with schema drift detection
+- Security operations dashboard and alert tuning
+
+See detailed plan in [docs/roadmap-v1.1.0.md](docs/roadmap-v1.1.0.md).
 
 ## License
 

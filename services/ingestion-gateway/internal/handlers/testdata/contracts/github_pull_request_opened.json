@@ -1,0 +1,19 @@
+{
+  "action": "opened",
+  "number": 42,
+  "repository": {
+    "id": 999,
+    "name": "TeamPulseBridge",
+    "full_name": "kill74/TeamPulseBridge"
+  },
+  "pull_request": {
+    "id": 123456,
+    "number": 42,
+    "title": "feat: add contract tests",
+    "state": "open"
+  },
+  "sender": {
+    "login": "kill74",
+    "id": 101
+  }
+}

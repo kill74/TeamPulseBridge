@@ -1,0 +1,12 @@
+{
+  "value": [
+    {
+      "subscriptionId": "sub-123",
+      "tenantId": "tenant-123",
+      "changeType": "updated",
+      "resource": "/teams('team-123')/channels('channel-123')/messages('message-123')",
+      "clientState": "test-teams-state",
+      "id": "notif-1"
+    }
+  ]
+}

@@ -43,23 +43,25 @@ resource "google_service_account_iam_member" "workload_identity_user" {
 }
 
 # IAM Binding for database access
-resource "google_service_account_iam_member" "db_user" {
-  service_account_id = google_service_account.db_access.name
-  role               = "roles/cloudsql.client"
-  member             = "serviceAccount:${google_service_account.app_workload.email}"
-}
-
-# Cloud SQL Client role
 resource "google_project_iam_member" "cloudsql_client" {
   project = var.gcp_project
   role    = "roles/cloudsql.client"
   member  = "serviceAccount:${google_service_account.app_workload.email}"
 }
 
-# Pub/Sub roles for application
-resource "google_project_iam_member" "pubsub_editor" {
+# Pub/Sub role for application (least privilege by default)
+resource "google_project_iam_member" "pubsub_access" {
   project = var.gcp_project
-  role    = "roles/pubsub.editor"
+  role    = var.pubsub_role
+  member  = "serviceAccount:${google_service_account.app_workload.email}"
+}
+
+# Optional additional project roles for workload SA
+resource "google_project_iam_member" "additional_permissions" {
+  for_each = toset(var.permissions)
+
+  project = var.gcp_project
+  role    = each.value
   member  = "serviceAccount:${google_service_account.app_workload.email}"
 }
 
@@ -93,6 +95,8 @@ resource "google_project_iam_member" "cloudtrace_agent" {
 
 # Kubernetes RBAC ClusterRole for reading metrics
 resource "kubernetes_cluster_role" "app_metrics_reader" {
+  count = var.manage_kubernetes_security_resources ? 1 : 0
+
   metadata {
     name = "${var.app_name}-metrics-reader"
   }
@@ -112,6 +116,8 @@ resource "kubernetes_cluster_role" "app_metrics_reader" {
 
 # Kubernetes RBAC ClusterRoleBinding
 resource "kubernetes_cluster_role_binding" "app_metrics_reader" {
+  count = var.manage_kubernetes_security_resources ? 1 : 0
+
   metadata {
     name = "${var.app_name}-metrics-reader"
   }
@@ -119,7 +125,7 @@ resource "kubernetes_cluster_role_binding" "app_metrics_reader" {
   role_ref {
     api_group = "rbac.authorization.k8s.io"
     kind      = "ClusterRole"
-    name      = kubernetes_cluster_role.app_metrics_reader.metadata[0].name
+    name      = kubernetes_cluster_role.app_metrics_reader[0].metadata[0].name
   }
 
   subject {
@@ -133,7 +139,7 @@ resource "kubernetes_cluster_role_binding" "app_metrics_reader" {
 
 # NetworkPolicy to restrict ingress traffic
 resource "kubernetes_network_policy" "app_ingress" {
-  count = var.enable_network_policies ? 1 : 0
+  count = var.manage_kubernetes_security_resources && var.enable_network_policies ? 1 : 0
 
   metadata {
     name      = "${var.app_name}-ingress"
@@ -176,7 +182,7 @@ resource "kubernetes_network_policy" "app_ingress" {
 
 # NetworkPolicy to restrict egress traffic
 resource "kubernetes_network_policy" "app_egress" {
-  count = var.enable_network_policies ? 1 : 0
+  count = var.manage_kubernetes_security_resources && var.enable_network_policies ? 1 : 0
 
   metadata {
     name      = "${var.app_name}-egress"
@@ -213,16 +219,29 @@ resource "kubernetes_network_policy" "app_egress" {
     }
 
     egress {
-      to {
-        ip_block {
-          cidr = "0.0.0.0/0"
-          except = ["169.254.169.254/32"]
+      dynamic "to" {
+        for_each = var.https_egress_cidrs
+        content {
+          ip_block {
+            cidr = to.value
+          }
         }
       }
 
       ports {
         protocol = "TCP"
         port     = "443"
+      }
+    }
+
+    egress {
+      dynamic "to" {
+        for_each = var.db_egress_cidrs
+        content {
+          ip_block {
+            cidr = to.value
+          }
+        }
       }
 
       ports {
@@ -235,6 +254,8 @@ resource "kubernetes_network_policy" "app_egress" {
 
 # Pod Security Policy
 resource "kubernetes_pod_security_policy" "restricted" {
+  count = var.manage_kubernetes_security_resources && var.enable_pod_security_policy ? 1 : 0
+
   metadata {
     name = "${var.app_name}-restricted-psp"
   }
@@ -291,6 +312,8 @@ resource "kubernetes_pod_security_policy" "restricted" {
 
 # ClusterRoleBinding for PSP
 resource "kubernetes_cluster_role_binding" "psp_restricted" {
+  count = var.manage_kubernetes_security_resources && var.enable_pod_security_policy ? 1 : 0
+
   metadata {
     name = "${var.app_name}-psp-all-serviceaccounts"
   }

@@ -104,3 +104,39 @@ output "deployment_summary" {
     artifacts_bucket         = module.storage.artifacts_bucket_name
   }
 }
+
+output "multi_region_enabled" {
+  description = "Whether active-active multi-region topology is enabled"
+  value       = var.enable_multi_region && var.secondary_region != ""
+}
+
+output "secondary_cluster_name" {
+  description = "Secondary GKE cluster name when multi-region is enabled"
+  value       = var.enable_multi_region && var.secondary_region != "" ? module.gke_secondary[0].cluster_name : null
+}
+
+output "secondary_cluster_location" {
+  description = "Secondary GKE cluster location when multi-region is enabled"
+  value       = var.enable_multi_region && var.secondary_region != "" ? module.gke_secondary[0].cluster_location : null
+}
+
+output "secondary_database_connection_name" {
+  description = "Secondary Cloud SQL connection name when multi-region is enabled"
+  value       = var.enable_multi_region && var.secondary_region != "" ? module.database_secondary[0].instance_connection_name : null
+}
+
+output "active_active_topology" {
+  description = "Primary and secondary region topology summary"
+  value = {
+    primary = {
+      region       = var.region
+      cluster_name = module.gke.cluster_name
+      app_domain   = var.app_domain
+    }
+    secondary = var.enable_multi_region && var.secondary_region != "" ? {
+      region       = var.secondary_region
+      cluster_name = module.gke_secondary[0].cluster_name
+      app_domain   = var.secondary_app_domain != "" ? var.secondary_app_domain : var.app_domain
+    } : null
+  }
+}

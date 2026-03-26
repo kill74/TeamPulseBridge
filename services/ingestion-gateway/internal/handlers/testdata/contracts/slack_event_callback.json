@@ -1,0 +1,16 @@
+{
+  "token": "legacy-token",
+  "team_id": "T123",
+  "api_app_id": "A123",
+  "type": "event_callback",
+  "event": {
+    "type": "app_mention",
+    "user": "U123",
+    "text": "hello world",
+    "ts": "1710000000.000001",
+    "channel": "C123",
+    "event_ts": "1710000000.000001"
+  },
+  "event_id": "Ev123",
+  "event_time": 1710000000
+}

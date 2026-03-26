@@ -206,6 +206,8 @@ resource "google_container_node_pool" "workload_pool" {
 
 # Cluster role binding for metrics-server
 resource "kubernetes_cluster_role_binding" "metrics_server" {
+  count = var.manage_kubernetes_bootstrap_resources ? 1 : 0
+
   metadata {
     name = "metrics-server"
   }
@@ -227,6 +229,7 @@ resource "kubernetes_cluster_role_binding" "metrics_server" {
 
 # Output kubeconfig for local access
 resource "local_file" "kubeconfig" {
+  count           = var.generate_local_kubeconfig ? 1 : 0
   filename        = "${path.module}/kubeconfig-${var.cluster_name}.yaml"
   content         = base64decode(google_container_cluster.primary.master_auth[0].cluster_ca_certificate)
   file_permission = "0600"

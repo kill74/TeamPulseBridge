@@ -59,6 +59,15 @@ func main() {
 			),
 		)
 	})
+	securityRejectFn := func(req *http.Request, reason string, status int) {
+		telemetry.SecurityRejectCounter.Add(req.Context(), 1,
+			metric.WithAttributes(
+				attribute.String("reason", reason),
+				attribute.String("path", req.URL.Path),
+				attribute.Int("status", status),
+			),
+		)
+	}
 	admin := handlers.NewAdminHandler(cfg)
 
 	mux := http.NewServeMux()
@@ -77,11 +86,25 @@ func main() {
 	handler := httpx.Chain(
 		mux,
 		httpx.RequestID(),
+		httpx.RateLimit(httpx.RateLimitConfig{
+			Enabled:           cfg.RateLimitEnabled,
+			General:           cfg.RateLimitRPM,
+			Admin:             cfg.AdminRateLimitRPM,
+			TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
+			OnReject:          securityRejectFn,
+		}),
+		httpx.RequireAdminCIDRAllowlist(httpx.AdminCIDRConfig{
+			Enabled:           cfg.AdminAuthEnabled,
+			CIDRs:             cfg.AdminAllowCIDRs,
+			TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
+			OnReject:          securityRejectFn,
+		}),
 		httpx.RequireAdminJWT(httpx.JWTConfig{
 			Enabled:  cfg.AdminAuthEnabled,
 			Issuer:   cfg.AdminJWTIssuer,
 			Audience: cfg.AdminJWTAudience,
 			Secret:   cfg.AdminJWTSecret,
+			OnReject: securityRejectFn,
 		}),
 		httpx.Recoverer(logger),
 		httpx.AccessLog(logger),
