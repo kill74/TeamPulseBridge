@@ -60,6 +60,15 @@ flowchart LR
 └── Makefile                       # Developer commands
 ```
 
+Repository navigation guides:
+
+- [services/README.md](services/README.md)
+- [deploy/README.md](deploy/README.md)
+- [infrastructure/terraform/README.md](infrastructure/terraform/README.md)
+- [docs/README.md](docs/README.md)
+- [docs/repository-standards.md](docs/repository-standards.md)
+- [docs/pr-checklists.md](docs/pr-checklists.md)
+
 ## Quick Start
 
 ### 1) Prerequisites
@@ -126,7 +135,7 @@ The integration tests skip gracefully if `PUBSUB_EMULATOR_HOST` is not set.
 Production deployments managed via Terraform with complete GCP infrastructure:
 
 - **GKE Cluster**: Auto-scaling Kubernetes with regional HA (prod)
-- **Cloud SQL**: PostgreSQL with automated backups and pointin-time recovery
+- **Cloud SQL**: PostgreSQL with automated backups and point-in-time recovery
 - **Networking**: VPC with Cloud Armor, firewalls, and private service connections
 - **Monitoring**: Cloud Monitoring dashboards, uptime checks, and alerting
 - **Security**: Workload Identity, RBAC, network policies, and service accounts

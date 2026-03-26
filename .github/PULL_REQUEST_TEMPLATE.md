@@ -1,6 +1,14 @@
+# Pull Request Template
+
 ## Summary
 
 Describe what changed and why.
+
+## Risk Level
+
+- [ ] low
+- [ ] medium
+- [ ] high
 
 ## Type of Change
 
@@ -15,6 +23,7 @@ Describe what changed and why.
 - [ ] `go test ./...` passes
 - [ ] CI checks pass
 - [ ] Backward compatibility assessed
+- [ ] Rollback strategy documented
 
 ## Security and Privacy
 
@@ -30,6 +39,15 @@ Describe what changed and why.
 ## Rollout Plan
 
 Describe deployment or migration impact.
+
+## Type-Specific Checklist
+
+- [ ] Service change checklist reviewed
+- [ ] Infrastructure change checklist reviewed
+- [ ] Deployment/GitOps checklist reviewed
+- [ ] Security checklist reviewed
+
+Reference: `docs/pr-checklists.md`
 
 ## Checklist
 
