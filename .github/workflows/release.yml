@@ -40,6 +40,10 @@ jobs:
             echo
           } > release-notes.md
 
+      - name: Preserve release notes across checkout
+        shell: bash
+        run: cp release-notes.md /tmp/release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
@@ -51,6 +55,10 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
+
+      - name: Restore release notes
+        shell: bash
+        run: cp /tmp/release-notes.md release-notes.md
 
       - name: Update CHANGELOG.md
         shell: bash
@@ -67,9 +75,15 @@ jobs:
           tail -n +2 CHANGELOG.md >> "$tmpfile"
           mv "$tmpfile" CHANGELOG.md
 
-      - name: Commit changelog update
-        uses: stefanzweifel/git-auto-commit-action@b863ae1933cb653a53c021fe36dbb774e1fb9403 # v5
-        with:
-          commit_message: 'chore(release): update changelog for ${{ github.ref_name }}'
-          file_pattern: CHANGELOG.md
-          branch: ${{ github.event.repository.default_branch }}
+      - name: Commit and push changelog update
+        shell: bash
+        run: |
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "No changelog changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(release): update changelog for ${GITHUB_REF_NAME}"
+          git push origin HEAD:${{ github.event.repository.default_branch }}
