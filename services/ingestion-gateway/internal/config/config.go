@@ -175,7 +175,7 @@ func intOrDefault(key string, fallback int) int {
 		return fallback
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil {
+	if err != nil || n < 0 {
 		return fallback
 	}
 	return n

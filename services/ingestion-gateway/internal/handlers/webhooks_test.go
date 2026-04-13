@@ -28,6 +28,10 @@ func (s *stubPublisher) Publish(_ context.Context, _ string, _ []byte, _ map[str
 	return s.err
 }
 
+func (s *stubPublisher) Close() error {
+	return s.err
+}
+
 func TestHandleSlackURLVerification(t *testing.T) {
 	cfg := config.Config{SlackSigningSecret: "secret"}
 	pub := &stubPublisher{}

@@ -28,10 +28,14 @@ type Telemetry struct {
 }
 
 func (t *Telemetry) Shutdown(ctx context.Context) error {
+	var errs []error
 	for i := len(t.shutdown) - 1; i >= 0; i-- {
 		if err := t.shutdown[i](ctx); err != nil {
-			return err
+			errs = append(errs, err)
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("telemetry shutdown errors: %v", errs)
 	}
 	return nil
 }

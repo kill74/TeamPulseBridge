@@ -23,8 +23,9 @@ const (
 )
 
 var uiSmokeRateLimiter = struct {
-	mu      sync.Mutex
-	entries map[string]*uiRateEntry
+	mu          sync.Mutex
+	entries     map[string]*uiRateEntry
+	lastCleanup time.Time
 }{
 	entries: map[string]*uiRateEntry{},
 }
@@ -1149,8 +1150,10 @@ func ProductUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 
-	_ = productUITemplate.Execute(w, struct{ Version string }{Version: uiAssetVersion})
-	_ = r
+	if err := productUITemplate.Execute(w, struct{ Version string }{Version: uiAssetVersion}); err != nil {
+		return
+	}
+	_ = r // future use: request logging
 }
 
 // ProductUIStyles serves versioned CSS for the product UI.
@@ -1161,7 +1164,9 @@ func ProductUIStyles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	_, _ = w.Write([]byte(productUICSS))
+	if _, err := w.Write([]byte(productUICSS)); err != nil {
+		return
+	}
 }
 
 // ProductUIScript serves versioned JS for the product UI.
@@ -1172,7 +1177,9 @@ func ProductUIScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-	_, _ = w.Write([]byte(productUIJS))
+	if _, err := w.Write([]byte(productUIJS)); err != nil {
+		return
+	}
 }
 
 func clientIP(remoteAddr string) string {
@@ -1186,12 +1193,71 @@ func clientIP(remoteAddr string) string {
 	return ip
 }
 
+func clientIPFromRequestSmoke(remoteAddr string, header http.Header, trustedProxyNets []*net.IPNet) string {
+	if len(trustedProxyNets) == 0 {
+		return clientIP(remoteAddr)
+	}
+	remoteHost, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		remoteHost = strings.TrimSpace(remoteAddr)
+	}
+	remoteIP := net.ParseIP(remoteHost)
+	if remoteIP != nil && ipInNetsSmoke(remoteIP, trustedProxyNets) {
+		xff := strings.TrimSpace(header.Get("X-Forwarded-For"))
+		if xff != "" {
+			parts := strings.Split(xff, ",")
+			if len(parts) > 0 {
+				if ip := strings.TrimSpace(parts[0]); net.ParseIP(ip) != nil {
+					return ip
+				}
+			}
+		}
+		if xr := strings.TrimSpace(header.Get("X-Real-IP")); net.ParseIP(xr) != nil {
+			return xr
+		}
+	}
+	return clientIP(remoteAddr)
+}
+
+func parseSmokeProxyCIDRs(cidrs []string) []*net.IPNet {
+	if len(cidrs) == 0 {
+		return nil
+	}
+	result := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(cidr))
+		if err != nil {
+			continue
+		}
+		result = append(result, network)
+	}
+	return result
+}
+
+func ipInNetsSmoke(ip net.IP, nets []*net.IPNet) bool {
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func allowUISmokeRequest(ip string, now time.Time) bool {
 	uiSmokeRateLimiter.mu.Lock()
 	defer uiSmokeRateLimiter.mu.Unlock()
 
 	if ip == "" {
 		ip = "unknown"
+	}
+
+	if now.Sub(uiSmokeRateLimiter.lastCleanup) >= time.Minute {
+		for key, entry := range uiSmokeRateLimiter.entries {
+			if now.Sub(entry.windowStart) >= 2*time.Minute {
+				delete(uiSmokeRateLimiter.entries, key)
+			}
+		}
+		uiSmokeRateLimiter.lastCleanup = now
 	}
 
 	entry := uiSmokeRateLimiter.entries[ip]
@@ -1244,12 +1310,15 @@ func isAllowedSmokeEndpoint(endpoint string) bool {
 }
 
 // NewUISmokeTestProxy returns an internal proxy for controlled webhook smoke testing.
-func NewUISmokeTestProxy(target http.Handler) http.HandlerFunc {
+// It accepts a wrappedHandler that includes the full middleware chain (rate limiting, auth, etc.)
+// to ensure smoke tests accurately represent production traffic patterns.
+func NewUISmokeTestProxy(wrappedHandler http.Handler, trustedProxyCIDRs []string) http.HandlerFunc {
+	trustedNets := parseSmokeProxyCIDRs(trustedProxyCIDRs)
 	return func(w http.ResponseWriter, r *http.Request) {
 		setUISecurityHeaders(w)
 		w.Header().Set("Cache-Control", "no-store")
 
-		if !allowUISmokeRequest(clientIP(r.RemoteAddr), time.Now().UTC()) {
+		if !allowUISmokeRequest(clientIPFromRequestSmoke(r.RemoteAddr, r.Header, trustedNets), time.Now().UTC()) {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{
 				"error": "rate limit exceeded for UI smoke tests",
 			})
@@ -1291,7 +1360,7 @@ func NewUISmokeTestProxy(target http.Handler) http.HandlerFunc {
 		}
 
 		rr := httptest.NewRecorder()
-		target.ServeHTTP(rr, internalReq)
+		wrappedHandler.ServeHTTP(rr, internalReq)
 
 		respBody := rr.Body.String()
 		if len(respBody) > uiSmokeResponseBodyMaxBytes {

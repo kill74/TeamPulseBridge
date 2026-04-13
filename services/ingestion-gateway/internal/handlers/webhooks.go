@@ -33,6 +33,13 @@ func NewWebhookHandler(cfg config.Config, publisher queue.Publisher, logger *slo
 }
 
 func (h *WebhookHandler) HandleSlack(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.Context().Err(); err != nil {
+		return
+	}
 	body, ok := readBody(w, r)
 	if !ok {
 		return
@@ -63,6 +70,13 @@ func (h *WebhookHandler) HandleSlack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WebhookHandler) HandleGitHub(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.Context().Err(); err != nil {
+		return
+	}
 	body, ok := readBody(w, r)
 	if !ok {
 		return
@@ -76,6 +90,13 @@ func (h *WebhookHandler) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WebhookHandler) HandleGitLab(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.Context().Err(); err != nil {
+		return
+	}
 	body, ok := readBody(w, r)
 	if !ok {
 		return
@@ -89,11 +110,19 @@ func (h *WebhookHandler) HandleGitLab(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WebhookHandler) HandleTeams(w http.ResponseWriter, r *http.Request) {
-	// Graph subscription validation handshake.
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.Context().Err(); err != nil {
+		return
+	}
 	if token := r.URL.Query().Get("validationToken"); token != "" {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(token))
+		if _, err := w.Write([]byte(token)); err != nil {
+			return
+		}
 		h.observe(r.Context(), "teams", http.StatusOK)
 		return
 	}
@@ -153,5 +182,7 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		_ = err // Headers already sent, cannot recover
+	}
 }

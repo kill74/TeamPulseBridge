@@ -39,10 +39,7 @@ func BuildRuntimePublisher(ctx context.Context, cfg config.Config, logger *slog.
 	}
 
 	async := NewAsyncPublisher(base, cfg.QueueBuffer, logger)
-	r.closers = append(r.closers, func() error {
-		async.Close()
-		return nil
-	})
+	r.closers = append(r.closers, async.Close)
 	r.Publisher = async
 	return r, nil
 }

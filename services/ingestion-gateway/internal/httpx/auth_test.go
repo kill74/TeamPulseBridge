@@ -31,7 +31,7 @@ func TestRequireAdminJWT_RejectsMissingToken(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/configz", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
@@ -75,7 +75,7 @@ func TestRequireAdminCIDRAllowlist_RejectsAdminRequestOutsideCIDR(t *testing.T) 
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/configz", nil)
 	req.RemoteAddr = "192.168.1.10:1234"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -125,7 +125,7 @@ func TestRequireAdminCIDRAllowlist_TrustsXFFFromTrustedProxy(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/configz", nil)
 	req.RemoteAddr = "203.0.113.10:1234"
 	req.Header.Set("X-Forwarded-For", "10.1.2.3")
 	rr := httptest.NewRecorder()

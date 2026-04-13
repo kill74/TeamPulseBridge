@@ -18,3 +18,7 @@ func (p *LogPublisher) Publish(_ context.Context, source string, body []byte, _ 
 	p.logger.Info("queued event", "source", source, "bytes", len(body))
 	return nil
 }
+
+func (p *LogPublisher) Close() error {
+	return nil
+}

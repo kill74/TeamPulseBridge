@@ -41,6 +41,10 @@ func (c *capturePublisher) Publish(_ context.Context, source string, body []byte
 	return nil
 }
 
+func (c *capturePublisher) Close() error {
+	return nil
+}
+
 func TestWebhookPayloadContracts_PublishRawCompatiblePayloads(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	metricsFn := func(context.Context, string, int) {}

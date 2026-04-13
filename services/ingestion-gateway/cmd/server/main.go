@@ -70,21 +70,23 @@ func main() {
 	}
 	admin := handlers.NewAdminHandler(cfg)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", handlers.ProductUI)
-	mux.HandleFunc("GET /assets/ui.css", handlers.ProductUIStyles)
-	mux.HandleFunc("GET /assets/ui.js", handlers.ProductUIScript)
-	mux.HandleFunc("POST /ui/smoke-test", handlers.NewUISmokeTestProxy(mux))
-	mux.HandleFunc("GET /healthz", handlers.Healthz)
-	mux.HandleFunc("GET /readyz", handlers.Readyz)
-	mux.Handle("GET /metrics", telemetry.MetricsHandler)
-	mux.HandleFunc("GET /admin/configz", admin.Configz)
-	mux.HandleFunc("POST /webhooks/slack", h.HandleSlack)
-	mux.HandleFunc("POST /webhooks/teams", h.HandleTeams)
-	mux.HandleFunc("POST /webhooks/github", h.HandleGitHub)
-	mux.HandleFunc("POST /webhooks/gitlab", h.HandleGitLab)
+	webhookMux := http.NewServeMux()
+	webhookMux.HandleFunc("GET /", handlers.ProductUI)
+	webhookMux.HandleFunc("GET /assets/ui.css", handlers.ProductUIStyles)
+	webhookMux.HandleFunc("GET /assets/ui.js", handlers.ProductUIScript)
+	webhookMux.HandleFunc("GET /healthz", handlers.Healthz)
+	webhookMux.HandleFunc("GET /readyz", handlers.Readyz)
+	webhookMux.Handle("GET /metrics", telemetry.MetricsHandler)
+	webhookMux.HandleFunc("GET /admin/configz", admin.Configz)
+	webhookMux.HandleFunc("POST /webhooks/slack", h.HandleSlack)
+	webhookMux.HandleFunc("POST /webhooks/teams", h.HandleTeams)
+	webhookMux.HandleFunc("POST /webhooks/github", h.HandleGitHub)
+	webhookMux.HandleFunc("POST /webhooks/gitlab", h.HandleGitLab)
+
+	smokeHandler := handlers.NewUISmokeTestProxy(webhookMux, cfg.TrustedProxyCIDRs)
+
 	handler := httpx.Chain(
-		mux,
+		http.HandlerFunc(smokeHandler),
 		httpx.RequestID(),
 		httpx.RateLimit(httpx.RateLimitConfig{
 			Enabled:           cfg.RateLimitEnabled,

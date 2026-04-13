@@ -45,6 +45,7 @@ type ipRateLimiter struct {
 	windowS int64
 	hits    uint64
 	cleanup int
+	stop    chan struct{}
 }
 
 func newIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN int) *ipRateLimiter {
@@ -57,12 +58,47 @@ func newIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN 
 	if cleanupEveryN <= 0 {
 		cleanupEveryN = 1024
 	}
-	return &ipRateLimiter{
+	l := &ipRateLimiter{
 		entries: make(map[string]rateWindow, 256),
 		now:     now,
 		window:  window,
 		windowS: int64(window / time.Second),
 		cleanup: cleanupEveryN,
+		stop:    make(chan struct{}),
+	}
+	go l.periodicCleanup()
+	return l
+}
+
+func (l *ipRateLimiter) Stop() {
+	close(l.stop)
+}
+
+func (l *ipRateLimiter) periodicCleanup() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			l.cleanupStale()
+		case <-l.stop:
+			return
+		}
+	}
+}
+
+func (l *ipRateLimiter) cleanupStale() {
+	now := l.now().Unix()
+	currentWindowStart := now - (now % l.windowS)
+	threshold := currentWindowStart - l.windowS
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for key, entry := range l.entries {
+		if entry.windowStart < threshold {
+			delete(l.entries, key)
+		}
 	}
 }
 
@@ -192,7 +228,7 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 			ip := ClientIPFromRequest(r, trusted)
 			limit := general
 			scope := "general"
-			if strings.HasPrefix(r.URL.Path, "/admin") || r.URL.Path == "/metrics" {
+			if strings.HasPrefix(r.URL.Path, "/admin") {
 				limit = admin
 				scope = "admin"
 			}

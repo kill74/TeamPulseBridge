@@ -33,11 +33,15 @@ func NewPubSubPublisher(ctx context.Context, projectID, topicID string, logger *
 	topic := client.Topic(topicID)
 	exists, err := topic.Exists(ctx)
 	if err != nil {
-		_ = client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			err = fmt.Errorf("%w (client close failed: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("check topic existence: %w", err)
 	}
 	if !exists {
-		_ = client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			return nil, fmt.Errorf("pubsub topic %q does not exist (client close failed: %v)", topicID, closeErr)
+		}
 		return nil, fmt.Errorf("pubsub topic %q does not exist", topicID)
 	}
 	return &PubSubPublisher{client: client, topic: topic, logger: logger}, nil
@@ -66,8 +70,10 @@ func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byt
 		},
 	}
 
-	res := p.topic.Publish(ctx, msg)
-	msgID, err := res.Get(ctx)
+	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	res := p.topic.Publish(publishCtx, msg)
+	msgID, err := res.Get(publishCtx)
 	if err != nil {
 		return fmt.Errorf("pubsub publish: %w", err)
 	}

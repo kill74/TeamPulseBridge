@@ -44,6 +44,9 @@ func ValidateGitHub(secret string, body []byte, provided string) error {
 	if secret == "" {
 		return fmt.Errorf("github webhook secret is not configured")
 	}
+	if provided == "" {
+		return fmt.Errorf("missing github signature")
+	}
 	if !strings.HasPrefix(provided, "sha256=") {
 		return fmt.Errorf("github signature format is invalid")
 	}

@@ -22,6 +22,7 @@ type AsyncPublisher struct {
 	logger *slog.Logger
 	ch     chan queuedEvent
 	wg     sync.WaitGroup
+	once   sync.Once
 }
 
 func NewAsyncPublisher(inner Publisher, buffer int, logger *slog.Logger) *AsyncPublisher {
@@ -48,13 +49,21 @@ func (p *AsyncPublisher) Publish(ctx context.Context, source string, body []byte
 	}
 }
 
-func (p *AsyncPublisher) Close() {
-	close(p.ch)
+func (p *AsyncPublisher) Close() error {
+	p.once.Do(func() {
+		close(p.ch)
+	})
 	p.wg.Wait()
+	return nil
 }
 
 func (p *AsyncPublisher) run() {
 	defer p.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.Error("async publisher recovered from panic", "panic", r)
+		}
+	}()
 	for e := range p.ch {
 		if err := p.inner.Publish(e.ctx, e.source, e.body, e.headers); err != nil {
 			p.logger.Error("failed to publish queued event", "source", e.source, "error", err)

@@ -4,10 +4,14 @@ import "net/http"
 
 func Healthz(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
+	if _, err := w.Write([]byte("ok")); err != nil {
+		return
+	}
 }
 
 func Readyz(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ready"))
+	if _, err := w.Write([]byte("ready")); err != nil {
+		return
+	}
 }
