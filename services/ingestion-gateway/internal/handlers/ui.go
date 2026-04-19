@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const uiAssetVersion = "20260325.4"
+const uiAssetVersion = "20260419.1"
 
 const (
 	uiSmokeMaxBodyBytes         = 256 * 1024
@@ -175,6 +175,90 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
         </div>
       </article>
 
+      <article class="card span-8 delay-5">
+        <h2>Failed Event Explorer</h2>
+        <p class="small">Review recent failed publish events and replay them without leaving the console. Requires admin access when JWT guard is enabled.</p>
+        <div class="row row-top-gap">
+          <button id="refreshFailedEvents" class="ghost compact">Refresh Failed Events</button>
+          <span id="failedEventsState" class="pill">state: checking</span>
+        </div>
+        <div class="field">
+          <label class="label" for="failedEventsLimit">List Limit</label>
+          <input id="failedEventsLimit" class="input" type="number" min="1" max="100" value="20" />
+        </div>
+        <div class="table-wrap">
+          <table class="events-table" aria-label="Failed events">
+            <thead>
+              <tr>
+                <th>Event ID</th>
+                <th>Source</th>
+                <th>Reason</th>
+                <th>Failed At</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="failedEventsBody">
+              <tr><td colspan="5" class="empty-row">Loading failed events...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="field">
+          <label class="label" for="failedReplayResult">Replay Result</label>
+          <pre id="failedReplayResult" class="code" role="status" aria-live="polite">Ready.</pre>
+        </div>
+
+        <h2 class="stack-heading">Replay Audit History</h2>
+        <div class="row row-top-gap">
+          <button id="refreshReplayAudit" class="ghost compact">Refresh Replay Audit</button>
+          <button id="replayAuditNext" class="ghost compact" type="button">Next Page</button>
+          <button id="replayAuditReset" class="ghost compact" type="button">Reset Filters</button>
+          <span id="replayAuditState" class="pill">state: checking</span>
+          <span id="replayAuditPage" class="pill">page: 1</span>
+        </div>
+        <div class="filters-grid">
+          <div class="field">
+            <label class="label" for="replayAuditActor">Actor</label>
+            <input id="replayAuditActor" class="input" type="text" placeholder="dev@example.com" />
+          </div>
+          <div class="field">
+            <label class="label" for="replayAuditEventID">Event ID</label>
+            <input id="replayAuditEventID" class="input" type="text" placeholder="evt_1234" />
+          </div>
+          <div class="field">
+            <label class="label" for="replayAuditResult">Result</label>
+            <select id="replayAuditResult" class="input">
+              <option value="">All</option>
+              <option value="accepted">accepted</option>
+              <option value="validated">validated</option>
+              <option value="failed">failed</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="replayAuditSort">Sort</label>
+            <select id="replayAuditSort" class="input">
+              <option value="desc">Newest first</option>
+              <option value="asc">Oldest first</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="events-table" aria-label="Replay audit">
+            <thead>
+              <tr>
+                <th>Replayed At</th>
+                <th>Actor</th>
+                <th>Event ID</th>
+                <th>Mode</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody id="replayAuditBody">
+              <tr><td colspan="5" class="empty-row">Loading replay audit history...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
       <article class="card span-4 delay-5">
         <h2>Operator Controls</h2>
         <div class="row row-bottom-gap">
@@ -192,6 +276,8 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
           <a class="ghost" href="/healthz" target="_blank" rel="noreferrer">Open Health</a>
           <a class="ghost" href="/readyz" target="_blank" rel="noreferrer">Open Readiness</a>
           <a class="ghost" href="/admin/configz" target="_blank" rel="noreferrer">Open Admin Config</a>
+          <a class="ghost" href="/admin/events/failed" target="_blank" rel="noreferrer">Open Failed Events API</a>
+          <a class="ghost" href="/admin/events/replay-audit" target="_blank" rel="noreferrer">Open Replay Audit API</a>
         </div>
 
         <h2 class="stack-heading">Keyboard Shortcuts</h2>
@@ -597,6 +683,13 @@ button:focus-visible,
   margin-top: 10px;
 }
 
+.filters-grid {
+  margin-top: 10px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
 .row {
   display: flex;
   gap: 8px;
@@ -608,6 +701,60 @@ button:focus-visible,
 .row-bottom-gap { margin-bottom: 8px; }
 .no-top-gap { margin-top: 0; }
 .stack-heading { margin-top: 14px; }
+
+.table-wrap {
+  margin-top: 12px;
+  border: 1px solid #d7dbe6;
+  border-radius: 12px;
+  overflow: auto;
+  background: #ffffff;
+}
+
+.events-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+  font: 500 12px/1.4 "IBM Plex Mono", monospace;
+}
+
+.events-table th,
+.events-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #eceff6;
+  text-align: left;
+  vertical-align: top;
+}
+
+.events-table th {
+  background: #f4f7ff;
+  color: #44506a;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.events-table tr:last-child td {
+  border-bottom: none;
+}
+
+.events-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.events-actions button {
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.empty-row {
+  color: #6b748a;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", monospace;
+}
 
 .switch {
   appearance: none;
@@ -671,6 +818,13 @@ button:focus-visible,
 const productUIJS = `
 var refreshTimer = null;
 var smokeInFlight = false;
+var failedEventsInFlight = false;
+var replayAuditInFlight = false;
+var replayAuditCurrentCursor = '';
+var replayAuditNextCursor = '';
+var replayAuditHasMore = false;
+var replayAuditPage = 1;
+var replayAuditQueryFingerprint = '';
 var healthLatencyHistory = [];
 var readyLatencyHistory = [];
 var healthOkHistory = [];
@@ -862,6 +1016,8 @@ async function refreshStatus() {
     adminState.textContent = 'state: unavailable';
     setPillState('adminState', 'err');
   }
+  await refreshFailedEvents(admin.status);
+  await refreshReplayAuditList(admin.status);
 
   var overall = document.getElementById('overallState');
   if (health.ok && ready.ok) {
@@ -896,6 +1052,453 @@ function setResultState(state) {
   }
   if (state === 'err') {
     result.classList.add('err');
+  }
+}
+
+function setFailedReplayResultState(state) {
+  var result = document.getElementById('failedReplayResult');
+  if (!result) {
+    return;
+  }
+  result.className = 'code';
+  if (state === 'ok') {
+    result.classList.add('ok');
+  }
+  if (state === 'err') {
+    result.classList.add('err');
+  }
+}
+
+function setFailedEventsState(text, state) {
+  var el = document.getElementById('failedEventsState');
+  if (!el) {
+    return;
+  }
+  el.textContent = text;
+  setPillState('failedEventsState', state);
+}
+
+function setFailedEventsEmpty(message) {
+  var tbody = document.getElementById('failedEventsBody');
+  if (!tbody) {
+    return;
+  }
+  tbody.innerHTML = '';
+  var tr = document.createElement('tr');
+  var td = document.createElement('td');
+  td.colSpan = 5;
+  td.className = 'empty-row';
+  td.textContent = message;
+  tr.appendChild(td);
+  tbody.appendChild(tr);
+}
+
+function setReplayAuditState(text, state) {
+  var el = document.getElementById('replayAuditState');
+  if (!el) {
+    return;
+  }
+  el.textContent = text;
+  setPillState('replayAuditState', state);
+}
+
+function setReplayAuditEmpty(message) {
+  var tbody = document.getElementById('replayAuditBody');
+  if (!tbody) {
+    return;
+  }
+  tbody.innerHTML = '';
+  var tr = document.createElement('tr');
+  var td = document.createElement('td');
+  td.colSpan = 5;
+  td.className = 'empty-row';
+  td.textContent = message;
+  tr.appendChild(td);
+  tbody.appendChild(tr);
+}
+
+function updateReplayAuditPagingState() {
+  var pageEl = document.getElementById('replayAuditPage');
+  if (pageEl) {
+    pageEl.textContent = 'page: ' + String(replayAuditPage) + (replayAuditHasMore ? ' (more)' : '');
+    setPillState('replayAuditPage', replayAuditHasMore ? 'warn' : 'ok');
+  }
+  var nextButton = document.getElementById('replayAuditNext');
+  if (nextButton) {
+    var disabled = replayAuditInFlight || !replayAuditHasMore || !replayAuditNextCursor;
+    nextButton.disabled = disabled;
+    nextButton.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  }
+}
+
+function resetReplayAuditPaging() {
+  replayAuditCurrentCursor = '';
+  replayAuditNextCursor = '';
+  replayAuditHasMore = false;
+  replayAuditPage = 1;
+  updateReplayAuditPagingState();
+}
+
+function replayAuditFiltersFromUI() {
+  var actorEl = document.getElementById('replayAuditActor');
+  var eventIDEl = document.getElementById('replayAuditEventID');
+  var resultEl = document.getElementById('replayAuditResult');
+  var sortEl = document.getElementById('replayAuditSort');
+  var sortValue = sortEl && sortEl.value ? String(sortEl.value).trim().toLowerCase() : 'desc';
+  if (sortValue !== 'asc' && sortValue !== 'desc') {
+    sortValue = 'desc';
+  }
+  return {
+    actor: actorEl ? actorEl.value.trim() : '',
+    eventID: eventIDEl ? eventIDEl.value.trim() : '',
+    result: resultEl ? resultEl.value.trim().toLowerCase() : '',
+    sort: sortValue
+  };
+}
+
+function replayAuditLimitValue() {
+  var limitInput = document.getElementById('failedEventsLimit');
+  var limitValue = Number(limitInput && limitInput.value ? limitInput.value : '20');
+  if (!Number.isFinite(limitValue) || limitValue < 1 || limitValue > 100) {
+    return 20;
+  }
+  return Math.round(limitValue);
+}
+
+function replayAuditQueryKey(limitValue, filters) {
+  return [
+    String(limitValue),
+    filters.actor,
+    filters.eventID,
+    filters.result,
+    filters.sort
+  ].join('|');
+}
+
+function formatFailedAt(raw) {
+  if (!raw) {
+    return '--';
+  }
+  var parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(raw);
+  }
+  return parsed.toLocaleString();
+}
+
+function formatReplayResult(record) {
+  if (record && record.result) {
+    if (record.error_code) {
+      return record.result + ' (' + record.error_code + ')';
+    }
+    return record.result;
+  }
+  return '--';
+}
+
+function renderFailedEvents(events) {
+  var tbody = document.getElementById('failedEventsBody');
+  if (!tbody) {
+    return;
+  }
+  tbody.innerHTML = '';
+  if (!events || !events.length) {
+    setFailedEventsEmpty('No failed events recorded.');
+    return;
+  }
+
+  events.forEach(function(event) {
+    var tr = document.createElement('tr');
+
+    var eventId = document.createElement('td');
+    eventId.className = 'mono';
+    eventId.textContent = event.event_id || '--';
+    tr.appendChild(eventId);
+
+    var source = document.createElement('td');
+    source.textContent = event.source || '--';
+    tr.appendChild(source);
+
+    var reason = document.createElement('td');
+    reason.className = 'mono';
+    reason.textContent = event.reason || '--';
+    tr.appendChild(reason);
+
+    var failedAt = document.createElement('td');
+    failedAt.textContent = formatFailedAt(event.failed_at);
+    tr.appendChild(failedAt);
+
+    var actions = document.createElement('td');
+    var actionWrap = document.createElement('div');
+    actionWrap.className = 'events-actions';
+
+    var dryRunButton = document.createElement('button');
+    dryRunButton.className = 'ghost compact';
+    dryRunButton.textContent = 'Dry Run';
+    dryRunButton.type = 'button';
+    dryRunButton.addEventListener('click', function() {
+      replayFailedEvent(event.event_id, true);
+    });
+    actionWrap.appendChild(dryRunButton);
+
+    var replayButton = document.createElement('button');
+    replayButton.className = 'compact';
+    replayButton.textContent = 'Replay';
+    replayButton.type = 'button';
+    replayButton.addEventListener('click', function() {
+      replayFailedEvent(event.event_id, false);
+    });
+    actionWrap.appendChild(replayButton);
+
+    actions.appendChild(actionWrap);
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+}
+
+async function replayFailedEvent(eventID, dryRun) {
+  var result = document.getElementById('failedReplayResult');
+  if (!result) {
+    return;
+  }
+  setFailedReplayResultState('');
+  result.textContent = (dryRun ? 'Validating' : 'Replaying') + ' ' + eventID + '...';
+  try {
+    var res = await fetch('/admin/events/replay', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeader()),
+      body: JSON.stringify({
+        event_id: eventID,
+        dry_run: Boolean(dryRun)
+      })
+    });
+    var body = await res.text();
+    var parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch (_) {
+      parsed = { raw: body };
+    }
+    var lines = [
+      'Event ID: ' + eventID,
+      'HTTP: ' + res.status,
+      'Mode: ' + (dryRun ? 'dry-run' : 'publish'),
+      ''
+    ];
+    if (parsed && parsed.error && parsed.error.code) {
+      lines.push('Error Code: ' + parsed.error.code);
+      lines.push('Error: ' + (parsed.error.message || 'request failed'));
+    } else {
+      lines.push(JSON.stringify(parsed, null, 2));
+    }
+    result.textContent = lines.join('\n');
+    setFailedReplayResultState(res.ok ? 'ok' : 'err');
+    addTimelineEvent((dryRun ? 'Dry-run' : 'Replay') + ' for ' + eventID + ' returned ' + res.status, res.ok ? 'ok' : 'warn');
+    if (res.ok && !dryRun) {
+      refreshFailedEvents();
+    }
+    refreshReplayAuditList();
+  } catch (err) {
+    setFailedReplayResultState('err');
+    result.textContent = 'Replay request failed: ' + (err && err.message ? err.message : String(err));
+    addTimelineEvent('Replay request failed for ' + eventID, 'err');
+  }
+}
+
+async function refreshFailedEvents(adminStatus) {
+  if (failedEventsInFlight) {
+    return;
+  }
+  if (adminStatus === 401 || adminStatus === 403) {
+    setFailedEventsState('state: locked (auth required)', 'warn');
+    setFailedEventsEmpty('Admin token required to load failed events.');
+    return;
+  }
+
+  var limitInput = document.getElementById('failedEventsLimit');
+  var limitValue = Number(limitInput && limitInput.value ? limitInput.value : '20');
+  if (!Number.isFinite(limitValue) || limitValue < 1 || limitValue > 100) {
+    limitValue = 20;
+  }
+
+  failedEventsInFlight = true;
+  setFailedEventsState('state: loading', 'warn');
+  try {
+    var res = await fetch('/admin/events/failed?limit=' + encodeURIComponent(String(limitValue)), {
+      headers: authHeader()
+    });
+    var body = await res.text();
+    var parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch (_) {
+      parsed = {};
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      setFailedEventsState('state: locked (auth required)', 'warn');
+      setFailedEventsEmpty('Admin token required to load failed events.');
+      return;
+    }
+    if (!res.ok) {
+      setFailedEventsState('state: unavailable', 'err');
+      setFailedEventsEmpty('Failed to load failed events (status ' + res.status + ').');
+      return;
+    }
+    if (!parsed.enabled) {
+      setFailedEventsState('state: disabled', 'warn');
+      setFailedEventsEmpty('Failed-event store is disabled in this environment.');
+      return;
+    }
+    setFailedEventsState('state: ready', 'ok');
+    renderFailedEvents(parsed.events || []);
+  } catch (_) {
+    setFailedEventsState('state: unavailable', 'err');
+    setFailedEventsEmpty('Failed to load failed events due to network or browser error.');
+  } finally {
+    failedEventsInFlight = false;
+  }
+}
+
+function renderReplayAudit(records) {
+  var tbody = document.getElementById('replayAuditBody');
+  if (!tbody) {
+    return;
+  }
+  tbody.innerHTML = '';
+  if (!records || !records.length) {
+    setReplayAuditEmpty('No replay audit records yet.');
+    return;
+  }
+
+  records.forEach(function(record) {
+    var tr = document.createElement('tr');
+
+    var replayedAt = document.createElement('td');
+    replayedAt.textContent = formatFailedAt(record.replayed_at);
+    tr.appendChild(replayedAt);
+
+    var actor = document.createElement('td');
+    actor.className = 'mono';
+    actor.textContent = record.actor || '--';
+    tr.appendChild(actor);
+
+    var eventID = document.createElement('td');
+    eventID.className = 'mono';
+    eventID.textContent = record.event_id || '--';
+    tr.appendChild(eventID);
+
+    var mode = document.createElement('td');
+    mode.className = 'mono';
+    mode.textContent = record.mode || '--';
+    tr.appendChild(mode);
+
+    var result = document.createElement('td');
+    result.className = 'mono';
+    result.textContent = formatReplayResult(record);
+    tr.appendChild(result);
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function refreshReplayAuditList(adminStatus, options) {
+  options = options || {};
+  if (replayAuditInFlight) {
+    return;
+  }
+  if (adminStatus === 401 || adminStatus === 403) {
+    setReplayAuditState('state: locked (auth required)', 'warn');
+    setReplayAuditEmpty('Admin token required to load replay audit history.');
+    resetReplayAuditPaging();
+    return;
+  }
+
+  var filters = replayAuditFiltersFromUI();
+  var limitValue = replayAuditLimitValue();
+  var queryKey = replayAuditQueryKey(limitValue, filters);
+  var needsReset = Boolean(options.reset) || queryKey !== replayAuditQueryFingerprint;
+  if (needsReset) {
+    replayAuditQueryFingerprint = queryKey;
+    replayAuditCurrentCursor = '';
+    replayAuditNextCursor = '';
+    replayAuditHasMore = false;
+    replayAuditPage = 1;
+  }
+
+  var cursor = replayAuditCurrentCursor;
+  var page = replayAuditPage;
+  if (options.nextPage) {
+    if (!replayAuditHasMore || !replayAuditNextCursor) {
+      updateReplayAuditPagingState();
+      return;
+    }
+    cursor = replayAuditNextCursor;
+    page = replayAuditPage + 1;
+  }
+
+  replayAuditInFlight = true;
+  updateReplayAuditPagingState();
+  setReplayAuditState('state: loading', 'warn');
+  try {
+    var params = new URLSearchParams();
+    params.set('limit', String(limitValue));
+    params.set('sort', filters.sort);
+    if (filters.actor) {
+      params.set('actor', filters.actor);
+    }
+    if (filters.eventID) {
+      params.set('event_id', filters.eventID);
+    }
+    if (filters.result) {
+      params.set('result', filters.result);
+    }
+    if (cursor) {
+      params.set('cursor', cursor);
+    }
+
+    var res = await fetch('/admin/events/replay-audit?' + params.toString(), {
+      headers: authHeader()
+    });
+    var body = await res.text();
+    var parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch (_) {
+      parsed = {};
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      setReplayAuditState('state: locked (auth required)', 'warn');
+      setReplayAuditEmpty('Admin token required to load replay audit history.');
+      resetReplayAuditPaging();
+      return;
+    }
+    if (!res.ok) {
+      setReplayAuditState('state: unavailable', 'err');
+      setReplayAuditEmpty('Failed to load replay audit history (status ' + res.status + ').');
+      return;
+    }
+    if (!parsed.enabled) {
+      setReplayAuditState('state: disabled', 'warn');
+      setReplayAuditEmpty('Replay audit history is disabled in this environment.');
+      resetReplayAuditPaging();
+      return;
+    }
+    replayAuditCurrentCursor = cursor;
+    replayAuditPage = page;
+    var pageInfo = parsed.page || {};
+    replayAuditHasMore = Boolean(pageInfo.has_more);
+    replayAuditNextCursor = replayAuditHasMore && pageInfo.next_cursor ? String(pageInfo.next_cursor) : '';
+
+    setReplayAuditState('state: ready', 'ok');
+    renderReplayAudit(parsed.records || []);
+  } catch (_) {
+    setReplayAuditState('state: unavailable', 'err');
+    setReplayAuditEmpty('Failed to load replay audit history due to network or browser error.');
+  } finally {
+    replayAuditInFlight = false;
+    updateReplayAuditPagingState();
   }
 }
 
@@ -1050,6 +1653,42 @@ document.querySelectorAll('button[data-endpoint]').forEach(function(btn) {
 });
 
 document.getElementById('manualRefresh').addEventListener('click', refreshStatus);
+document.getElementById('refreshFailedEvents').addEventListener('click', function() {
+  refreshFailedEvents();
+});
+document.getElementById('refreshReplayAudit').addEventListener('click', function() {
+  refreshReplayAuditList();
+});
+document.getElementById('replayAuditNext').addEventListener('click', function() {
+  refreshReplayAuditList(undefined, { nextPage: true });
+});
+document.getElementById('replayAuditReset').addEventListener('click', function() {
+  document.getElementById('replayAuditActor').value = '';
+  document.getElementById('replayAuditEventID').value = '';
+  document.getElementById('replayAuditResult').value = '';
+  document.getElementById('replayAuditSort').value = 'desc';
+  refreshReplayAuditList(undefined, { reset: true });
+});
+document.getElementById('failedEventsLimit').addEventListener('change', function() {
+  refreshFailedEvents();
+  refreshReplayAuditList(undefined, { reset: true });
+});
+document.getElementById('replayAuditActor').addEventListener('keydown', function(ev) {
+  if (ev.key === 'Enter') {
+    refreshReplayAuditList(undefined, { reset: true });
+  }
+});
+document.getElementById('replayAuditEventID').addEventListener('keydown', function(ev) {
+  if (ev.key === 'Enter') {
+    refreshReplayAuditList(undefined, { reset: true });
+  }
+});
+document.getElementById('replayAuditResult').addEventListener('change', function() {
+  refreshReplayAuditList(undefined, { reset: true });
+});
+document.getElementById('replayAuditSort').addEventListener('change', function() {
+  refreshReplayAuditList(undefined, { reset: true });
+});
 document.getElementById('autoRefresh').addEventListener('change', setupAutoRefresh);
 document.getElementById('allowSend').addEventListener('change', function(ev) {
   setSmokeSendEnabled(Boolean(ev.target.checked));
@@ -1104,6 +1743,7 @@ refreshStatus();
 setupAutoRefresh();
 updateLastRefresh();
 setSmokeSendEnabled(document.getElementById('allowSend').checked);
+updateReplayAuditPagingState();
 setInterval(updateFreshnessIndicator, 1000);
 `
 

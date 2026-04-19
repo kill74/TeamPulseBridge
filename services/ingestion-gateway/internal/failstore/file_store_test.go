@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -53,5 +54,52 @@ func TestFileStoreGetByIDNotFound(t *testing.T) {
 	_, err = store.GetByID(context.Background(), "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestFileStoreListRecent(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "failed-events.jsonl")
+	store, err := NewFileStore(storePath)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+
+	for i := 1; i <= 5; i++ {
+		_, err := store.Save(context.Background(), SaveInput{
+			EventID: "evt_" + strconv.Itoa(i),
+			Source:  "github",
+			Reason:  "ERR_PUBLISH_FAILED",
+			Body:    []byte(`{"id":` + strconv.Itoa(i) + `}`),
+		})
+		if err != nil {
+			t.Fatalf("save %d failed: %v", i, err)
+		}
+	}
+
+	recent, err := store.ListRecent(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("list recent failed: %v", err)
+	}
+	if len(recent) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(recent))
+	}
+	if recent[0].EventID != "evt_5" || recent[1].EventID != "evt_4" || recent[2].EventID != "evt_3" {
+		t.Fatalf("unexpected event order: %+v", []string{recent[0].EventID, recent[1].EventID, recent[2].EventID})
+	}
+}
+
+func TestFileStoreListRecentMissingFileReturnsEmpty(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "missing.jsonl")
+	store, err := NewFileStore(storePath)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+
+	recent, err := store.ListRecent(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("list recent failed: %v", err)
+	}
+	if len(recent) != 0 {
+		t.Fatalf("expected empty recent list, got %d", len(recent))
 	}
 }

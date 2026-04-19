@@ -152,3 +152,19 @@ func TestValidateRejectsEmptyFailedStorePathWhenEnabled(t *testing.T) {
 		t.Fatal("expected FAILED_EVENT_STORE_PATH validation error")
 	}
 }
+
+func TestValidateRejectsEmptyReplayAuditPathWhenEnabled(t *testing.T) {
+	cfg := Config{
+		Environment:        "local",
+		Port:               "8080",
+		QueueBuffer:        100,
+		RequestTimeoutSec:  15,
+		QueueBackend:       "log",
+		RequireSecrets:     false,
+		ReplayAuditEnabled: true,
+		ReplayAuditPath:    " ",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected REPLAY_AUDIT_PATH validation error")
+	}
+}

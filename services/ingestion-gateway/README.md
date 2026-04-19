@@ -16,6 +16,9 @@ and publishes normalized webhook envelopes to the configured queue backend.
 - `GET /readyz`
 - `GET /metrics`
 - `GET /admin/configz`
+- `GET /admin/events/failed`
+- `GET /admin/events/replay-audit`
+- `POST /admin/events/replay`
 - `POST /ui/smoke-test` (operator UI internal proxy)
 
 ### Built-in Product UI (`GET /`)
@@ -55,6 +58,8 @@ The root route serves an operator console with:
 - `DEDUP_TTL_SEC` (default: `300`)
 - `FAILED_EVENT_STORE_ENABLED` (default: `true`)
 - `FAILED_EVENT_STORE_PATH` (default: `data/failed-events.jsonl`)
+- `REPLAY_AUDIT_ENABLED` (default: `true`)
+- `REPLAY_AUDIT_PATH` (default: `data/replay-audit.jsonl`)
 - `TRUSTED_PROXY_CIDRS` (optional comma-separated CIDRs; only these proxies are trusted for `X-Forwarded-For` and `X-Real-IP`)
 - `QUEUE_BUFFER` (default: `4096`)
 - `QUEUE_BACKEND` (default: `log`; options: `log|pubsub`)

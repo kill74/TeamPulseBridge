@@ -39,6 +39,7 @@ type SaveInput struct {
 type Store interface {
 	Save(ctx context.Context, in SaveInput) (FailedEvent, error)
 	GetByID(ctx context.Context, eventID string) (FailedEvent, error)
+	ListRecent(ctx context.Context, limit int) ([]FailedEvent, error)
 }
 
 type FileStore struct {
@@ -152,6 +153,62 @@ func (s *FileStore) GetByID(_ context.Context, eventID string) (FailedEvent, err
 		return FailedEvent{}, fmt.Errorf("scan failed event store: %w", err)
 	}
 	return FailedEvent{}, ErrNotFound
+}
+
+func (s *FileStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, error) {
+	if limit <= 0 {
+		return nil, errors.New("limit must be > 0")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, err := os.Open(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []FailedEvent{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open failed event store: %w", err)
+	}
+	defer func() {
+		_ = f.Close()
+	}()
+
+	events := make([]FailedEvent, 0, limit)
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var event FailedEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		if len(events) < limit {
+			events = append(events, event)
+			continue
+		}
+		copy(events, events[1:])
+		events[len(events)-1] = event
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan failed event store: %w", err)
+	}
+
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	return events, nil
 }
 
 func hashBody(body []byte) string {

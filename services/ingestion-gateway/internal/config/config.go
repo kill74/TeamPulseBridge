@@ -36,6 +36,8 @@ type Config struct {
 	DedupTTLSeconds     int
 	FailedStoreEnabled  bool
 	FailedStorePath     string
+	ReplayAuditEnabled  bool
+	ReplayAuditPath     string
 }
 
 func LoadFromEnv() Config {
@@ -65,6 +67,8 @@ func LoadFromEnv() Config {
 		DedupTTLSeconds:     intOrDefault("DEDUP_TTL_SEC", 300),
 		FailedStoreEnabled:  boolOrDefault("FAILED_EVENT_STORE_ENABLED", true),
 		FailedStorePath:     envOrDefault("FAILED_EVENT_STORE_PATH", "data/failed-events.jsonl"),
+		ReplayAuditEnabled:  boolOrDefault("REPLAY_AUDIT_ENABLED", true),
+		ReplayAuditPath:     envOrDefault("REPLAY_AUDIT_PATH", "data/replay-audit.jsonl"),
 	}
 }
 
@@ -105,6 +109,9 @@ func (c Config) Validate() error {
 	}
 	if c.FailedStoreEnabled && strings.TrimSpace(c.FailedStorePath) == "" {
 		return errors.New("FAILED_EVENT_STORE_PATH must not be empty when FAILED_EVENT_STORE_ENABLED=true")
+	}
+	if c.ReplayAuditEnabled && strings.TrimSpace(c.ReplayAuditPath) == "" {
+		return errors.New("REPLAY_AUDIT_PATH must not be empty when REPLAY_AUDIT_ENABLED=true")
 	}
 	for _, cidr := range c.TrustedProxyCIDRs {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {

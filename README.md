@@ -137,6 +137,9 @@ The integration tests skip gracefully if `PUBSUB_EMULATOR_HOST` is not set.
 - `GET /readyz`
 - `GET /metrics`
 - `GET /admin/configz`
+- `GET /admin/events/failed`
+- `GET /admin/events/replay-audit`
+- `POST /admin/events/replay`
 
 ## Infrastructure as Code
 

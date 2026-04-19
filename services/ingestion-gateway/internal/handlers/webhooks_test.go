@@ -51,6 +51,10 @@ func (s *captureFailedStore) GetByID(_ context.Context, _ string) (failstore.Fai
 	return failstore.FailedEvent{}, failstore.ErrNotFound
 }
 
+func (s *captureFailedStore) ListRecent(_ context.Context, _ int) ([]failstore.FailedEvent, error) {
+	return nil, nil
+}
+
 func TestHandleSlackURLVerification(t *testing.T) {
 	cfg := config.Config{SlackSigningSecret: "secret"}
 	pub := &stubPublisher{}
