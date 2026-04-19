@@ -360,7 +360,7 @@ func TestPubSubPublisherWithoutTopic(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	// Try to publish to non-existent topic
-	nonExistentTopic := client.Topic("this-topic-does-not-exist")
+	nonExistentTopic := client.Publisher("this-topic-does-not-exist")
 	publisher := queue.NewPubSubPublisherDirect(client, nonExistentTopic, logger)
 
 	// Act & Assert

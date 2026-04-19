@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"teampulsebridge/services/ingestion-gateway/internal/apperr"
 )
 
 type JWTConfig struct {
@@ -47,12 +49,15 @@ func RequireAdminCIDRAllowlist(cfg AdminCIDRConfig) Middleware {
 				next.ServeHTTP(w, r)
 				return
 			}
-			ip := net.ParseIP(ClientIPFromRequest(r, trustedProxyNets))
+			clientIP := ClientIPFromRequest(r, trustedProxyNets)
+			ip := net.ParseIP(clientIP)
 			if ip == nil {
-				if cfg.OnReject != nil {
-					cfg.OnReject(r, "admin_cidr_invalid_ip", http.StatusForbidden)
-				}
-				http.Error(w, "forbidden", http.StatusForbidden)
+				rejectSecurity(w, r, http.StatusForbidden, "admin_cidr_invalid_ip", cfg.OnReject, apperr.New(
+					"httpx.RequireAdminCIDRAllowlist",
+					apperr.CodeForbidden,
+					"forbidden",
+					fmt.Errorf("invalid client ip: %s", clientIP),
+				))
 				return
 			}
 			for _, network := range nets {
@@ -61,10 +66,12 @@ func RequireAdminCIDRAllowlist(cfg AdminCIDRConfig) Middleware {
 					return
 				}
 			}
-			http.Error(w, "forbidden", http.StatusForbidden)
-			if cfg.OnReject != nil {
-				cfg.OnReject(r, "admin_cidr_forbidden", http.StatusForbidden)
-			}
+			rejectSecurity(w, r, http.StatusForbidden, "admin_cidr_forbidden", cfg.OnReject, apperr.New(
+				"httpx.RequireAdminCIDRAllowlist",
+				apperr.CodeForbidden,
+				"forbidden",
+				fmt.Errorf("ip %s outside admin allowlist", ip.String()),
+			))
 		})
 	}
 }
@@ -82,26 +89,32 @@ func RequireAdminJWT(cfg JWTConfig) Middleware {
 
 			authz := strings.TrimSpace(r.Header.Get("Authorization"))
 			if authz == "" || !strings.HasPrefix(strings.ToLower(authz), "bearer ") {
-				if cfg.OnReject != nil {
-					cfg.OnReject(r, "admin_jwt_missing", http.StatusUnauthorized)
-				}
-				http.Error(w, "missing bearer token", http.StatusUnauthorized)
+				rejectSecurity(w, r, http.StatusUnauthorized, "admin_jwt_missing", cfg.OnReject, apperr.New(
+					"httpx.RequireAdminJWT",
+					apperr.CodeMissingBearerToken,
+					"missing bearer token",
+					nil,
+				))
 				return
 			}
 			tokenString := strings.TrimSpace(authz[len("Bearer "):])
 			if tokenString == "" {
-				if cfg.OnReject != nil {
-					cfg.OnReject(r, "admin_jwt_missing", http.StatusUnauthorized)
-				}
-				http.Error(w, "missing bearer token", http.StatusUnauthorized)
+				rejectSecurity(w, r, http.StatusUnauthorized, "admin_jwt_missing", cfg.OnReject, apperr.New(
+					"httpx.RequireAdminJWT",
+					apperr.CodeMissingBearerToken,
+					"missing bearer token",
+					nil,
+				))
 				return
 			}
 
 			if err := validateToken(tokenString, cfg); err != nil {
-				if cfg.OnReject != nil {
-					cfg.OnReject(r, "admin_jwt_invalid", http.StatusUnauthorized)
-				}
-				http.Error(w, "invalid token", http.StatusUnauthorized)
+				rejectSecurity(w, r, http.StatusUnauthorized, "admin_jwt_invalid", cfg.OnReject, apperr.New(
+					"httpx.RequireAdminJWT",
+					apperr.CodeInvalidToken,
+					"invalid token",
+					err,
+				))
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -132,4 +145,11 @@ func validateToken(tokenString string, cfg JWTConfig) error {
 		return fmt.Errorf("token invalid")
 	}
 	return nil
+}
+
+func rejectSecurity(w http.ResponseWriter, r *http.Request, status int, reason string, onReject func(r *http.Request, reason string, status int), err *apperr.Error) {
+	if onReject != nil {
+		onReject(r, reason, status)
+	}
+	WriteError(w, r.Context(), status, err, nil)
 }

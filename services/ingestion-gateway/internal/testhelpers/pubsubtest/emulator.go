@@ -7,7 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
+	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // EmulatorConfig holds Pub/Sub emulator connection details.
@@ -41,58 +44,35 @@ func NewPubSubClient(ctx context.Context, cfg EmulatorConfig) (*pubsub.Client, e
 }
 
 // CreateTopic creates a topic in the emulator, creating it if it doesn't exist.
-func CreateTopic(ctx context.Context, client *pubsub.Client, topicID string) (*pubsub.Topic, error) {
-	topic := client.Topic(topicID)
-
-	// Check if topic exists
-	exists, err := topic.Exists(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check topic existence: %w", err)
-	}
-
-	if exists {
-		return topic, nil
-	}
-
-	// Create topic if it doesn't exist
-	topic, err = client.CreateTopic(ctx, topicID)
-	if err != nil {
+func CreateTopic(ctx context.Context, client *pubsub.Client, topicID string) (*pubsub.Publisher, error) {
+	topicName := fmt.Sprintf("projects/%s/topics/%s", client.Project(), topicID)
+	_, err := client.TopicAdminClient.CreateTopic(ctx, &pubsubpb.Topic{Name: topicName})
+	if err != nil && status.Code(err) != codes.AlreadyExists {
 		return nil, fmt.Errorf("failed to create topic %q: %w", topicID, err)
 	}
 
-	return topic, nil
+	return client.Publisher(topicID), nil
 }
 
 // CreateSubscription creates a subscription to consume messages.
-func CreateSubscription(ctx context.Context, client *pubsub.Client, subID, topicID string) (*pubsub.Subscription, error) {
-	sub := client.Subscription(subID)
-
-	// Check if subscription exists
-	exists, err := sub.Exists(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check subscription existence: %w", err)
-	}
-
-	if exists {
-		return sub, nil
-	}
-
-	// Create subscription if it doesn't exist
-	topic := client.Topic(topicID)
-	sub, err = client.CreateSubscription(ctx, subID, pubsub.SubscriptionConfig{
-		Topic:       topic,
-		AckDeadline: 30 * time.Second,
+func CreateSubscription(ctx context.Context, client *pubsub.Client, subID, topicID string) (*pubsub.Subscriber, error) {
+	subName := fmt.Sprintf("projects/%s/subscriptions/%s", client.Project(), subID)
+	topicName := fmt.Sprintf("projects/%s/topics/%s", client.Project(), topicID)
+	_, err := client.SubscriptionAdminClient.CreateSubscription(ctx, &pubsubpb.Subscription{
+		Name:               subName,
+		Topic:              topicName,
+		AckDeadlineSeconds: 30,
 	})
-	if err != nil {
+	if err != nil && status.Code(err) != codes.AlreadyExists {
 		return nil, fmt.Errorf("failed to create subscription %q: %w", subID, err)
 	}
 
-	return sub, nil
+	return client.Subscriber(subID), nil
 }
 
 // ReceiveMessages receives up to count messages from a subscription.
 // It returns immediately if count messages are received before timeout.
-func ReceiveMessages(ctx context.Context, sub *pubsub.Subscription, count int, timeout time.Duration) ([]*pubsub.Message, error) {
+func ReceiveMessages(ctx context.Context, sub *pubsub.Subscriber, count int, timeout time.Duration) ([]*pubsub.Message, error) {
 	if count <= 0 {
 		return nil, nil
 	}
@@ -101,13 +81,13 @@ func ReceiveMessages(ctx context.Context, sub *pubsub.Subscription, count int, t
 	defer cancel()
 
 	// Make callback execution deterministic and avoid concurrent appends during tests.
-	prevSynchronous := sub.ReceiveSettings.Synchronous
 	prevNumGoroutines := sub.ReceiveSettings.NumGoroutines
-	sub.ReceiveSettings.Synchronous = true
+	prevMaxOutstandingMessages := sub.ReceiveSettings.MaxOutstandingMessages
 	sub.ReceiveSettings.NumGoroutines = 1
+	sub.ReceiveSettings.MaxOutstandingMessages = 1
 	defer func() {
-		sub.ReceiveSettings.Synchronous = prevSynchronous
 		sub.ReceiveSettings.NumGoroutines = prevNumGoroutines
+		sub.ReceiveSettings.MaxOutstandingMessages = prevMaxOutstandingMessages
 	}()
 
 	messages := make([]*pubsub.Message, 0, count)
@@ -150,29 +130,31 @@ func ReceiveMessages(ctx context.Context, sub *pubsub.Subscription, count int, t
 
 // PurgeSubscription deletes all messages in a subscription.
 // This is useful for cleaning up between tests.
-func PurgeSubscription(ctx context.Context, sub *pubsub.Subscription) error {
+func PurgeSubscription(ctx context.Context, sub *pubsub.Subscriber) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Receive and ack all messages (discarding them)
-	return sub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
+	err := sub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
 		msg.Ack()
 	})
+	if err == context.Canceled || err == context.DeadlineExceeded {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to purge subscription: %w", err)
+	}
+	return nil
 }
 
 // DeleteTopic deletes a topic.
 func DeleteTopic(ctx context.Context, client *pubsub.Client, topicID string) error {
-	topic := client.Topic(topicID)
-	exists, err := topic.Exists(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to check topic existence: %w", err)
-	}
-
-	if !exists {
+	topicName := fmt.Sprintf("projects/%s/topics/%s", client.Project(), topicID)
+	err := client.TopicAdminClient.DeleteTopic(ctx, &pubsubpb.DeleteTopicRequest{Topic: topicName})
+	if status.Code(err) == codes.NotFound {
 		return nil
 	}
-
-	if err := topic.Delete(ctx); err != nil {
+	if err != nil {
 		return fmt.Errorf("failed to delete topic %q: %w", topicID, err)
 	}
 
@@ -181,17 +163,14 @@ func DeleteTopic(ctx context.Context, client *pubsub.Client, topicID string) err
 
 // DeleteSubscription deletes a subscription.
 func DeleteSubscription(ctx context.Context, client *pubsub.Client, subID string) error {
-	sub := client.Subscription(subID)
-	exists, err := sub.Exists(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to check subscription existence: %w", err)
-	}
-
-	if !exists {
+	subName := fmt.Sprintf("projects/%s/subscriptions/%s", client.Project(), subID)
+	err := client.SubscriptionAdminClient.DeleteSubscription(ctx, &pubsubpb.DeleteSubscriptionRequest{
+		Subscription: subName,
+	})
+	if status.Code(err) == codes.NotFound {
 		return nil
 	}
-
-	if err := sub.Delete(ctx); err != nil {
+	if err != nil {
 		return fmt.Errorf("failed to delete subscription %q: %w", subID, err)
 	}
 
@@ -215,7 +194,7 @@ func NewMessageCollector() *MessageCollector {
 
 // Collect starts collecting messages from a subscription in the background.
 // Call Stop() to stop collection.
-func (mc *MessageCollector) Collect(ctx context.Context, sub *pubsub.Subscription) {
+func (mc *MessageCollector) Collect(ctx context.Context, sub *pubsub.Subscriber) {
 	go func() {
 		_ = sub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
 			mc.mu.Lock()

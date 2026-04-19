@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teampulsebridge.dev/schemas/raw-webhook-envelope-v1.schema.json",
+  "title": "Raw Webhook Envelope V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "headers",
+    "body",
+    "received_at",
+    "schema",
+    "schema_value"
+  ],
+  "properties": {
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "body": {},
+    "received_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "schema": {
+      "const": "raw-webhook-envelope"
+    },
+    "schema_value": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

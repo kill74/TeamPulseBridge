@@ -1,12 +1,15 @@
 package httpx
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"teampulsebridge/services/ingestion-gateway/internal/apperr"
 )
 
 func TestRequireAdminJWT_AllowsValidToken(t *testing.T) {
@@ -38,6 +41,24 @@ func TestRequireAdminJWT_RejectsMissingToken(t *testing.T) {
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rr.Code)
 	}
+	assertErrorCode(t, rr, apperr.CodeMissingBearerToken)
+}
+
+func TestRequireAdminJWT_RejectsInvalidToken(t *testing.T) {
+	cfg := JWTConfig{Enabled: true, Issuer: "teampulse", Audience: "ops", Secret: "secret"}
+	h := RequireAdminJWT(cfg)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/configz", nil)
+	req.Header.Set("Authorization", "Bearer not.a.valid.jwt")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+	assertErrorCode(t, rr, apperr.CodeInvalidToken)
 }
 
 func TestRequireAdminJWT_SkipsWebhookPaths(t *testing.T) {
@@ -83,6 +104,7 @@ func TestRequireAdminCIDRAllowlist_RejectsAdminRequestOutsideCIDR(t *testing.T) 
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", rr.Code)
 	}
+	assertErrorCode(t, rr, apperr.CodeForbidden)
 }
 
 func TestRequireAdminCIDRAllowlist_SkipsWebhookPaths(t *testing.T) {
@@ -149,4 +171,23 @@ func mintToken(t *testing.T, cfg JWTConfig) string {
 		t.Fatalf("failed to sign token: %v", err)
 	}
 	return s
+}
+
+func assertErrorCode(t *testing.T, rr *httptest.ResponseRecorder, expectedCode apperr.Code) {
+	t.Helper()
+	if got := rr.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected application/json content type, got %q", got)
+	}
+
+	var payload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected json error response, unmarshal failed: %v body=%q", err, rr.Body.String())
+	}
+	if payload.Error.Code != string(expectedCode) {
+		t.Fatalf("expected error code %q, got %q", expectedCode, payload.Error.Code)
+	}
 }

@@ -25,6 +25,7 @@ make dev-setup
 Fast local quality gate:
 
 ```bash
+make doctor
 make dev-check
 ```
 

@@ -32,6 +32,10 @@ type Config struct {
 	RateLimitEnabled    bool
 	RateLimitRPM        int
 	AdminRateLimitRPM   int
+	DedupEnabled        bool
+	DedupTTLSeconds     int
+	FailedStoreEnabled  bool
+	FailedStorePath     string
 }
 
 func LoadFromEnv() Config {
@@ -57,6 +61,10 @@ func LoadFromEnv() Config {
 		RateLimitEnabled:    boolOrDefault("RATE_LIMIT_ENABLED", true),
 		RateLimitRPM:        intOrDefault("RATE_LIMIT_RPM", 300),
 		AdminRateLimitRPM:   intOrDefault("ADMIN_RATE_LIMIT_RPM", 60),
+		DedupEnabled:        boolOrDefault("DEDUP_ENABLED", true),
+		DedupTTLSeconds:     intOrDefault("DEDUP_TTL_SEC", 300),
+		FailedStoreEnabled:  boolOrDefault("FAILED_EVENT_STORE_ENABLED", true),
+		FailedStorePath:     envOrDefault("FAILED_EVENT_STORE_PATH", "data/failed-events.jsonl"),
 	}
 }
 
@@ -87,6 +95,16 @@ func (c Config) Validate() error {
 		if c.AdminRateLimitRPM < 1 || c.AdminRateLimitRPM > c.RateLimitRPM {
 			return fmt.Errorf("ADMIN_RATE_LIMIT_RPM must be between 1 and RATE_LIMIT_RPM (%d), got %d", c.RateLimitRPM, c.AdminRateLimitRPM)
 		}
+	}
+	dedupTTL := c.DedupTTLSeconds
+	if dedupTTL == 0 {
+		dedupTTL = 300
+	}
+	if dedupTTL < 1 || dedupTTL > 86400 {
+		return fmt.Errorf("DEDUP_TTL_SEC must be between 1 and 86400, got %d", c.DedupTTLSeconds)
+	}
+	if c.FailedStoreEnabled && strings.TrimSpace(c.FailedStorePath) == "" {
+		return errors.New("FAILED_EVENT_STORE_PATH must not be empty when FAILED_EVENT_STORE_ENABLED=true")
 	}
 	for _, cidr := range c.TrustedProxyCIDRs {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {

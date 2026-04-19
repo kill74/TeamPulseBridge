@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"teampulsebridge/services/ingestion-gateway/internal/apperr"
 )
 
 type contextKey string
@@ -187,7 +189,12 @@ func Recoverer(logger *slog.Logger) Middleware {
 						"request_id", RequestIDFromContext(r.Context()),
 						"stack", string(debug.Stack()),
 					)
-					http.Error(w, "internal server error", http.StatusInternalServerError)
+					WriteError(w, r.Context(), http.StatusInternalServerError, apperr.New(
+						"httpx.Recoverer",
+						apperr.CodeInternalServerError,
+						"internal server error",
+						nil,
+					), nil)
 				}
 			}()
 			next.ServeHTTP(w, r)
@@ -237,7 +244,12 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 					cfg.OnReject(r, "rate_limit_exceeded", http.StatusTooManyRequests)
 				}
 				w.Header().Set("Retry-After", "60")
-				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+				WriteError(w, r.Context(), http.StatusTooManyRequests, apperr.New(
+					"httpx.RateLimit",
+					apperr.CodeRateLimitExceeded,
+					"rate limit exceeded",
+					nil,
+				), nil)
 				return
 			}
 			next.ServeHTTP(w, r)

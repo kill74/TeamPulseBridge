@@ -1,9 +1,11 @@
 SHELL := /bin/sh
 
-.PHONY: help dev-setup dev-check precommit-install precommit-run verify lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
+.PHONY: help doctor replay dev-setup dev-check precommit-install precommit-run verify lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
 
 help:
 	@echo "Application Targets:"
+	@echo "  make doctor        - Verify local developer environment"
+	@echo "  make replay FILE=<path>|EVENT_ID=<id> [REPLAY_ARGS='<args>'] - Replay a webhook payload"
 	@echo "  make dev-setup     - Install local developer tooling and git hooks"
 	@echo "  make dev-check     - Run fast local quality gates"
 	@echo "  make precommit-install - Install pre-commit hooks"
@@ -41,6 +43,13 @@ help:
 	@echo "  make gitops-render-*         - Render kustomize overlays (*=staging|prod|argocd)"
 	@echo "  make gitops-validate         - Validate all GitOps manifests"
 	@echo "  make gitops-bootstrap        - Bootstrap Argo CD on GKE"
+
+doctor:
+	cd services/ingestion-gateway && GOCACHE="$$(pwd)/.gocache" GOTELEMETRY=off go run ./cmd/doctor
+
+replay:
+	@test -n "$(FILE)$(EVENT_ID)" || (echo "Either FILE or EVENT_ID is required. Example: make replay FILE=internal/handlers/testdata/contracts/github_pull_request_opened.json REPLAY_ARGS='-source github'" && exit 1)
+	cd services/ingestion-gateway && GOCACHE="$$(pwd)/.gocache" GOTELEMETRY=off go run ./cmd/replay $(if $(FILE),-file "$(FILE)",) $(if $(EVENT_ID),-event-id "$(EVENT_ID)",) $(REPLAY_ARGS)
 
 dev-setup:
 	@command -v go >/dev/null 2>&1 || (echo "Go is required" && exit 1)

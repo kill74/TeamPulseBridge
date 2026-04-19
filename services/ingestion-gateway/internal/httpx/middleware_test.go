@@ -1,11 +1,16 @@
 package httpx
 
 import (
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
+
+	"teampulsebridge/services/ingestion-gateway/internal/apperr"
 )
 
 func TestRateLimitGeneralExceeded(t *testing.T) {
@@ -34,6 +39,10 @@ func TestRateLimitGeneralExceeded(t *testing.T) {
 	if rr3.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429, got %d", rr3.Code)
 	}
+	if retryAfter := rr3.Header().Get("Retry-After"); retryAfter != "60" {
+		t.Fatalf("expected Retry-After 60, got %q", retryAfter)
+	}
+	assertErrorCode(t, rr3, apperr.CodeRateLimitExceeded)
 }
 
 func TestRateLimitAdminUsesStricterLimit(t *testing.T) {
@@ -56,6 +65,7 @@ func TestRateLimitAdminUsesStricterLimit(t *testing.T) {
 	if rr2.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429, got %d", rr2.Code)
 	}
+	assertErrorCode(t, rr2, apperr.CodeRateLimitExceeded)
 }
 
 func TestRateLimitResetsOnNextWindow(t *testing.T) {
@@ -78,6 +88,7 @@ func TestRateLimitResetsOnNextWindow(t *testing.T) {
 	if rr2.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429, got %d", rr2.Code)
 	}
+	assertErrorCode(t, rr2, apperr.CodeRateLimitExceeded)
 
 	clk.Add(61 * time.Second)
 	rr3 := httptest.NewRecorder()
@@ -110,6 +121,7 @@ func TestRateLimitDoesNotTrustXFFWithoutTrustedProxy(t *testing.T) {
 	if rrB.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 because limiter should key by remote addr, got %d", rrB.Code)
 	}
+	assertErrorCode(t, rrB, apperr.CodeRateLimitExceeded)
 }
 
 func TestRateLimitTrustsXFFFromTrustedProxy(t *testing.T) {
@@ -139,6 +151,37 @@ func TestRateLimitTrustsXFFFromTrustedProxy(t *testing.T) {
 
 func fixedNow(t time.Time) func() time.Time {
 	return func() time.Time { return t }
+}
+
+func TestRecovererReturnsStructuredError(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := Chain(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			panic("boom")
+		}),
+		RequestID(),
+		Recoverer(logger),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("X-Request-Id", "req-test-123")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rr.Code)
+	}
+	assertErrorCode(t, rr, apperr.CodeInternalServerError)
+
+	var payload struct {
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("expected json response: %v", err)
+	}
+	if payload.RequestID != "req-test-123" {
+		t.Fatalf("expected request_id req-test-123, got %q", payload.RequestID)
+	}
 }
 
 type clock struct {

@@ -121,3 +121,34 @@ func TestValidateRejectsInvalidTrustedProxyCIDR(t *testing.T) {
 		t.Fatal("expected invalid TRUSTED_PROXY_CIDRS error")
 	}
 }
+
+func TestValidateRejectsInvalidDedupTTL(t *testing.T) {
+	cfg := Config{
+		Environment:       "local",
+		Port:              "8080",
+		QueueBuffer:       100,
+		RequestTimeoutSec: 15,
+		QueueBackend:      "log",
+		RequireSecrets:    false,
+		DedupTTLSeconds:   999999,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid DEDUP_TTL_SEC error")
+	}
+}
+
+func TestValidateRejectsEmptyFailedStorePathWhenEnabled(t *testing.T) {
+	cfg := Config{
+		Environment:        "local",
+		Port:               "8080",
+		QueueBuffer:        100,
+		RequestTimeoutSec:  15,
+		QueueBackend:       "log",
+		RequireSecrets:     false,
+		FailedStoreEnabled: true,
+		FailedStorePath:    "  ",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected FAILED_EVENT_STORE_PATH validation error")
+	}
+}

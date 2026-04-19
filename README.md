@@ -86,6 +86,7 @@ make verify
 ### 2.1) Developer Onboarding (Recommended)
 
 ```bash
+make doctor
 make dev-setup
 make dev-check
 ```
@@ -209,8 +210,11 @@ make help
 
 Useful day-to-day commands:
 
+- `make doctor` to verify local tooling and environment readiness
 - `make verify` for formatter, linter, unit tests, and race detector
 - `make integration-test` for emulator-backed integration checks
+- `make replay FILE=internal/handlers/testdata/contracts/github_pull_request_opened.json REPLAY_ARGS='-source github -dry-run'` to validate and replay payloads
+- `make replay EVENT_ID=<failed_event_id>` to replay a persisted failed publish event
 - `make up` and `make down` for local stack lifecycle
 - `make infra-help` for infrastructure workflows
 
