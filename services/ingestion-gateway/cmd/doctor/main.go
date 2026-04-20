@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	goversion "go/version"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,13 +31,30 @@ func main() {
 	report.checkGoVersion()
 	report.checkCommand("git", "Git", true)
 	report.checkDocker()
-	report.checkOptionalCommand("golangci-lint", "golangci-lint")
-	report.checkOptionalCommand("python3", "python3")
+	for _, tool := range []struct {
+		name  string
+		label string
+	}{
+		{name: "make", label: "Make"},
+		{name: "golangci-lint", label: "golangci-lint"},
+		{name: "python3", label: "python3"},
+		{name: "govulncheck", label: "govulncheck"},
+		{name: "terraform", label: "Terraform"},
+		{name: "checkov", label: "checkov"},
+		{name: "kubectl", label: "kubectl"},
+		{name: "curl", label: "curl"},
+	} {
+		report.checkCommand(tool.name, tool.label, false)
+	}
 
 	fmt.Println()
 	fmt.Println("Workspace:")
 	report.checkPreCommitHook(root)
 	report.checkEnvFiles(root)
+
+	fmt.Println()
+	fmt.Println("Local Ports:")
+	report.checkCommonLocalPorts()
 
 	report.finish()
 }
@@ -89,10 +107,6 @@ func (r *doctorReport) checkCommand(name, label string, required bool) bool {
 	return true
 }
 
-func (r *doctorReport) checkOptionalCommand(name, label string) {
-	_ = r.checkCommand(name, label, false)
-}
-
 func (r *doctorReport) checkGoVersion() {
 	goVersion := runtime.Version()
 	if strings.HasPrefix(goVersion, "devel") {
@@ -115,21 +129,18 @@ func (r *doctorReport) checkDocker() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := runCommand(ctx, "docker", "info"); err != nil {
-		r.failf("Docker daemon is not reachable: %v", err)
-	} else {
-		r.okf("Docker daemon is reachable")
-	}
+	r.checkTimedCommand(5*time.Second, "Docker daemon is reachable", "Docker daemon is not reachable: %v", "docker", "info")
+	r.checkTimedCommand(5*time.Second, "Docker Compose plugin is available", "Docker Compose plugin is missing or unavailable: %v", "docker", "compose", "version")
+}
 
-	ctxCompose, cancelCompose := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelCompose()
-	if err := runCommand(ctxCompose, "docker", "compose", "version"); err != nil {
-		r.failf("Docker Compose plugin is missing or unavailable: %v", err)
-	} else {
-		r.okf("Docker Compose plugin is available")
+func (r *doctorReport) checkTimedCommand(timeout time.Duration, okMessage, failFormat, name string, args ...string) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := runCommand(ctx, name, args...); err != nil {
+		r.failf(failFormat, err)
+		return
 	}
+	r.okf(okMessage)
 }
 
 func (r *doctorReport) checkPreCommitHook(root string) {
@@ -151,16 +162,17 @@ func (r *doctorReport) checkEnvFiles(root string) {
 		r.okf(".env file is present")
 		envFile = envPath
 	case fileExists(examplePath):
-		r.warnf(".env file is missing (copy from .env.example for local development)")
+		r.warnf(".env file is missing (run 'make env-init' to create it from .env.example)")
 		envFile = examplePath
 	default:
 		r.failf("neither .env nor .env.example is present")
 		return
 	}
+	envName := filepath.Base(envFile)
 
 	values, err := parseEnvFile(envFile)
 	if err != nil {
-		r.failf("unable to parse %s: %v", filepath.Base(envFile), err)
+		r.failf("unable to parse %s: %v", envName, err)
 		return
 	}
 
@@ -169,30 +181,67 @@ func (r *doctorReport) checkEnvFiles(root string) {
 		queueBackend = "log"
 	}
 	if queueBackend == "pubsub" {
-		if strings.TrimSpace(values["PUBSUB_PROJECT_ID"]) == "" {
-			r.failf("QUEUE_BACKEND=pubsub but PUBSUB_PROJECT_ID is empty in %s", filepath.Base(envFile))
-		} else {
-			r.okf("PUBSUB_PROJECT_ID is set for pubsub backend")
-		}
-		if strings.TrimSpace(values["PUBSUB_TOPIC_ID"]) == "" {
-			r.failf("QUEUE_BACKEND=pubsub but PUBSUB_TOPIC_ID is empty in %s", filepath.Base(envFile))
-		} else {
-			r.okf("PUBSUB_TOPIC_ID is set for pubsub backend")
-		}
+		r.checkRequiredEnvValues(envName, values, "QUEUE_BACKEND=pubsub but %s is empty in %s", "PUBSUB_PROJECT_ID", "PUBSUB_TOPIC_ID")
 		return
 	}
 
 	r.okf("QUEUE_BACKEND is %q", queueBackend)
+
+	if isTruthy(values["REQUIRE_SECRETS"]) {
+		r.checkRequiredEnvValues(envName, values, "%s is required but empty in %s", "SLACK_SIGNING_SECRET", "GITHUB_WEBHOOK_SECRET", "GITLAB_WEBHOOK_TOKEN", "TEAMS_CLIENT_STATE")
+	}
+
+	if isTruthy(values["ADMIN_AUTH_ENABLED"]) {
+		r.checkRequiredEnvValues(envName, values, "%s is required but empty in %s", "ADMIN_JWT_ISSUER", "ADMIN_JWT_AUDIENCE")
+		secret := strings.TrimSpace(values["ADMIN_JWT_SECRET"])
+		switch {
+		case secret == "":
+			r.failf("ADMIN_AUTH_ENABLED=true but ADMIN_JWT_SECRET is empty in %s", envName)
+		case secret == "change-me" || len(secret) < 32:
+			r.failf("ADMIN_AUTH_ENABLED=true but ADMIN_JWT_SECRET is weak in %s", envName)
+		default:
+			r.okf("ADMIN_JWT_SECRET looks configured for admin auth")
+		}
+	}
+}
+
+func (r *doctorReport) checkRequiredEnvValues(envName string, values map[string]string, failFormat string, keys ...string) {
+	for _, key := range keys {
+		if strings.TrimSpace(values[key]) == "" {
+			r.failf(failFormat, key, envName)
+			continue
+		}
+		r.okf("%s is set", key)
+	}
+}
+
+func (r *doctorReport) checkCommonLocalPorts() {
+	for _, port := range []struct {
+		number int
+		label  string
+	}{
+		{number: 8080, label: "Gateway / smoke checks"},
+		{number: 9090, label: "Prometheus"},
+		{number: 3000, label: "Grafana"},
+		{number: 8085, label: "Pub/Sub emulator"},
+	} {
+		r.checkPortAvailable(port.number, port.label)
+	}
+}
+
+func (r *doctorReport) checkPortAvailable(port int, label string) {
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		r.warnf("%s port %d is already in use; local stacks or CI parity checks may fail", label, port)
+		return
+	}
+	_ = ln.Close()
+	r.okf("%s port %d is available", label, port)
 }
 
 func runCommand(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	return nil
+	return exec.CommandContext(ctx, name, args...).Run()
 }
 
 func findRepoRoot() (string, error) {
@@ -246,4 +295,13 @@ func parseEnvFile(path string) (map[string]string, error) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func isTruthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y":
+		return true
+	default:
+		return false
+	}
 }

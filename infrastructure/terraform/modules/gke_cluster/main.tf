@@ -9,8 +9,8 @@ terraform {
 
 # Primary GKE cluster with production-grade configuration
 resource "google_container_cluster" "primary" {
-  name              = var.cluster_name
-  location          = var.region
+  name               = var.cluster_name
+  location           = var.region
   initial_node_count = 1
 
   # Network configuration
@@ -22,13 +22,13 @@ resource "google_container_cluster" "primary" {
     enabled = true
     resource_limits {
       resource_type = "cpu"
-      min_limit     = var.cluster_min_cpu
-      max_limit     = var.cluster_max_cpu
+      minimum       = var.cluster_min_cpu
+      maximum       = var.cluster_max_cpu
     }
     resource_limits {
       resource_type = "memory"
-      min_limit     = var.cluster_min_memory
-      max_limit     = var.cluster_max_memory
+      minimum       = var.cluster_min_memory
+      maximum       = var.cluster_max_memory
     }
   }
 

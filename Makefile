@@ -1,13 +1,20 @@
 SHELL := /bin/sh
 
-.PHONY: help doctor replay dev-setup dev-check precommit-install precommit-run verify lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
+TERRAFORM ?= terraform
+CHECKOV ?= checkov
+GOLANGCI_LINT ?= golangci-lint
+GOVULNCHECK ?= govulncheck
+
+.PHONY: help doctor env-init replay dev-setup dev-check precommit-install precommit-run verify ci-go ci-terraform ci-policy ci-smoke ci-local lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
 
 help:
 	@echo "Application Targets:"
 	@echo "  make doctor        - Verify local developer environment"
+	@echo "  make env-init      - Create a local .env from .env.example if needed"
 	@echo "  make replay FILE=<path>|EVENT_ID=<id> [REPLAY_ARGS='<args>'] - Replay a webhook payload"
 	@echo "  make dev-setup     - Install local developer tooling and git hooks"
 	@echo "  make dev-check     - Run fast local quality gates"
+	@echo "  make ci-local      - Run local equivalents of push CI checks"
 	@echo "  make precommit-install - Install pre-commit hooks"
 	@echo "  make precommit-run - Run pre-commit hooks on all files"
 	@echo "  make fmt           - Format all Go code"
@@ -31,6 +38,13 @@ help:
 	@echo "  make integration-docker       - Run integration tests via docker-compose"
 	@echo "  make integration-clean        - Clean integration test resources"
 	@echo ""
+	@echo "CI Parity Targets:"
+	@echo "  make ci-go                    - Run local Go checks that mirror CI"
+	@echo "  make ci-terraform             - Run terraform fmt/init/validate locally"
+	@echo "  make ci-policy                - Run local Checkov policy checks"
+	@echo "  make ci-smoke                 - Run the local docker compose smoke check"
+	@echo "  make ci-local                 - Run ci-go + race + ci-terraform + ci-policy + ci-smoke"
+	@echo ""
 	@echo "Infrastructure Targets (see make infra-help for details):"
 	@echo "  make infra-help              - Show infrastructure targets"
 	@echo "  make infra-init-backend-*    - Initialize Terraform backend (*=staging|prod)"
@@ -47,6 +61,14 @@ help:
 doctor:
 	cd services/ingestion-gateway && GOCACHE="$$(pwd)/.gocache" GOTELEMETRY=off go run ./cmd/doctor
 
+env-init:
+	@if [ -f .env ]; then \
+		echo ".env already exists"; \
+	else \
+		cp .env.example .env; \
+		echo "Created .env from .env.example"; \
+	fi
+
 replay:
 	@test -n "$(FILE)$(EVENT_ID)" || (echo "Either FILE or EVENT_ID is required. Example: make replay FILE=internal/handlers/testdata/contracts/github_pull_request_opened.json REPLAY_ARGS='-source github'" && exit 1)
 	cd services/ingestion-gateway && GOCACHE="$$(pwd)/.gocache" GOTELEMETRY=off go run ./cmd/replay $(if $(FILE),-file "$(FILE)",) $(if $(EVENT_ID),-event-id "$(EVENT_ID)",) $(REPLAY_ARGS)
@@ -55,8 +77,11 @@ dev-setup:
 	@command -v go >/dev/null 2>&1 || (echo "Go is required" && exit 1)
 	@command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1)
 	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@python3 -m pre_commit install --install-hooks
 	@python3 -m pre_commit install -t pre-push
+	@echo "Ensure $$(go env GOPATH)/bin is on your PATH for golangci-lint and govulncheck"
 	@echo "Developer setup completed"
 
 precommit-install:
@@ -86,6 +111,50 @@ race:
 	cd services/ingestion-gateway && go test -race ./...
 
 verify: fmt lint test race
+
+ci-go:
+	cd services/ingestion-gateway && test -z "$$(gofmt -l ./cmd ./internal)"
+	cd services/ingestion-gateway && go vet ./...
+	cd services/ingestion-gateway && go test ./...
+	cd services/ingestion-gateway && $(GOLANGCI_LINT) run --config ../../.golangci.yml ./...
+	cd services/ingestion-gateway && $(GOVULNCHECK) -format text ./...
+
+ci-terraform:
+	@set -e; \
+	cd infrastructure/terraform; \
+	tf_data_dir="$$(pwd)/.terraform.ci-local"; \
+	trap 'rm -rf "$$tf_data_dir"' EXIT; \
+	$(TERRAFORM) fmt -check -recursive; \
+	TF_DATA_DIR="$$tf_data_dir" $(TERRAFORM) init -backend=false; \
+	TF_DATA_DIR="$$tf_data_dir" $(TERRAFORM) validate
+
+ci-policy:
+	$(CHECKOV) --config-file .checkov.yaml --framework terraform --directory infrastructure/terraform
+	$(CHECKOV) --config-file .checkov.yaml --framework kubernetes --directory deploy/k8s --directory deploy/gitops/argocd
+
+ci-smoke:
+	@set -e; \
+	cleanup() { docker compose down -v >/dev/null 2>&1 || true; }; \
+	trap cleanup EXIT; \
+	cleanup; \
+	docker compose up -d --build; \
+	i=0; \
+	while [ "$$i" -lt 40 ]; do \
+		if curl -fsS http://localhost:8080/healthz >/dev/null; then \
+			echo "healthz is up"; \
+			curl -fsS http://localhost:8080/metrics | head -n 20; \
+			docker compose ps; \
+			exit 0; \
+		fi; \
+		i=$$((i + 1)); \
+		sleep 3; \
+	done; \
+	echo "healthz did not become ready in time"; \
+	docker compose ps; \
+	docker compose logs --no-color --tail=200; \
+	exit 1
+
+ci-local: ci-go race ci-terraform ci-policy ci-smoke
 
 run:
 	cd services/ingestion-gateway && go run ./cmd/server

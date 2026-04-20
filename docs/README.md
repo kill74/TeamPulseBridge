@@ -34,6 +34,7 @@ If a document helps the team think, plan, review, or communicate internally whil
 ## Contents At a Glance
 
 - `media/`: screenshots, visuals, and showcase assets
+- `developer-workflow.md`: practical onboarding and pre-push workflow
 - standards and process docs for contributors
 - roadmap and release planning material
 - interview and portfolio support notes

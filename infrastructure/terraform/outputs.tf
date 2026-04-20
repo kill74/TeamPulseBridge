@@ -95,13 +95,13 @@ output "dashboard_url" {
 output "deployment_summary" {
   description = "Deployment summary"
   value = {
-    environment              = var.environment
-    region                   = var.region
-    cluster_name             = module.gke.cluster_name
-    database_instance        = module.database.instance_name
-    network_vpc              = module.networking.vpc_network_name
-    app_service_account      = module.security.app_workload_sa_email
-    artifacts_bucket         = module.storage.artifacts_bucket_name
+    environment         = var.environment
+    region              = var.region
+    cluster_name        = module.gke.cluster_name
+    database_instance   = module.database.instance_name
+    network_vpc         = module.networking.vpc_network_name
+    app_service_account = module.security.app_workload_sa_email
+    artifacts_bucket    = module.storage.artifacts_bucket_name
   }
 }
 

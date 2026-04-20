@@ -20,19 +20,18 @@ resource "random_string" "db_suffix" {
 
 # Cloud SQL instance
 resource "google_sql_database_instance" "instance" {
-  name             = "${var.instance_name}-${random_string.db_suffix.result}"
-  database_version = var.database_version
-  region           = var.region
+  name                = "${var.instance_name}-${random_string.db_suffix.result}"
+  database_version    = var.database_version
+  region              = var.region
   deletion_protection = var.deletion_protection
 
   settings {
-    tier                        = var.machine_tier
-    availability_type           = var.availability_type
+    tier              = var.machine_tier
+    availability_type = var.availability_type
     backup_configuration {
       enabled                        = true
       point_in_time_recovery_enabled = true
       transaction_log_retention_days = 7
-      backup_kind                    = "AUTOMATED"
       start_time                     = var.backup_start_time
       location                       = var.backup_location
     }
@@ -40,13 +39,13 @@ resource "google_sql_database_instance" "instance" {
     ip_configuration {
       ipv4_enabled                                  = false
       private_network                               = var.network_id
-      enable_private_path_for_cloudsql_cloud_sql    = true
+      enable_private_path_for_google_cloud_services = true
       require_ssl                                   = true
+    }
 
-      database_flags {
-        name  = "cloudsql_iam_authentication"
-        value = "on"
-      }
+    database_flags {
+      name  = "cloudsql_iam_authentication"
+      value = "on"
     }
 
     database_flags {
@@ -65,7 +64,7 @@ resource "google_sql_database_instance" "instance" {
     }
 
     maintenance_window {
-      day          = 7  # Sunday
+      day          = 7 # Sunday
       hour         = 3
       update_track = "stable"
     }
@@ -74,10 +73,6 @@ resource "google_sql_database_instance" "instance" {
       query_insights_enabled  = true
       query_string_length     = 1024
       record_application_tags = true
-    }
-
-    backup_configuration {
-      location = var.backup_location
     }
 
     user_labels = merge(
@@ -123,13 +118,6 @@ resource "google_sql_user" "app_user" {
   type     = "BUILT_IN"
 }
 
-# Database backup schedule
-resource "google_sql_backup_run" "backup" {
-  instance = google_sql_database_instance.instance.name
-
-  depends_on = [google_sql_database_instance.instance]
-}
-
 # Monitoring alert for high CPU
 resource "google_monitoring_alert_policy" "high_cpu" {
   display_name = "${var.instance_name}-high-cpu"
@@ -145,7 +133,7 @@ resource "google_monitoring_alert_policy" "high_cpu" {
       threshold_value = var.cpu_threshold / 100
 
       aggregations {
-        alignment_period  = "60s"
+        alignment_period   = "60s"
         per_series_aligner = "ALIGN_MEAN"
       }
     }
@@ -173,7 +161,7 @@ resource "google_monitoring_alert_policy" "low_storage" {
       threshold_value = var.storage_threshold / 100
 
       aggregations {
-        alignment_period  = "60s"
+        alignment_period   = "60s"
         per_series_aligner = "ALIGN_MEAN"
       }
     }

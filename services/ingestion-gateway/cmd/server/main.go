@@ -18,6 +18,13 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
 )
 
+func newPublicMux(appHandler http.Handler, smokeHandler http.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle("/ui/smoke-test", smokeHandler)
+	mux.Handle("/", appHandler)
+	return mux
+}
+
 func main() {
 	logger := observability.NewLogger()
 	cfg := config.LoadFromEnv()
@@ -87,10 +94,16 @@ func main() {
 	webhookMux.HandleFunc("POST /webhooks/github", h.HandleGitHub)
 	webhookMux.HandleFunc("POST /webhooks/gitlab", h.HandleGitLab)
 
-	smokeHandler := handlers.NewUISmokeTestProxy(webhookMux, cfg.TrustedProxyCIDRs)
+	var handler http.Handler
+	publicMux := newPublicMux(
+		webhookMux,
+		handlers.NewUISmokeTestProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler.ServeHTTP(w, r)
+		}), cfg.TrustedProxyCIDRs),
+	)
 
-	handler := httpx.Chain(
-		http.HandlerFunc(smokeHandler),
+	handler = httpx.Chain(
+		publicMux,
 		httpx.RequestID(),
 		httpx.RateLimit(httpx.RateLimitConfig{
 			Enabled:           cfg.RateLimitEnabled,

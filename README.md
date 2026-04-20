@@ -80,9 +80,17 @@ Helpful starting points:
 ### First-time setup
 
 ```bash
+make env-init
 make doctor
 make dev-setup
 make dev-check
+```
+
+PowerShell alternative for Windows developers:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\env-init.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ci-local.ps1 -SkipSmoke -SkipRace
 ```
 
 ### Run the service
@@ -172,8 +180,10 @@ make help
 Useful day-to-day commands:
 
 - `make doctor`: check local tooling and environment readiness
+- `make env-init`: create a local `.env` from `.env.example`
 - `make dev-setup`: install local developer dependencies
 - `make dev-check`: run a fast local sanity check
+- `make ci-local`: run the local equivalents of the push-time CI checks before opening a PR
 - `make verify`: run formatting, linting, tests, and race checks defined by the Makefile
 - `make run`: run the gateway locally
 - `make up`: run the local stack with monitoring
@@ -185,6 +195,11 @@ Replay helpers:
 
 - `make replay FILE=internal/handlers/testdata/contracts/github_pull_request_opened.json REPLAY_ARGS='-source github -dry-run'`
 - `make replay EVENT_ID=<failed_event_id>`
+
+Developer workflow guide:
+
+- [docs/developer-workflow.md](docs/developer-workflow.md)
+- [scripts/ci-local.ps1](scripts/ci-local.ps1) for Windows-friendly CI parity
 
 ## Local Stack
 

@@ -14,6 +14,7 @@ resource "google_storage_bucket" "artifacts" {
   force_destroy = false
 
   uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
 
   versioning {
     enabled = true
@@ -55,6 +56,7 @@ resource "google_storage_bucket" "app_data" {
   force_destroy = false
 
   uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
 
   versioning {
     enabled = true
@@ -87,6 +89,7 @@ resource "google_storage_bucket" "backups" {
   force_destroy = false
 
   uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
 
   versioning {
     enabled = true
@@ -118,6 +121,7 @@ resource "google_storage_bucket" "logs" {
   force_destroy = false
 
   uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
 
   versioning {
     enabled = false
@@ -168,25 +172,4 @@ resource "google_storage_bucket_iam_member" "logs_writer" {
   bucket = google_storage_bucket.logs.name
   role   = "roles/storage.objectCreator"
   member = "serviceAccount:${var.app_service_account_email}"
-}
-
-# Enable public access prevention on buckets
-resource "google_storage_bucket_public_access_prevention" "artifacts_prevention" {
-  bucket                      = google_storage_bucket.artifacts.name
-  public_access_prevention    = "enforced"
-}
-
-resource "google_storage_bucket_public_access_prevention" "app_data_prevention" {
-  bucket                      = google_storage_bucket.app_data.name
-  public_access_prevention    = "enforced"
-}
-
-resource "google_storage_bucket_public_access_prevention" "backups_prevention" {
-  bucket                      = google_storage_bucket.backups.name
-  public_access_prevention    = "enforced"
-}
-
-resource "google_storage_bucket_public_access_prevention" "logs_prevention" {
-  bucket                      = google_storage_bucket.logs.name
-  public_access_prevention    = "enforced"
 }

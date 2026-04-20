@@ -19,7 +19,15 @@ Thanks for your interest in improving TeamPulse Bridge.
 First-time setup (repository root):
 
 ```bash
+make env-init
 make dev-setup
+```
+
+PowerShell alternative for Windows developers:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\env-init.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\ci-local.ps1 -SkipSmoke -SkipRace
 ```
 
 Fast local quality gate:
@@ -32,7 +40,7 @@ make dev-check
 Recommended pre-PR command sequence (repository root):
 
 ```bash
-make verify
+make ci-local
 make integration-test
 ```
 

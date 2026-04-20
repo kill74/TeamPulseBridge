@@ -7,17 +7,12 @@ terraform {
   }
 }
 
-# Monitoring workspace
-resource "google_monitoring_monitored_project" "primary" {
-  display_name = var.workspace_name
-}
-
 # Uptime check for application health
 resource "google_monitoring_uptime_check_config" "app_health" {
-  count           = var.enable_uptime_checks ? 1 : 0
-  display_name    = "${var.app_name}-health-check"
-  timeout         = "10s"
-  period          = "60s"
+  count            = var.enable_uptime_checks ? 1 : 0
+  display_name     = "${var.app_name}-health-check"
+  timeout          = "10s"
+  period           = "60s"
   selected_regions = var.uptime_check_regions
 
   http_check {
@@ -57,16 +52,16 @@ resource "google_logging_project_sink" "app_logs" {
 
 # Log bucket for storing logs
 resource "google_logging_project_bucket_config" "error_bucket" {
-  project      = var.gcp_project
-  location     = var.region
-  bucket_id    = "error-logs"
+  project        = var.gcp_project
+  location       = var.region
+  bucket_id      = "error-logs"
   retention_days = var.log_retention_days
 }
 
 resource "google_logging_project_bucket_config" "app_bucket" {
-  project      = var.gcp_project
-  location     = var.region
-  bucket_id    = "app-logs"
+  project        = var.gcp_project
+  location       = var.region
+  bucket_id      = "app-logs"
   retention_days = var.log_retention_days
 }
 
@@ -85,7 +80,7 @@ resource "google_monitoring_alert_policy" "pod_restarts" {
       threshold_value = var.pod_restart_threshold
 
       aggregations {
-        alignment_period  = "60s"
+        alignment_period   = "60s"
         per_series_aligner = "ALIGN_RATE"
       }
     }
@@ -207,10 +202,10 @@ resource "google_monitoring_alert_policy" "error_rate" {
 
 # Notification channel for email
 resource "google_monitoring_notification_channel" "email" {
-  count           = var.enable_email_notifications ? 1 : 0
-  display_name    = "Email: ${var.alert_email}"
-  type            = "email"
-  enabled         = true
+  count        = var.enable_email_notifications ? 1 : 0
+  display_name = "Email: ${var.alert_email}"
+  type         = "email"
+  enabled      = true
 
   labels = {
     email_address = var.alert_email

@@ -55,5 +55,5 @@ output "security_policy_id" {
 
 output "nat_gateway_ip" {
   description = "NAT gateway external IP (for allowlist)"
-  value       = try(google_compute_address.nat_ip[*].address, [])
+  value       = try(coalescelist(google_compute_router_nat.nat.nat_ips, []), [])
 }

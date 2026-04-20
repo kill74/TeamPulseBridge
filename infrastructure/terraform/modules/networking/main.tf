@@ -52,7 +52,7 @@ resource "google_compute_subnetwork" "db_subnet" {
   network       = google_compute_network.vpc.id
   region        = var.region
 
-  description           = "Subnet for database resources"
+  description              = "Subnet for database resources"
   private_ip_google_access = true
 }
 
@@ -191,26 +191,26 @@ resource "google_compute_security_policy" "policy" {
   description = "Security policy with DDoS protection and rate limiting"
 
   # Default rule
-  rules {
+  rule {
     action   = "allow"
     priority = "2147483647"
     match {
-      versioned_expr = "EXPR_V2"
-      expr {
-        expression = "true"
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = ["*"]
       }
     }
     description = "Default rule"
   }
 
   # Rate limiting rule
-  rules {
+  rule {
     action   = "rate_based_ban"
     priority = "1001"
     match {
-      versioned_expr = "EXPR_V2"
-      expr {
-        expression = "true"
+      versioned_expr = "SRC_IPS_V1"
+      config {
+        src_ip_ranges = ["*"]
       }
     }
     rate_limit_options {
@@ -228,11 +228,10 @@ resource "google_compute_security_policy" "policy" {
   }
 
   # Block common attacks
-  rules {
+  rule {
     action   = "deny(403)"
     priority = "1000"
     match {
-      versioned_expr = "EXPR_V2"
       expr {
         expression = "evaluatePreconfiguredExpr('sqli-v33-stable', ['owasp-crs-v030001-id942251-sqli', 'owasp-crs-v030001-id942420-sqli', 'owasp-crs-v030001-id942431-sqli'])"
       }

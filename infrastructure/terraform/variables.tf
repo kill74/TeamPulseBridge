@@ -44,13 +44,6 @@ variable "app_name" {
   default     = "ingestion-gateway"
 }
 
-# Terraform Cloud
-variable "terraform_cloud_org" {
-  description = "Terraform Cloud organization"
-  type        = string
-  default     = ""
-}
-
 # Network Configuration
 variable "gke_subnet_cidr" {
   description = "CIDR for GKE subnet"

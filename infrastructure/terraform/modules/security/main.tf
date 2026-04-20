@@ -293,11 +293,23 @@ resource "kubernetes_pod_security_policy" "restricted" {
       rule = "MustRunAs"
 
       se_linux_options {
+        user  = "system_u"
+        role  = "system_r"
+        type  = "container_t"
         level = "s0:c123,c456"
       }
     }
 
     fs_group {
+      rule = "MustRunAs"
+
+      range {
+        min = 1000
+        max = 65535
+      }
+    }
+
+    supplemental_groups {
       rule = "MustRunAs"
 
       range {
@@ -335,7 +347,7 @@ resource "kubernetes_cluster_role_binding" "psp_restricted" {
 
 # Service account key for application
 resource "google_service_account_key" "app_key" {
-  count            = var.create_service_account_key ? 1 : 0
+  count              = var.create_service_account_key ? 1 : 0
   service_account_id = google_service_account.app_workload.name
   public_key_type    = "TYPE_X509_PEM_FILE"
 }
