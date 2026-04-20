@@ -115,7 +115,7 @@ func (s *FileStore) Save(_ context.Context, in SaveInput) (FailedEvent, error) {
 	return record, nil
 }
 
-func (s *FileStore) GetByID(_ context.Context, eventID string) (FailedEvent, error) {
+func (s *FileStore) GetByID(ctx context.Context, eventID string) (FailedEvent, error) {
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
 		return FailedEvent{}, errors.New("event id must not be empty")
@@ -137,6 +137,12 @@ func (s *FileStore) GetByID(_ context.Context, eventID string) (FailedEvent, err
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return FailedEvent{}, ctx.Err()
+		default:
+		}
+
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue

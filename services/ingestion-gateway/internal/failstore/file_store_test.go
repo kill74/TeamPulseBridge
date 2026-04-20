@@ -57,6 +57,31 @@ func TestFileStoreGetByIDNotFound(t *testing.T) {
 	}
 }
 
+func TestFileStoreGetByIDHonorsContextCancellation(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "failed-events.jsonl")
+	store, err := NewFileStore(storePath)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := store.Save(context.Background(), SaveInput{
+			EventID: "evt_" + strconv.Itoa(i),
+			Source:  "github",
+			Reason:  "ERR_PUBLISH_FAILED",
+			Body:    []byte(`{"id":` + strconv.Itoa(i) + `}`),
+		}); err != nil {
+			t.Fatalf("save %d failed: %v", i, err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = store.GetByID(ctx, "evt_4")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
 func TestFileStoreListRecent(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "failed-events.jsonl")
 	store, err := NewFileStore(storePath)

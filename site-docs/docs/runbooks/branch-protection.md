@@ -15,9 +15,12 @@ Use these settings on the default branch to keep quality and release safety high
 ## Required Status Checks
 
 - ci / verify
+- ci / race-linux
 - smoke / smoke-compose
 - docs / docs-build
 - pr-governance / governance
+
+Keep `ci / verify` and `ci / race-linux` separate. The first covers the broader Go verification path, while the second makes Linux race detection visible as its own required signal.
 
 ## Admin Settings
 

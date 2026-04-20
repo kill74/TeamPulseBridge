@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -24,6 +25,7 @@ const (
 	adminFailedEventsMaxLimit     = 100
 	adminReplayAuditDefaultLimit  = 20
 	adminReplayAuditMaxLimit      = 100
+	adminReplayBatchMaxEvents     = 25
 	adminReplayRequestMaxBody     = 64 << 10
 )
 
@@ -155,31 +157,52 @@ type replayFailedEventRequest struct {
 	HeaderOverrides map[string]string `json:"header_overrides"`
 }
 
+type replayFailedEventsBatchRequest struct {
+	EventIDs        []string          `json:"event_ids"`
+	DryRun          bool              `json:"dry_run"`
+	HeaderOverrides map[string]string `json:"header_overrides"`
+}
+
+type replayExecutionInput struct {
+	EventID         string
+	DryRun          bool
+	HeaderOverrides map[string]string
+	Actor           string
+	RequestID       string
+}
+
+type replayExecutionResult struct {
+	EventID    string `json:"event_id"`
+	Source     string `json:"source,omitempty"`
+	Status     string `json:"status"`
+	HTTPStatus int    `json:"http_status"`
+	Published  bool   `json:"published"`
+	Bytes      int    `json:"bytes"`
+	ErrorCode  string `json:"error_code,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
+type replayBatchSummary struct {
+	Requested int `json:"requested"`
+	Processed int `json:"processed"`
+	Succeeded int `json:"succeeded"`
+	Accepted  int `json:"accepted"`
+	Validated int `json:"validated"`
+	Failed    int `json:"failed"`
+	Published int `json:"published"`
+}
+
 func (h *AdminHandler) ReplayFailedEvent(w http.ResponseWriter, r *http.Request) {
 	actor := replayActorFromRequest(r)
 	requestID := httpx.RequestIDFromContext(r.Context())
 
-	if h.failed == nil {
-		h.respondError(w, r, http.StatusServiceUnavailable, apperr.New(
-			"handlers.admin.replayFailedEvent",
-			apperr.CodeReplayConfigInvalid,
-			"failed-event store is not enabled",
-			nil,
-		))
-		return
-	}
-	if h.publisher == nil {
-		h.respondError(w, r, http.StatusServiceUnavailable, apperr.New(
-			"handlers.admin.replayFailedEvent",
-			apperr.CodeReplayConfigInvalid,
-			"publisher is not configured",
-			nil,
-		))
+	if status, replayErr := h.replayStoreDependencyError("handlers.admin.replayFailedEvent"); replayErr != nil {
+		h.respondError(w, r, status, replayErr)
 		return
 	}
 
 	var req replayFailedEventRequest
-	if err := decodeReplayFailedEventRequest(w, r, &req); err != nil {
+	if err := decodeAdminJSONRequest(w, r, adminReplayRequestMaxBody, &req); err != nil {
 		h.respondError(w, r, http.StatusBadRequest, apperr.New(
 			"handlers.admin.replayFailedEvent",
 			apperr.CodeReplayInputInvalid,
@@ -198,110 +221,103 @@ func (h *AdminHandler) ReplayFailedEvent(w http.ResponseWriter, r *http.Request)
 		))
 		return
 	}
-	mode := replayMode(req.DryRun)
-
-	record, err := h.failed.GetByID(r.Context(), req.EventID)
-	if errors.Is(err, failstore.ErrNotFound) {
-		h.recordReplayAudit(r, replayaudit.SaveInput{
-			EventID:    req.EventID,
-			Actor:      actor,
-			Mode:       mode,
-			Result:     "failed",
-			ErrorCode:  string(apperr.CodeReplayEventNotFound),
-			HTTPStatus: http.StatusNotFound,
-			RequestID:  requestID,
-		})
-		h.respondError(w, r, http.StatusNotFound, apperr.New(
-			"handlers.admin.replayFailedEvent",
-			apperr.CodeReplayEventNotFound,
-			"failed event not found",
-			err,
-		))
-		return
-	}
-	if err != nil {
-		h.recordReplayAudit(r, replayaudit.SaveInput{
-			EventID:    req.EventID,
-			Actor:      actor,
-			Mode:       mode,
-			Result:     "failed",
-			ErrorCode:  string(apperr.CodeReplayReadFailed),
-			HTTPStatus: http.StatusInternalServerError,
-			RequestID:  requestID,
-		})
-		h.respondError(w, r, http.StatusInternalServerError, apperr.New(
-			"handlers.admin.replayFailedEvent",
-			apperr.CodeReplayReadFailed,
-			"failed to load failed event",
-			err,
-		))
-		return
-	}
-
-	headers := cloneReplayHeaders(record.Headers, req.HeaderOverrides)
-	if req.DryRun {
-		h.recordReplayAudit(r, replayaudit.SaveInput{
-			EventID:    record.EventID,
-			Source:     record.Source,
-			Actor:      actor,
-			Mode:       mode,
-			Result:     "validated",
-			HTTPStatus: http.StatusOK,
-			RequestID:  requestID,
-		})
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":    "validated",
-			"event_id":  record.EventID,
-			"source":    record.Source,
-			"dry_run":   true,
-			"published": false,
-			"bytes":     len(record.Body),
-		})
-		return
-	}
-
-	if err := h.publisher.Publish(r.Context(), record.Source, record.Body, headers); err != nil {
-		status := http.StatusInternalServerError
-		code := apperr.CodeReplayPublishFailed
-		if errors.Is(err, queue.ErrQueueFull) {
-			status = http.StatusServiceUnavailable
-			code = apperr.CodeQueueFull
+	if !req.DryRun {
+		if status, replayErr := h.replayPublisherDependencyError("handlers.admin.replayFailedEvent"); replayErr != nil {
+			h.respondError(w, r, status, replayErr)
+			return
 		}
-		h.recordReplayAudit(r, replayaudit.SaveInput{
-			EventID:    record.EventID,
-			Source:     record.Source,
-			Actor:      actor,
-			Mode:       mode,
-			Result:     "failed",
-			ErrorCode:  string(code),
-			HTTPStatus: status,
-			RequestID:  requestID,
-		})
-		h.respondError(w, r, status, apperr.New(
-			"handlers.admin.replayFailedEvent",
-			code,
-			"failed to publish replay event",
+	}
+
+	result, replayErr := h.executeReplay(r.Context(), replayExecutionInput{
+		EventID:         req.EventID,
+		DryRun:          req.DryRun,
+		HeaderOverrides: req.HeaderOverrides,
+		Actor:           actor,
+		RequestID:       requestID,
+	})
+	if replayErr != nil {
+		h.respondError(w, r, result.HTTPStatus, replayErr)
+		return
+	}
+
+	writeJSON(w, result.HTTPStatus, map[string]any{
+		"status":    result.Status,
+		"event_id":  result.EventID,
+		"source":    result.Source,
+		"dry_run":   req.DryRun,
+		"published": result.Published,
+		"bytes":     result.Bytes,
+	})
+}
+
+func (h *AdminHandler) ReplayFailedEventsBatch(w http.ResponseWriter, r *http.Request) {
+	if status, replayErr := h.replayStoreDependencyError("handlers.admin.replayFailedEventsBatch"); replayErr != nil {
+		h.respondError(w, r, status, replayErr)
+		return
+	}
+
+	var req replayFailedEventsBatchRequest
+	if err := decodeAdminJSONRequest(w, r, adminReplayRequestMaxBody, &req); err != nil {
+		h.respondError(w, r, http.StatusBadRequest, apperr.New(
+			"handlers.admin.replayFailedEventsBatch",
+			apperr.CodeReplayInputInvalid,
+			"invalid replay batch request payload",
 			err,
 		))
 		return
 	}
-	h.recordReplayAudit(r, replayaudit.SaveInput{
-		EventID:    record.EventID,
-		Source:     record.Source,
-		Actor:      actor,
-		Mode:       mode,
-		Result:     "accepted",
-		HTTPStatus: http.StatusAccepted,
-		RequestID:  requestID,
-	})
 
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"status":    "accepted",
-		"event_id":  record.EventID,
-		"source":    record.Source,
-		"dry_run":   false,
-		"published": true,
-		"bytes":     len(record.Body),
+	eventIDs, err := normalizeReplayEventIDs(req.EventIDs)
+	if err != nil {
+		h.respondError(w, r, http.StatusBadRequest, apperr.New(
+			"handlers.admin.replayFailedEventsBatch",
+			apperr.CodeReplayInputInvalid,
+			"invalid replay batch request payload",
+			err,
+		))
+		return
+	}
+	if !req.DryRun {
+		if status, replayErr := h.replayPublisherDependencyError("handlers.admin.replayFailedEventsBatch"); replayErr != nil {
+			h.respondError(w, r, status, replayErr)
+			return
+		}
+	}
+
+	actor := replayActorFromRequest(r)
+	requestID := httpx.RequestIDFromContext(r.Context())
+	results := make([]replayExecutionResult, 0, len(eventIDs))
+	summary := replayBatchSummary{
+		Requested: len(req.EventIDs),
+	}
+	for _, eventID := range eventIDs {
+		result, _ := h.executeReplay(r.Context(), replayExecutionInput{
+			EventID:         eventID,
+			DryRun:          req.DryRun,
+			HeaderOverrides: req.HeaderOverrides,
+			Actor:           actor,
+			RequestID:       requestID,
+		})
+		results = append(results, result)
+		summary.Processed++
+		switch result.Status {
+		case "validated":
+			summary.Validated++
+			summary.Succeeded++
+		case "accepted":
+			summary.Accepted++
+			summary.Published++
+			summary.Succeeded++
+		default:
+			summary.Failed++
+		}
+	}
+
+	writeJSON(w, batchReplayHTTPStatus(req.DryRun, summary), map[string]any{
+		"status":  batchReplayStatus(summary),
+		"dry_run": req.DryRun,
+		"summary": summary,
+		"results": results,
 	})
 }
 
@@ -434,6 +450,59 @@ func parseReplayAuditQuery(r *http.Request) (replayaudit.ListQuery, error) {
 	}, nil
 }
 
+func normalizeReplayEventIDs(rawIDs []string) ([]string, error) {
+	if len(rawIDs) == 0 {
+		return nil, errors.New("event_ids must contain at least one event id")
+	}
+
+	seen := make(map[string]struct{}, len(rawIDs))
+	ids := make([]string, 0, len(rawIDs))
+	for _, rawID := range rawIDs {
+		eventID := strings.TrimSpace(rawID)
+		if eventID == "" {
+			return nil, errors.New("event_ids must not contain empty values")
+		}
+		if len(eventID) > 256 {
+			return nil, errors.New("event_ids must contain values <= 256 characters")
+		}
+		if _, ok := seen[eventID]; ok {
+			continue
+		}
+		seen[eventID] = struct{}{}
+		ids = append(ids, eventID)
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("event_ids must contain at least one event id")
+	}
+	if len(ids) > adminReplayBatchMaxEvents {
+		return nil, errors.New("event_ids must contain at most 25 unique event ids")
+	}
+	return ids, nil
+}
+
+func batchReplayStatus(summary replayBatchSummary) string {
+	switch {
+	case summary.Failed == 0 && summary.Accepted > 0:
+		return "accepted"
+	case summary.Failed == 0 && summary.Validated > 0:
+		return "validated"
+	case summary.Failed == summary.Processed:
+		return "failed"
+	default:
+		return "partial_failure"
+	}
+}
+
+func batchReplayHTTPStatus(dryRun bool, summary replayBatchSummary) int {
+	if summary.Failed > 0 {
+		return http.StatusMultiStatus
+	}
+	if dryRun {
+		return http.StatusOK
+	}
+	return http.StatusAccepted
+}
+
 func bodyPreview(body []byte, limit int) string {
 	if len(body) == 0 || limit <= 0 {
 		return ""
@@ -445,8 +514,8 @@ func bodyPreview(body []byte, limit int) string {
 	return clean[:limit] + "...truncated"
 }
 
-func decodeReplayFailedEventRequest(w http.ResponseWriter, r *http.Request, out *replayFailedEventRequest) error {
-	r.Body = http.MaxBytesReader(w, r.Body, adminReplayRequestMaxBody)
+func decodeAdminJSONRequest(w http.ResponseWriter, r *http.Request, maxBytes int64, out any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	defer func() {
 		_ = r.Body.Close()
 	}()
@@ -454,6 +523,13 @@ func decodeReplayFailedEventRequest(w http.ResponseWriter, r *http.Request, out 
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("request body must contain a single JSON object")
+		}
 		return err
 	}
 	return nil
@@ -474,11 +550,169 @@ func cloneReplayHeaders(base map[string]string, overrides map[string]string) map
 	return out
 }
 
-func (h *AdminHandler) recordReplayAudit(r *http.Request, in replayaudit.SaveInput) {
+func (h *AdminHandler) replayStoreDependencyError(op string) (int, *apperr.Error) {
+	if h.failed == nil {
+		return http.StatusServiceUnavailable, apperr.New(
+			op,
+			apperr.CodeReplayConfigInvalid,
+			"failed-event store is not enabled",
+			nil,
+		)
+	}
+	return 0, nil
+}
+
+func (h *AdminHandler) replayPublisherDependencyError(op string) (int, *apperr.Error) {
+	if h.publisher == nil {
+		return http.StatusServiceUnavailable, apperr.New(
+			op,
+			apperr.CodeReplayConfigInvalid,
+			"publisher is not configured",
+			nil,
+		)
+	}
+	return 0, nil
+}
+
+func (h *AdminHandler) executeReplay(ctx context.Context, in replayExecutionInput) (replayExecutionResult, *apperr.Error) {
+	eventID := strings.TrimSpace(in.EventID)
+	mode := replayMode(in.DryRun)
+	result := replayExecutionResult{
+		EventID: eventID,
+		Status:  "failed",
+	}
+
+	record, err := h.failed.GetByID(ctx, eventID)
+	if errors.Is(err, failstore.ErrNotFound) {
+		result.HTTPStatus = http.StatusNotFound
+		result.ErrorCode = string(apperr.CodeReplayEventNotFound)
+		result.Message = "failed event not found"
+		h.recordReplayAuditFromContext(ctx, replayaudit.SaveInput{
+			EventID:    eventID,
+			Actor:      in.Actor,
+			Mode:       mode,
+			Result:     "failed",
+			ErrorCode:  result.ErrorCode,
+			HTTPStatus: result.HTTPStatus,
+			RequestID:  in.RequestID,
+		})
+		return result, apperr.New(
+			"handlers.admin.executeReplay",
+			apperr.CodeReplayEventNotFound,
+			result.Message,
+			err,
+		)
+	}
+	if err != nil {
+		result.HTTPStatus = http.StatusInternalServerError
+		result.ErrorCode = string(apperr.CodeReplayReadFailed)
+		result.Message = "failed to load failed event"
+		h.recordReplayAuditFromContext(ctx, replayaudit.SaveInput{
+			EventID:    eventID,
+			Actor:      in.Actor,
+			Mode:       mode,
+			Result:     "failed",
+			ErrorCode:  result.ErrorCode,
+			HTTPStatus: result.HTTPStatus,
+			RequestID:  in.RequestID,
+		})
+		return result, apperr.New(
+			"handlers.admin.executeReplay",
+			apperr.CodeReplayReadFailed,
+			result.Message,
+			err,
+		)
+	}
+
+	result.EventID = record.EventID
+	result.Source = record.Source
+	result.Bytes = len(record.Body)
+
+	headers := cloneReplayHeaders(record.Headers, in.HeaderOverrides)
+	if in.DryRun {
+		result.Status = "validated"
+		result.HTTPStatus = http.StatusOK
+		h.recordReplayAuditFromContext(ctx, replayaudit.SaveInput{
+			EventID:    record.EventID,
+			Source:     record.Source,
+			Actor:      in.Actor,
+			Mode:       mode,
+			Result:     "validated",
+			HTTPStatus: result.HTTPStatus,
+			RequestID:  in.RequestID,
+		})
+		return result, nil
+	}
+
+	if h.publisher == nil {
+		result.HTTPStatus = http.StatusServiceUnavailable
+		result.ErrorCode = string(apperr.CodeReplayConfigInvalid)
+		result.Message = "publisher is not configured"
+		h.recordReplayAuditFromContext(ctx, replayaudit.SaveInput{
+			EventID:    record.EventID,
+			Source:     record.Source,
+			Actor:      in.Actor,
+			Mode:       mode,
+			Result:     "failed",
+			ErrorCode:  result.ErrorCode,
+			HTTPStatus: result.HTTPStatus,
+			RequestID:  in.RequestID,
+		})
+		return result, apperr.New(
+			"handlers.admin.executeReplay",
+			apperr.CodeReplayConfigInvalid,
+			result.Message,
+			nil,
+		)
+	}
+
+	if err := h.publisher.Publish(ctx, record.Source, record.Body, headers); err != nil {
+		code := apperr.CodeReplayPublishFailed
+		result.HTTPStatus = http.StatusInternalServerError
+		if errors.Is(err, queue.ErrQueueFull) {
+			code = apperr.CodeQueueFull
+			result.HTTPStatus = http.StatusServiceUnavailable
+		}
+		result.ErrorCode = string(code)
+		result.Message = "failed to publish replay event"
+		h.recordReplayAuditFromContext(ctx, replayaudit.SaveInput{
+			EventID:    record.EventID,
+			Source:     record.Source,
+			Actor:      in.Actor,
+			Mode:       mode,
+			Result:     "failed",
+			ErrorCode:  result.ErrorCode,
+			HTTPStatus: result.HTTPStatus,
+			RequestID:  in.RequestID,
+		})
+		return result, apperr.New(
+			"handlers.admin.executeReplay",
+			code,
+			result.Message,
+			err,
+		)
+	}
+
+	result.Status = "accepted"
+	result.Published = true
+	result.HTTPStatus = http.StatusAccepted
+	h.recordReplayAuditFromContext(ctx, replayaudit.SaveInput{
+		EventID:    record.EventID,
+		Source:     record.Source,
+		Actor:      in.Actor,
+		Mode:       mode,
+		Result:     "accepted",
+		HTTPStatus: result.HTTPStatus,
+		RequestID:  in.RequestID,
+	})
+	return result, nil
+}
+
+func (h *AdminHandler) recordReplayAuditFromContext(ctx context.Context, in replayaudit.SaveInput) {
 	if h.audit == nil {
 		return
 	}
-	if _, err := h.audit.Save(r.Context(), in); err != nil {
+	if _, err := h.audit.Save(ctx, in); err != nil {
 		h.logger.Error("failed to persist replay audit record",
 			"event_id", in.EventID,
 			"actor", in.Actor,

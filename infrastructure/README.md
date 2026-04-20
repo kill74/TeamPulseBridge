@@ -1,224 +1,167 @@
-# TeamPulse Infrastructure
+# Infrastructure
 
-Professional-grade infrastructure as code using Terraform for production GCP deployments.
+This folder contains the infrastructure code for running TeamPulse Bridge in Google Cloud.
 
-See [docs/README.md](docs/README.md) for complete setup and operation guide.
+It is written to support production-style environments, not just local demos.
 
-## GitOps (Argo CD)
+That includes Terraform modules, environment configuration, deployment scripts, and supporting documentation for staging and production operations.
 
-Application delivery is defined declaratively and reconciled by Argo CD.
+## What This Folder Is For
 
-Bootstrap Argo CD in a target GKE cluster:
+The infrastructure layer answers questions like:
 
-```bash
-bash scripts/bootstrap-gitops-argocd.sh <gcp-project-id> <gke-cluster-name> <gke-region>
+- what cloud resources does the system need
+- how are staging and production separated
+- how do we provision clusters, networking, storage, and monitoring
+- how do we keep infrastructure changes reviewable and repeatable
+
+## High-Level View
+
+```mermaid
+flowchart LR
+  A["Terraform"] --> B["Networking"]
+  A --> C["GKE clusters"]
+  A --> D["Cloud SQL"]
+  A --> E["Storage"]
+  A --> F["Monitoring and alerts"]
+  B --> C
+  C --> G["Applications delivered by GitOps"]
 ```
 
-GitOps manifests live in:
+## Folder Guide
 
-- `../deploy/k8s/base`
-- `../deploy/k8s/overlays/staging`
-- `../deploy/k8s/overlays/prod`
-- `../deploy/gitops/argocd`
-
-To validate manifests before commit:
-
-```bash
-cd ..
-make gitops-validate
-```
+- `terraform/`: root Terraform configuration, reusable modules, and environment tfvars
+- `scripts/`: helper scripts for backend setup, deploy, destroy, and GitOps bootstrap
+- `docs/`: deeper infrastructure-specific operational documentation
 
 ## Quick Start
 
-### 1. Initialize Backend
+### 1. Initialize the Terraform backend
+
+From `infrastructure/scripts/`:
 
 ```bash
-cd scripts
 ./init-backend.sh staging your-gcp-project-id your-terraform-state-bucket
 ```
 
-### 2. Deploy Staging
+Run this once per environment before the first apply.
+
+### 2. Plan or deploy from the repository root
 
 ```bash
-./deploy.sh staging
+make infra-plan-staging
+make infra-deploy-staging
 ```
 
-### 3. Deploy Production
+For production:
 
 ```bash
-./deploy.sh prod
+make infra-plan-prod
+make infra-deploy-prod
 ```
 
-Production should require manual confirmation in normal workflows.
+Production changes should go through review and normal change-control practices.
 
-## Structure
+## GitOps Relationship
+
+Infrastructure and deployment are related but not identical:
+
+- `infrastructure/` creates the cloud foundations
+- `deploy/` defines what runs on top of those foundations
+
+Argo CD bootstrap support is provided here through:
+
+- `scripts/bootstrap-gitops-argocd.sh`
+
+Related deployment assets live in:
+
+- [../deploy/k8s/](../deploy/k8s)
+- [../deploy/gitops/argocd/](../deploy/gitops/argocd)
+
+Validate GitOps manifests from the repository root with:
+
+```bash
+make gitops-validate
+```
+
+## Terraform Structure
 
 ```text
 terraform/
-├── main.tf                  Root module definitions
-├── variables.tf            Input variables with validation
-├── outputs.tf              Output values
-├── modules/                Reusable infrastructure modules
-└── environments/           Environment-specific configurations
-    ├── staging/
-    └── prod/
+  main.tf
+  variables.tf
+  outputs.tf
+  providers.tf
+  backend.tf
+  environments/
+    staging/
+    prod/
+  modules/
+    database/
+    gke_cluster/
+    monitoring/
+    networking/
+    security/
+    storage/
 
 scripts/
-├── init-backend.sh        Initialize Terraform backend
-├── deploy.sh              Deploy infrastructure
-└── destroy.sh             Destroy infrastructure (⚠️ dangerous)
+  init-backend.sh
+  deploy.sh
+  destroy.sh
+  bootstrap-gitops-argocd.sh
 
 docs/
-└── README.md              Complete documentation
+  README.md
 ```
 
-## Environment Matrix
+## What the Modules Cover
 
-| Feature        | Staging     | Production    |
-| -------------- | ----------- | ------------- |
-| **Cluster**    | 1 node min  | 3 nodes min   |
-| **Nodes**      | Preemptible | Standard      |
-| **Database**   | Zonal       | Regional HA   |
-| **Backups**    | 7 days      | 30 days       |
-| **Monitoring** | Email only  | Email + Slack |
-| **Cost/Month** | ~$110-180   | ~$520-900     |
+- `modules/networking`: VPCs, subnets, firewalls, and related network controls
+- `modules/gke_cluster`: GKE clusters and node pools
+- `modules/database`: Cloud SQL and database backup posture
+- `modules/monitoring`: dashboards, alerts, and observability plumbing
+- `modules/security`: IAM and security-oriented infrastructure concerns
+- `modules/storage`: buckets and storage lifecycle configuration
 
-## Multi-Region Active-Active
+## Environment Model
 
-Terraform now supports an optional active-active topology with primary and secondary regions.
+The repository is structured around at least two clear environments:
 
-Key flags in tfvars:
+- staging for safer iteration and validation
+- production for higher durability and stronger operational controls
 
-- `enable_multi_region` (bool)
-- `secondary_region` (string)
-- `secondary_*_cidr` ranges (must not overlap with primary ranges)
-- `secondary_app_domain` (optional)
+The infrastructure also supports an optional multi-region active-active model for more advanced production setups.
 
-When enabled, Terraform provisions a second stack in the secondary region:
+If you enable that model, make sure the application and data layers are designed for it before treating both regions as writable.
 
-- VPC + subnets + firewall + Cloud NAT
-- GKE cluster and workload pool
-- Security controls and IAM bindings
-- Cloud SQL instance and regional monitoring
-- Storage buckets and alerting policies
+## Safety Notes
 
-Recommended production model:
+- review `terraform plan` output before every apply
+- do not manually edit remote Terraform state
+- keep production applies behind review and approval
+- treat `destroy.sh` as a restricted operation, especially outside non-prod
+- validate backup and restore assumptions, not just deployment success
 
-1. Run ingress and application replicas in both regions.
-2. Route traffic through DNS or global load balancing with health checks.
-3. Keep Argo CD targets for both clusters synchronized.
-4. Periodically run failover and failback drills.
+## Useful Commands
 
-Operational caution:
+From the repository root:
 
-- Ensure application state is either stateless, replicated, or conflict-safe.
-- Verify database strategy for cross-region consistency before enabling global writes.
-
-## Modules
-
-| Module                | Purpose                               |
-| --------------------- | ------------------------------------- |
-| `modules/gke_cluster` | GKE cluster with auto-scaling         |
-| `modules/networking`  | VPC, subnets, firewalls, Cloud Armor  |
-| `modules/database`    | Cloud SQL with automated backups      |
-| `modules/monitoring`  | Observability, dashboards, alerts     |
-| `modules/security`    | Service accounts, RBAC, policies      |
-| `modules/storage`     | GCS buckets with lifecycle management |
-
-## Key Outputs
-
-After deployment, outputs are saved to `/tmp/outputs-{env}.json`:
-
-```json
-{
-  "cluster_name": "teampulse-staging",
-  "cluster_endpoint": "https://...",
-  "database_connection_name": "project:region:instance",
-  "app_service_account_email": "ingestion-gateway-workload@...",
-  "artifacts_bucket": "my-project-artifacts-staging"
-}
+```bash
+make infra-plan-staging
+make infra-plan-prod
 ```
 
-## Prerequisites
-
-- Terraform >= 1.0
-- Google Cloud SDK
-- kubectl
-- gcloud authentication with least-privilege deployment role
-
-Recommended before first apply:
+From `infrastructure/terraform/`:
 
 ```bash
 terraform fmt -recursive
 terraform validate
-```
-
-## Security Features
-
-✅ Workload Identity (no service account keys)
-✅ Private Cloud SQL (no public IP)
-✅ Network policies (Kubernetes)
-✅ Cloud Armor (DDoS protection)
-✅ Encryption at rest (GCS + SQL)
-✅ Automated daily backups
-✅ IAM least-privilege roles
-
-## Deployment Workflow (Recommended)
-
-Use this flow to reduce accidental drift and unsafe changes:
-
-1. Run `./init-backend.sh <env> ...` once per environment.
-2. Run `terraform fmt -recursive` and `terraform validate`.
-3. Run `./deploy.sh <env>` and review plan output carefully.
-4. Apply only after review/approval.
-5. Capture outputs and update dependent systems.
-
-For production, require peer review and change window before apply.
-
-## Day-2 Operations
-
-- Drift detection: run scheduled `terraform plan` in CI with no apply.
-- State hygiene: do not edit remote state manually.
-- Backup checks: periodically validate restore runbooks.
-- Cost checks: compare monthly deltas before/after major applies.
-
-## Failure Domains and Recovery
-
-- Staging favors cost and faster iteration.
-- Production favors HA and higher retention.
-- Keep `destroy.sh` restricted to approved operators and non-prod by default.
-
-## Common Commands
-
-```bash
-# Plan staging
-cd terraform
 terraform plan -var-file=environments/staging/terraform.tfvars
-
-# Plan prod
 terraform plan -var-file=environments/prod/terraform.tfvars
 ```
 
-## Monitoring
+## Where To Look Next
 
-Production deployment includes:
-
-- Multi-region uptime checks
-- Real-time dashboards
-- Error rate alerts
-- Pod restart monitoring
-- Resource usage metrics
-- Email + Slack notifications
-
-## Documentation
-
-Full documentation: [docs/README.md](docs/README.md)
-
-Key topics:
-
-- [Architecture Overview](docs/README.md#architecture-overview)
-- [Setup Instructions](docs/README.md#setup-instructions)
-- [Operations](docs/README.md#operations)
-- [Troubleshooting](docs/README.md#troubleshooting)
-- [Cost Estimates](docs/README.md#costs)
-- [Security Best Practices](docs/README.md#security-best-practices)
+- [terraform/README.md](terraform/README.md)
+- [docs/README.md](docs/README.md)
+- [../deploy/README.md](../deploy/README.md)

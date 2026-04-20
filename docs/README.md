@@ -1,16 +1,54 @@
-# Working Documents
+# Working Docs
 
-This directory stores planning and communication artifacts that are not part of the published docs site.
+This folder stores the repository's working documents.
 
-## Contents
+These are the notes, plans, checklists, and supporting artifacts that help the team think, review, and communicate, but are not necessarily polished enough to be part of the published documentation site.
 
-- Interview and showcase notes.
-- Roadmaps and release note drafts.
-- Media assets under `media/`.
-- Repository standards and pull request checklists.
+## What Goes Here
 
-## When To Use This Folder
+Typical examples include:
 
-Use this folder for internal drafts and process material.
+- roadmaps and release planning notes
+- repository standards and checklists
+- interview or showcase material
+- draft technical notes
+- media assets under `media/`
 
-For long-lived technical documentation, prefer `site-docs/docs/`.
+## What Does Not Go Here
+
+Not every document belongs in `docs/`.
+
+Use the right home for the right kind of writing:
+
+- repository-level orientation belongs in the root `README.md`
+- service-specific runbooks belong in the relevant service `README.md`
+- polished long-lived public docs belong in `site-docs/docs/`
+- working notes and planning material belong here
+
+## Practical Rule of Thumb
+
+If a document helps people build or operate the repo every day, it may belong in a README or the docs site.
+
+If a document helps the team think, plan, review, or communicate internally while work is in motion, it probably belongs here.
+
+## Contents At a Glance
+
+- `media/`: screenshots, visuals, and showcase assets
+- standards and process docs for contributors
+- roadmap and release planning material
+- interview and portfolio support notes
+
+## Why This Folder Exists
+
+Keeping working documents separate from the published docs site helps in two ways:
+
+- the public docs stay clean and intentional
+- the team still has a clear place for active working material
+
+That separation keeps the repo easier to navigate and prevents draft content from feeling like official product documentation before it is ready.
+
+## Where To Look Next
+
+- [../README.md](../README.md)
+- [../site-docs/docs/](../site-docs/docs)
+- [media/README.md](media/README.md)

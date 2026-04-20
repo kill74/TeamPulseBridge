@@ -192,6 +192,29 @@ func TestAdminReplayFailedEventDryRun(t *testing.T) {
 	}
 }
 
+func TestAdminReplayFailedEventDryRunDoesNotRequirePublisher(t *testing.T) {
+	store := &adminStoreStub{
+		events: map[string]failstore.FailedEvent{
+			"evt_1": {
+				EventID: "evt_1",
+				Source:  "github",
+				Headers: map[string]string{"X-Test": "1"},
+				Body:    json.RawMessage(`{"action":"opened"}`),
+			},
+		},
+	}
+	h := NewAdminHandlerWithDependencies(config.Config{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay", bytes.NewBufferString(`{"event_id":"evt_1","dry_run":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ReplayFailedEvent(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
 func TestAdminReplayFailedEventPublishes(t *testing.T) {
 	store := &adminStoreStub{
 		events: map[string]failstore.FailedEvent{
@@ -272,6 +295,171 @@ func TestAdminReplayFailedEventQueueFull(t *testing.T) {
 	if audit.saved[0].Result != "failed" || audit.saved[0].ErrorCode != string(apperr.CodeQueueFull) {
 		t.Fatalf("unexpected replay audit failure payload: %+v", audit.saved[0])
 	}
+}
+
+func TestAdminReplayFailedEventsBatchDryRun(t *testing.T) {
+	store := &adminStoreStub{
+		events: map[string]failstore.FailedEvent{
+			"evt_1": {
+				EventID: "evt_1",
+				Source:  "github",
+				Headers: map[string]string{"X-Test": "1"},
+				Body:    json.RawMessage(`{"action":"opened"}`),
+			},
+			"evt_2": {
+				EventID: "evt_2",
+				Source:  "gitlab",
+				Headers: map[string]string{"X-Test": "2"},
+				Body:    json.RawMessage(`{"object_kind":"merge_request"}`),
+			},
+		},
+	}
+	pub := &adminPublisherStub{}
+	audit := &adminAuditStub{}
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay/batch", bytes.NewBufferString(`{"event_ids":["evt_1","evt_2"],"dry_run":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ReplayFailedEventsBatch(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if pub.calls != 0 {
+		t.Fatalf("expected no publish calls in dry-run batch, got %d", pub.calls)
+	}
+	var payload struct {
+		Status  string `json:"status"`
+		DryRun  bool   `json:"dry_run"`
+		Summary struct {
+			Requested int `json:"requested"`
+			Validated int `json:"validated"`
+			Failed    int `json:"failed"`
+		} `json:"summary"`
+		Results []struct {
+			EventID string `json:"event_id"`
+			Status  string `json:"status"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Status != "validated" || !payload.DryRun {
+		t.Fatalf("unexpected batch dry-run payload: %+v", payload)
+	}
+	if payload.Summary.Requested != 2 || payload.Summary.Validated != 2 || payload.Summary.Failed != 0 {
+		t.Fatalf("unexpected batch summary: %+v", payload.Summary)
+	}
+	if len(payload.Results) != 2 || payload.Results[0].Status != "validated" {
+		t.Fatalf("unexpected batch results: %+v", payload.Results)
+	}
+	if audit.calls != 2 {
+		t.Fatalf("expected two audit records, got %d", audit.calls)
+	}
+}
+
+func TestAdminReplayFailedEventsBatchDryRunDoesNotRequirePublisher(t *testing.T) {
+	store := &adminStoreStub{
+		events: map[string]failstore.FailedEvent{
+			"evt_1": {
+				EventID: "evt_1",
+				Source:  "github",
+				Headers: map[string]string{"X-Test": "1"},
+				Body:    json.RawMessage(`{"action":"opened"}`),
+			},
+		},
+	}
+	h := NewAdminHandlerWithDependencies(config.Config{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay/batch", bytes.NewBufferString(`{"event_ids":["evt_1"],"dry_run":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ReplayFailedEventsBatch(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestAdminReplayFailedEventsBatchPartialFailure(t *testing.T) {
+	store := &adminStoreStub{
+		events: map[string]failstore.FailedEvent{
+			"evt_1": {
+				EventID: "evt_1",
+				Source:  "github",
+				Headers: map[string]string{"X-Test": "1"},
+				Body:    json.RawMessage(`{"action":"opened"}`),
+			},
+			"evt_2": {
+				EventID: "evt_2",
+				Source:  "gitlab",
+				Headers: map[string]string{"X-Test": "2"},
+				Body:    json.RawMessage(`{"object_kind":"merge_request"}`),
+			},
+		},
+	}
+	pub := &adminPublisherStub{}
+	audit := &adminAuditStub{}
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay/batch", bytes.NewBufferString(`{"event_ids":["evt_1","missing","evt_2","evt_1"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ReplayFailedEventsBatch(rr, req)
+
+	if rr.Code != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", rr.Code)
+	}
+	if pub.calls != 2 {
+		t.Fatalf("expected two publish calls for unique valid events, got %d", pub.calls)
+	}
+	var payload struct {
+		Status  string `json:"status"`
+		Summary struct {
+			Requested int `json:"requested"`
+			Accepted  int `json:"accepted"`
+			Failed    int `json:"failed"`
+			Published int `json:"published"`
+		} `json:"summary"`
+		Results []struct {
+			EventID   string `json:"event_id"`
+			Status    string `json:"status"`
+			ErrorCode string `json:"error_code"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Status != "partial_failure" {
+		t.Fatalf("expected partial_failure status, got %q", payload.Status)
+	}
+	if payload.Summary.Requested != 4 || payload.Summary.Accepted != 2 || payload.Summary.Failed != 1 || payload.Summary.Published != 2 {
+		t.Fatalf("unexpected batch summary: %+v", payload.Summary)
+	}
+	if len(payload.Results) != 3 {
+		t.Fatalf("expected 3 results after dedupe, got %d", len(payload.Results))
+	}
+	if payload.Results[1].EventID != "missing" || payload.Results[1].ErrorCode != string(apperr.CodeReplayEventNotFound) {
+		t.Fatalf("unexpected failure result: %+v", payload.Results[1])
+	}
+	if audit.calls != 3 {
+		t.Fatalf("expected three audit records, got %d", audit.calls)
+	}
+}
+
+func TestAdminReplayFailedEventsBatchRejectsInvalidInput(t *testing.T) {
+	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay/batch", bytes.NewBufferString(`{"event_ids":["   "]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ReplayFailedEventsBatch(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+	assertAdminErrorCode(t, rr.Body.Bytes(), apperr.CodeReplayInputInvalid)
 }
 
 func TestAdminReplayAuditReturnsRecent(t *testing.T) {

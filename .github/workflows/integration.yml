@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - 'services/ingestion-gateway/**'
+      - '.github/actions/setup-ingestion-gateway-go/**'
       - '.github/workflows/integration.yml'
   pull_request:
     branches: [main]
     paths:
       - 'services/ingestion-gateway/**'
+      - '.github/actions/setup-ingestion-gateway-go/**'
       - '.github/workflows/integration.yml'
 
 concurrency:
@@ -31,11 +33,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: '1.26.x'
-          cache-dependency-path: services/ingestion-gateway/go.sum
+      - name: Setup ingestion-gateway Go
+        uses: ./.github/actions/setup-ingestion-gateway-go
 
       - name: Start Pub/Sub Emulator
         run: |
@@ -137,11 +136,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: '1.26.x'
-          cache-dependency-path: services/ingestion-gateway/go.sum
+      - name: Setup ingestion-gateway Go
+        uses: ./.github/actions/setup-ingestion-gateway-go
 
       - name: Start Pub/Sub Emulator
         run: |

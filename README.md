@@ -7,83 +7,77 @@
 [![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go&logoColor=white)](./services/ingestion-gateway/go.mod)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Production-style event ingestion bridge for engineering activity signals (Slack, Teams, GitHub, GitLab), built in Go with strong security, observability, and reliability defaults.
+TeamPulse Bridge is a Go codebase for receiving webhook events from developer tools, validating them safely, and forwarding them into a durable pipeline.
 
-## Project Highlights
+In plain English: this repo is the front door for engineering activity signals.
 
-- 4 webhook providers supported behind one hardened ingress service (Slack, Teams, GitHub, GitLab)
-- 6 production workflows for engineering rigor (ci, smoke, docs, docs-deploy, release, tag-release)
-- 8 public HTTP endpoints with auth, health, and metrics coverage
-- 100% passing service test suite on current branch
-- End-to-end local stack with service plus Prometheus and Grafana for operational visibility
+It accepts events from platforms like Slack, Microsoft Teams, GitHub, and GitLab, checks that the requests are real, normalizes them into a consistent envelope, and publishes them to a queue for downstream processing.
 
-## Architecture
+## What This Repository Is For
+
+This codebase exists to solve a common integration problem:
+
+- engineering tools all emit events in different formats
+- each provider has different auth and signature rules
+- teams still need one safe, observable place to receive those events
+
+TeamPulse Bridge gives you that place.
+
+Today, the main runnable service in this repo is the ingestion gateway. Around that service, the repo also includes local developer tooling, infrastructure, GitOps deployment config, and documentation so the project can be run like a real production system instead of just a demo app.
+
+## What It Does
+
+The ingestion gateway currently handles:
+
+- webhook endpoints for Slack, Teams, GitHub, and GitLab
+- provider-specific signature or token validation
+- rate limiting, request IDs, logging, metrics, and panic recovery
+- queue publishing through either a local log backend or Google Pub/Sub
+- failed-event capture so replay is possible
+- replay audit history for operational visibility
+- a built-in operator UI for health checks, config visibility, smoke tests, and replay workflows
+
+## How It Works
 
 ```mermaid
 flowchart LR
-  A[Slack / Teams / GitHub / GitLab] --> B[Ingestion Gateway]
-  B --> C[Queue Backend\nLog or PubSub]
-  B --> D[Metrics / Traces / Logs]
-  D --> E[Prometheus]
-  D --> F[OTLP Collector or Cloud]
-  E --> G[Grafana]
-  H[Admin JWT Guard] --> B
+  A["Slack / Teams / GitHub / GitLab"] --> B["Ingestion Gateway"]
+  B --> C["Security checks and validation"]
+  C --> D["Normalized event envelope"]
+  D --> E["Queue backend (log or Pub/Sub)"]
+  B --> F["Operator UI and admin endpoints"]
+  B --> G["Logs, metrics, traces"]
+  G --> H["Prometheus / Grafana / OTEL"]
 ```
 
-## Why This Repo Looks Professional
+## Repository Tour
 
-- Clean service boundaries and internal package layout
-- Signature-verified webhook ingestion for multiple providers
-- Async queue publisher abstraction (`log` and Google Pub/Sub backends)
-- Structured logging (`slog`), tracing (OpenTelemetry), and Prometheus metrics
-- JWT-protected admin/ops routes
-- CI pipeline with lint, tests, race detector, vuln scan, and policy-as-code checks (Terraform + Kubernetes)
-- Dockerized local stack with Prometheus + Grafana
+If you are new here, these are the folders that matter first:
 
-## Repository Structure
+- `services/ingestion-gateway/`: the main Go service that receives and publishes webhook events
+- `docs/`: architecture notes, planning docs, and project standards
+- `deploy/`: Kubernetes, GitOps, and monitoring configuration
+- `infrastructure/`: Terraform for cloud environments
+- `site-docs/`: documentation site content
+- `.github/workflows/`: CI, release, docs, and governance workflows
 
-```text
-.
-├── docs/                          # RFC, ADRs, and planning artifacts
-├── infrastructure/                # Terraform IaC for GCP (staging/prod)
-│   ├── terraform/                 # Terraform modules and root config
-│   ├── scripts/                   # Deployment scripts
-│   └── docs/                      # Infrastructure documentation
-├── services/
-│   └── ingestion-gateway/         # Go webhook ingestion service
-├── deploy/
-│   └── monitoring/                # Prometheus and Grafana setup
-├── site-docs/                     # MkDocs documentation site
-├── .github/workflows/             # CI pipeline
-├── docker-compose.yml             # Local runtime stack
-├── go.work                        # Monorepo Go workspace
-└── Makefile                       # Developer commands
-```
+Helpful starting points:
 
-Repository navigation guides:
-
+- [services/ingestion-gateway/README.md](services/ingestion-gateway/README.md)
 - [services/README.md](services/README.md)
-- [deploy/README.md](deploy/README.md)
-- [infrastructure/terraform/README.md](infrastructure/terraform/README.md)
 - [docs/README.md](docs/README.md)
-- [docs/repository-standards.md](docs/repository-standards.md)
-- [docs/pr-checklists.md](docs/pr-checklists.md)
+- [deploy/README.md](deploy/README.md)
+- [infrastructure/README.md](infrastructure/README.md)
 
 ## Quick Start
 
-### 1) Prerequisites
+### What you need
 
 - Go 1.22+
-- Docker + Docker Compose
-- Make (or run commands manually)
+- Docker and Docker Compose
+- Make
 
-### 2) Run Tests and Lint
-
-```bash
-make verify
-```
-
-### 2.1) Developer Onboarding (Recommended)
+### First-time setup
 
 ```bash
 make doctor
@@ -91,33 +85,47 @@ make dev-setup
 make dev-check
 ```
 
-### 3) Run Service Locally
+### Run the service
 
 ```bash
 make run
 ```
 
-### 4) Run Full Local Stack (Service + Monitoring)
+### Run the local stack
+
+This starts the ingestion gateway plus Prometheus and Grafana:
 
 ```bash
 make up
 ```
 
-Then open:
+Useful local URLs:
 
-- Product UI: `http://localhost:8080/`
-- Service health: `http://localhost:8080/healthz`
-- Metrics: `http://localhost:8080/metrics`
+- app UI: `http://localhost:8080/`
+- health: `http://localhost:8080/healthz`
+- metrics: `http://localhost:8080/metrics`
 - Prometheus: `http://localhost:9090`
-- Grafana: `http://localhost:3000` (admin/admin)
+- Grafana: `http://localhost:3000`
 
-### 5) Run Integration Tests (Pub/Sub Emulator)
+To stop the stack:
+
+```bash
+make down
+```
+
+### Verify the project
+
+```bash
+make verify
+```
+
+### Run integration tests
 
 ```bash
 make integration-test
 ```
 
-Targeted runs:
+Targeted integration commands:
 
 ```bash
 make integration-test-queue
@@ -125,87 +133,37 @@ make integration-test-handlers
 make integration-bench
 ```
 
-The integration tests skip gracefully if `PUBSUB_EMULATOR_HOST` is not set.
+## The Main Service
 
-## Core Service Endpoints
+The main service in this repo is the ingestion gateway.
 
+Its job is to:
+
+1. receive inbound webhook requests
+2. verify that they came from a trusted source
+3. preserve the payload and key headers
+4. publish a normalized event to a queue
+5. expose operational tools for replay, auditing, and debugging
+
+Important runtime endpoints include:
+
+- `GET /`
+- `GET /healthz`
+- `GET /readyz`
+- `GET /metrics`
 - `POST /webhooks/slack`
 - `POST /webhooks/teams`
 - `POST /webhooks/github`
 - `POST /webhooks/gitlab`
-- `GET /healthz`
-- `GET /readyz`
-- `GET /metrics`
 - `GET /admin/configz`
 - `GET /admin/events/failed`
 - `GET /admin/events/replay-audit`
 - `POST /admin/events/replay`
+- `POST /admin/events/replay/batch`
 
-## Infrastructure as Code
+For endpoint behavior, config, replay details, and runbook notes, see [services/ingestion-gateway/README.md](services/ingestion-gateway/README.md).
 
-Production deployments managed via Terraform with complete GCP infrastructure:
-
-- **GKE Cluster**: Auto-scaling Kubernetes with regional HA (prod)
-- **Cloud SQL**: PostgreSQL with automated backups and point-in-time recovery
-- **Networking**: VPC with Cloud Armor, firewalls, and private service connections
-- **Monitoring**: Cloud Monitoring dashboards, uptime checks, and alerting
-- **Security**: Workload Identity, RBAC, network policies, and service accounts
-- **Storage**: GCS buckets with lifecycle management and encryption
-
-**Deploy staging environment:**
-
-```bash
-make infra-plan-staging
-make infra-deploy-staging
-```
-
-**Deploy production environment (requires confirmation):**
-
-```bash
-make infra-plan-prod
-make infra-deploy-prod
-```
-
-See [infrastructure/README.md](infrastructure/README.md) for complete setup guide.
-
-## GitOps Deployment (Argo CD)
-
-This repository now includes a production-ready GitOps layout with Argo CD:
-
-- Kubernetes manifests with Kustomize base + overlays for `staging` and `prod`
-- Argo CD app-of-apps bootstrap for environment applications
-- Controlled sync policy: automated in staging, manual sync gate in production
-- Environment isolation by namespace (`ingestion-gateway-staging` and `ingestion-gateway-prod`)
-
-Paths:
-
-- `deploy/k8s/base`
-- `deploy/k8s/overlays/staging`
-- `deploy/k8s/overlays/prod`
-- `deploy/gitops/argocd`
-
-Render and validate manifests locally:
-
-```bash
-make gitops-validate
-```
-
-Bootstrap Argo CD on GKE:
-
-```bash
-make gitops-bootstrap PROJECT_ID=<gcp-project> CLUSTER=<gke-cluster> REGION=<gke-region>
-```
-
-See the operational runbook in `site-docs/docs/runbooks/gitops-argocd.md`.
-
-## Security Defaults
-
-- HMAC/token verification for all webhook providers
-- Optional JWT guard for `/metrics` and `/admin/*`
-- Fail-fast config validation at startup
-- Body size limits and panic recovery middleware
-
-## Development Commands
+## Common Developer Commands
 
 ```bash
 make help
@@ -213,63 +171,78 @@ make help
 
 Useful day-to-day commands:
 
-- `make doctor` to verify local tooling and environment readiness
-- `make verify` for formatter, linter, unit tests, and race detector
-- `make integration-test` for emulator-backed integration checks
-- `make replay FILE=internal/handlers/testdata/contracts/github_pull_request_opened.json REPLAY_ARGS='-source github -dry-run'` to validate and replay payloads
-- `make replay EVENT_ID=<failed_event_id>` to replay a persisted failed publish event
-- `make up` and `make down` for local stack lifecycle
-- `make infra-help` for infrastructure workflows
+- `make doctor`: check local tooling and environment readiness
+- `make dev-setup`: install local developer dependencies
+- `make dev-check`: run a fast local sanity check
+- `make verify`: run formatting, linting, tests, and race checks defined by the Makefile
+- `make run`: run the gateway locally
+- `make up`: run the local stack with monitoring
+- `make down`: stop the local stack
+- `make docs-build`: build the documentation site
+- `make docs-serve`: serve docs locally
 
-## Release and Delivery
+Replay helpers:
 
-- `ci.yml` runs Terraform fmt/validate, fmt/vet/tests/race/lint/vuln, and policy-as-code checks for Terraform and Kubernetes manifests
-- `smoke.yml` builds Docker images and validates `/healthz` and `/metrics`
-- `release.yml` creates GitHub Releases for `vX.Y.Z` tags, publishes signed source artifacts, and appends changelog entries
-- `tag-release.yml` enforces automated release checklist gates before creating SemVer tags
-- `docs.yml` builds documentation with strict checks
-- `docs-deploy.yml` publishes docs to `gh-pages`
-- `pr-governance.yml` enforces PR title, labels, and required template sections
-- `dependabot.yml` automates weekly dependency updates for Go modules, GitHub Actions, and docs Python packages
-- `dependabot-automerge.yml` enables auto-merge only for Dependabot semver patch updates after required checks pass
+- `make replay FILE=internal/handlers/testdata/contracts/github_pull_request_opened.json REPLAY_ARGS='-source github -dry-run'`
+- `make replay EVENT_ID=<failed_event_id>`
 
-### Cut a release
+## Local Stack
 
-1. Go to GitHub Actions.
-2. Run `tag-release` workflow with `version` like `v1.0.0` and confirm all checklist gates.
-3. `release` workflow publishes the release and updates `CHANGELOG.md`.
+The included `docker-compose.yml` is designed to make the repo easy to understand locally.
 
-## Docs Site
+It can run:
 
-- Build locally: `make docs-build`
-- Serve locally: `make docs-serve`
-- Production docs deploy automatically from main branch via `docs-deploy.yml`
-- Branch protection baseline is documented in `site-docs/docs/runbooks/branch-protection.md`
-- Security reporting process is documented in `SECURITY.md`
+- the ingestion gateway
+- Prometheus for metrics collection
+- Grafana for dashboards
+- an optional Pub/Sub emulator profile for queue integration testing
 
-## Portfolio Showcase
+That means you can explore the service as both an app developer and an operator.
 
-- Recruiter-facing demo checklist: `docs/profile-showcase-checklist.md`
-- Architecture and tradeoff talking points: `docs/interview-talking-points.md`
-- Suggested screenshot and GIF asset path: `docs/media/`
+## Infrastructure and Deployment
 
-## Roadmap
+This repo is not just application code. It also includes the pieces needed to run the system in a more production-like way:
 
-- ✅ Add integration tests against Pub/Sub emulator
-- ✅ Add Terraform modules for staging/prod environments (complete)
-- ✅ Add contract tests for webhook payload compatibility
-- ✅ Implement GitOps workflow (Argo CD)
-- ✅ Multi-region active-active deployment
-- ✅ Custom metrics and SLO dashboards
+- Terraform modules and environment setup under `infrastructure/`
+- Kubernetes manifests and overlays under `deploy/k8s/`
+- Argo CD GitOps bootstrap under `deploy/gitops/argocd/`
+- monitoring dashboards and Prometheus config under `deploy/monitoring/`
 
-### Next Release Focus (v1.1.0)
+Common infrastructure commands:
 
-- Reliability game days and automated failover validation
-- Policy-as-code guardrails in CI for Terraform and Kubernetes, plus production IAM exception controls
-- Expanded provider contract suite with schema drift detection
-- Security operations dashboard and alert tuning
+```bash
+make infra-plan-staging
+make infra-deploy-staging
+make infra-plan-prod
+make infra-deploy-prod
+make gitops-validate
+```
 
-See detailed plan in [docs/roadmap-v1.1.0.md](docs/roadmap-v1.1.0.md).
+See [infrastructure/README.md](infrastructure/README.md) and [deploy/README.md](deploy/README.md) for the full deployment story.
+
+## Security and Reliability Mindset
+
+This repository is built with production-style defaults in mind. That includes:
+
+- validating webhook secrets and signatures
+- protecting admin routes with JWT and CIDR controls when enabled
+- limiting request body size
+- rate limiting inbound traffic
+- structured logging and telemetry
+- durable queue publishing
+- failed-event persistence and replay workflows
+
+The goal is not just to receive events. The goal is to receive them safely, observe what happened, and recover when something goes wrong.
+
+## If You Want To Explore the Code Quickly
+
+Start here:
+
+- [services/ingestion-gateway/README.md](services/ingestion-gateway/README.md)
+- [services/ingestion-gateway/cmd/server/main.go](services/ingestion-gateway/cmd/server/main.go)
+- [services/ingestion-gateway/internal/handlers/](services/ingestion-gateway/internal/handlers)
+- [services/ingestion-gateway/internal/queue/](services/ingestion-gateway/internal/queue)
+- [docs/](docs)
 
 ## License
 

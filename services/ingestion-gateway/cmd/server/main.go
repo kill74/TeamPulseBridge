@@ -80,6 +80,7 @@ func main() {
 	webhookMux.HandleFunc("GET /admin/configz", admin.Configz)
 	webhookMux.HandleFunc("GET /admin/events/failed", admin.FailedEvents)
 	webhookMux.HandleFunc("GET /admin/events/replay-audit", admin.ReplayAudit)
+	webhookMux.HandleFunc("POST /admin/events/replay/batch", admin.ReplayFailedEventsBatch)
 	webhookMux.HandleFunc("POST /admin/events/replay", admin.ReplayFailedEvent)
 	webhookMux.HandleFunc("POST /webhooks/slack", h.HandleSlack)
 	webhookMux.HandleFunc("POST /webhooks/teams", h.HandleTeams)

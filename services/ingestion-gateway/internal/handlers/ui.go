@@ -177,19 +177,26 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
 
       <article class="card span-8 delay-5">
         <h2>Failed Event Explorer</h2>
-        <p class="small">Review recent failed publish events and replay them without leaving the console. Requires admin access when JWT guard is enabled.</p>
+        <p class="small">Review recent failed publish events, select multiple entries, and replay them without leaving the console. Requires admin access when JWT guard is enabled.</p>
         <div class="row row-top-gap">
           <button id="refreshFailedEvents" class="ghost compact">Refresh Failed Events</button>
           <span id="failedEventsState" class="pill">state: checking</span>
+          <span id="failedEventSelectionState" class="pill">selected: 0</span>
         </div>
         <div class="field">
           <label class="label" for="failedEventsLimit">List Limit</label>
           <input id="failedEventsLimit" class="input" type="number" min="1" max="100" value="20" />
         </div>
+        <div class="row row-top-gap">
+          <button id="failedEventsDryRunSelected" class="ghost compact" type="button">Dry Run Selected</button>
+          <button id="failedEventsReplaySelected" class="compact" type="button">Replay Selected</button>
+          <button id="failedEventsClearSelection" class="ghost compact" type="button">Clear Selection</button>
+        </div>
         <div class="table-wrap">
           <table class="events-table" aria-label="Failed events">
             <thead>
               <tr>
+                <th class="select-col"><input id="failedEventsSelectAll" class="row-selector" type="checkbox" aria-label="Select all failed events" data-failed-event-checkbox="header" /></th>
                 <th>Event ID</th>
                 <th>Source</th>
                 <th>Reason</th>
@@ -198,7 +205,7 @@ var productUITemplate = template.Must(template.New("ui").Parse(`<!doctype html>
               </tr>
             </thead>
             <tbody id="failedEventsBody">
-              <tr><td colspan="5" class="empty-row">Loading failed events...</td></tr>
+              <tr><td colspan="6" class="empty-row">Loading failed events...</td></tr>
             </tbody>
           </table>
         </div>
@@ -737,6 +744,12 @@ button:focus-visible,
   border-bottom: none;
 }
 
+.events-table th.select-col,
+.events-table td.select-col {
+  width: 42px;
+  text-align: center;
+}
+
 .events-actions {
   display: flex;
   gap: 6px;
@@ -754,6 +767,12 @@ button:focus-visible,
 
 .mono {
   font-family: "IBM Plex Mono", monospace;
+}
+
+.row-selector {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
 }
 
 .switch {
@@ -819,7 +838,10 @@ const productUIJS = `
 var refreshTimer = null;
 var smokeInFlight = false;
 var failedEventsInFlight = false;
+var replayRequestInFlight = false;
 var replayAuditInFlight = false;
+var failedEventSelection = {};
+var failedEventVisibleOrder = [];
 var replayAuditCurrentCursor = '';
 var replayAuditNextCursor = '';
 var replayAuditHasMore = false;
@@ -1083,14 +1105,82 @@ function setFailedEventsEmpty(message) {
   if (!tbody) {
     return;
   }
+  failedEventVisibleOrder = [];
+  pruneFailedEventSelection();
+  updateFailedEventSelectionState();
   tbody.innerHTML = '';
   var tr = document.createElement('tr');
   var td = document.createElement('td');
-  td.colSpan = 5;
+  td.colSpan = 6;
   td.className = 'empty-row';
   td.textContent = message;
   tr.appendChild(td);
   tbody.appendChild(tr);
+}
+
+function selectedFailedEventIDs() {
+  return failedEventVisibleOrder.filter(function(eventID) {
+    return Boolean(failedEventSelection[eventID]);
+  });
+}
+
+function pruneFailedEventSelection() {
+  var allowed = {};
+  failedEventVisibleOrder.forEach(function(eventID) {
+    allowed[eventID] = true;
+  });
+  Object.keys(failedEventSelection).forEach(function(eventID) {
+    if (!allowed[eventID]) {
+      delete failedEventSelection[eventID];
+    }
+  });
+}
+
+function clearFailedEventSelection() {
+  failedEventSelection = {};
+  updateFailedEventSelectionState();
+}
+
+function updateFailedEventSelectionState() {
+  var selected = selectedFailedEventIDs();
+  var count = selected.length;
+  var stateEl = document.getElementById('failedEventSelectionState');
+  if (stateEl) {
+    stateEl.textContent = 'selected: ' + String(count);
+    setPillState('failedEventSelectionState', count > 0 ? 'ok' : '');
+  }
+
+  var visibleCount = failedEventVisibleOrder.length;
+  var selectAll = document.getElementById('failedEventsSelectAll');
+  if (selectAll) {
+    selectAll.checked = visibleCount > 0 && count === visibleCount;
+    selectAll.indeterminate = count > 0 && count < visibleCount;
+    selectAll.disabled = replayRequestInFlight || visibleCount === 0;
+  }
+
+  document.querySelectorAll('button[data-replay-action]').forEach(function(button) {
+    button.disabled = replayRequestInFlight;
+    button.setAttribute('aria-disabled', replayRequestInFlight ? 'true' : 'false');
+  });
+  document.querySelectorAll('input[data-failed-event-checkbox="row"]').forEach(function(checkbox) {
+    checkbox.disabled = replayRequestInFlight;
+  });
+
+  var dryRunButton = document.getElementById('failedEventsDryRunSelected');
+  if (dryRunButton) {
+    dryRunButton.disabled = replayRequestInFlight || count === 0;
+    dryRunButton.setAttribute('aria-disabled', dryRunButton.disabled ? 'true' : 'false');
+  }
+  var replayButton = document.getElementById('failedEventsReplaySelected');
+  if (replayButton) {
+    replayButton.disabled = replayRequestInFlight || count === 0;
+    replayButton.setAttribute('aria-disabled', replayButton.disabled ? 'true' : 'false');
+  }
+  var clearButton = document.getElementById('failedEventsClearSelection');
+  if (clearButton) {
+    clearButton.disabled = replayRequestInFlight || count === 0;
+    clearButton.setAttribute('aria-disabled', clearButton.disabled ? 'true' : 'false');
+  }
 }
 
 function setReplayAuditState(text, state) {
@@ -1129,6 +1219,12 @@ function updateReplayAuditPagingState() {
     nextButton.disabled = disabled;
     nextButton.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
+}
+
+function clearReplayAuditForwardPaging() {
+  replayAuditHasMore = false;
+  replayAuditNextCursor = '';
+  updateReplayAuditPagingState();
 }
 
 function resetReplayAuditPaging() {
@@ -1202,17 +1298,42 @@ function renderFailedEvents(events) {
     return;
   }
   tbody.innerHTML = '';
+  failedEventVisibleOrder = [];
   if (!events || !events.length) {
+    pruneFailedEventSelection();
+    updateFailedEventSelectionState();
     setFailedEventsEmpty('No failed events recorded.');
     return;
   }
 
   events.forEach(function(event) {
     var tr = document.createElement('tr');
+    var eventIDValue = event.event_id || '';
+    failedEventVisibleOrder.push(eventIDValue);
+
+    var selectCell = document.createElement('td');
+    selectCell.className = 'select-col';
+    var checkbox = document.createElement('input');
+    checkbox.className = 'row-selector';
+    checkbox.type = 'checkbox';
+    checkbox.setAttribute('data-failed-event-checkbox', 'row');
+    checkbox.checked = Boolean(failedEventSelection[eventIDValue]);
+    checkbox.disabled = replayRequestInFlight;
+    checkbox.setAttribute('aria-label', 'Select failed event ' + (eventIDValue || '--'));
+    checkbox.addEventListener('change', function(ev) {
+      if (ev.target.checked) {
+        failedEventSelection[eventIDValue] = true;
+      } else {
+        delete failedEventSelection[eventIDValue];
+      }
+      updateFailedEventSelectionState();
+    });
+    selectCell.appendChild(checkbox);
+    tr.appendChild(selectCell);
 
     var eventId = document.createElement('td');
     eventId.className = 'mono';
-    eventId.textContent = event.event_id || '--';
+    eventId.textContent = eventIDValue || '--';
     tr.appendChild(eventId);
 
     var source = document.createElement('td');
@@ -1234,19 +1355,23 @@ function renderFailedEvents(events) {
 
     var dryRunButton = document.createElement('button');
     dryRunButton.className = 'ghost compact';
+    dryRunButton.setAttribute('data-replay-action', 'row');
     dryRunButton.textContent = 'Dry Run';
     dryRunButton.type = 'button';
+    dryRunButton.disabled = replayRequestInFlight;
     dryRunButton.addEventListener('click', function() {
-      replayFailedEvent(event.event_id, true);
+      replayFailedEvent(eventIDValue, true);
     });
     actionWrap.appendChild(dryRunButton);
 
     var replayButton = document.createElement('button');
     replayButton.className = 'compact';
+    replayButton.setAttribute('data-replay-action', 'row');
     replayButton.textContent = 'Replay';
     replayButton.type = 'button';
+    replayButton.disabled = replayRequestInFlight;
     replayButton.addEventListener('click', function() {
-      replayFailedEvent(event.event_id, false);
+      replayFailedEvent(eventIDValue, false);
     });
     actionWrap.appendChild(replayButton);
 
@@ -1254,6 +1379,9 @@ function renderFailedEvents(events) {
     tr.appendChild(actions);
     tbody.appendChild(tr);
   });
+
+  pruneFailedEventSelection();
+  updateFailedEventSelectionState();
 }
 
 async function replayFailedEvent(eventID, dryRun) {
@@ -1261,6 +1389,13 @@ async function replayFailedEvent(eventID, dryRun) {
   if (!result) {
     return;
   }
+  if (replayRequestInFlight) {
+    setFailedReplayResultState('err');
+    result.textContent = 'Another replay request is already in progress. Please wait.';
+    return;
+  }
+  replayRequestInFlight = true;
+  updateFailedEventSelectionState();
   setFailedReplayResultState('');
   result.textContent = (dryRun ? 'Validating' : 'Replaying') + ' ' + eventID + '...';
   try {
@@ -1302,6 +1437,96 @@ async function replayFailedEvent(eventID, dryRun) {
     setFailedReplayResultState('err');
     result.textContent = 'Replay request failed: ' + (err && err.message ? err.message : String(err));
     addTimelineEvent('Replay request failed for ' + eventID, 'err');
+  } finally {
+    replayRequestInFlight = false;
+    updateFailedEventSelectionState();
+  }
+}
+
+async function replayFailedEventsBatch(eventIDs, dryRun) {
+  var result = document.getElementById('failedReplayResult');
+  if (!result) {
+    return;
+  }
+  if (replayRequestInFlight) {
+    setFailedReplayResultState('err');
+    result.textContent = 'Another replay request is already in progress. Please wait.';
+    return;
+  }
+  if (!eventIDs || !eventIDs.length) {
+    setFailedReplayResultState('err');
+    result.textContent = 'Select at least one failed event before running a batch action.';
+    return;
+  }
+
+  replayRequestInFlight = true;
+  updateFailedEventSelectionState();
+  setFailedReplayResultState('');
+  result.textContent = (dryRun ? 'Validating' : 'Replaying') + ' ' + String(eventIDs.length) + ' selected failed events...';
+  try {
+    var res = await fetch('/admin/events/replay/batch', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeader()),
+      body: JSON.stringify({
+        event_ids: eventIDs,
+        dry_run: Boolean(dryRun)
+      })
+    });
+    var body = await res.text();
+    var parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch (_) {
+      parsed = { raw: body };
+    }
+
+    var summary = parsed && parsed.summary ? parsed.summary : {};
+    var lines = [
+      'Selected: ' + String(eventIDs.length),
+      'HTTP: ' + res.status,
+      'Mode: ' + (dryRun ? 'dry-run' : 'publish'),
+      ''
+    ];
+    if (parsed && parsed.error && parsed.error.code) {
+      lines.push('Error Code: ' + parsed.error.code);
+      lines.push('Error: ' + (parsed.error.message || 'request failed'));
+    } else {
+      lines.push('Status: ' + (parsed.status || '--'));
+      lines.push('Requested: ' + String(summary.requested || 0));
+      lines.push('Processed: ' + String(summary.processed || 0));
+      lines.push('Succeeded: ' + String(summary.succeeded || 0));
+      lines.push('Validated: ' + String(summary.validated || 0));
+      lines.push('Accepted: ' + String(summary.accepted || 0));
+      lines.push('Failed: ' + String(summary.failed || 0));
+      if (parsed && parsed.results && parsed.results.length) {
+        lines.push('');
+        lines.push('Items:');
+        parsed.results.forEach(function(item) {
+          var line = '- ' + (item.event_id || '--') + ' -> ' + (item.status || 'unknown') + ' (HTTP ' + String(item.http_status || '--') + ')';
+          if (item.error_code) {
+            line += ' [' + item.error_code + ']';
+          }
+          lines.push(line);
+        });
+      }
+    }
+
+    result.textContent = lines.join('\n');
+    var hasFailures = Boolean(summary.failed);
+    setFailedReplayResultState(res.ok && !hasFailures ? 'ok' : 'err');
+    addTimelineEvent((dryRun ? 'Batch dry-run' : 'Batch replay') + ' for ' + String(eventIDs.length) + ' events returned ' + res.status, hasFailures ? 'warn' : 'ok');
+    if (!dryRun) {
+      clearFailedEventSelection();
+      refreshFailedEvents();
+    }
+    refreshReplayAuditList();
+  } catch (err) {
+    setFailedReplayResultState('err');
+    result.textContent = 'Batch replay request failed: ' + (err && err.message ? err.message : String(err));
+    addTimelineEvent('Batch replay request failed for ' + String(eventIDs.length) + ' events', 'err');
+  } finally {
+    replayRequestInFlight = false;
+    updateFailedEventSelectionState();
   }
 }
 
@@ -1476,6 +1701,7 @@ async function refreshReplayAuditList(adminStatus, options) {
     }
     if (!res.ok) {
       setReplayAuditState('state: unavailable', 'err');
+      clearReplayAuditForwardPaging();
       setReplayAuditEmpty('Failed to load replay audit history (status ' + res.status + ').');
       return;
     }
@@ -1495,6 +1721,7 @@ async function refreshReplayAuditList(adminStatus, options) {
     renderReplayAudit(parsed.records || []);
   } catch (_) {
     setReplayAuditState('state: unavailable', 'err');
+    clearReplayAuditForwardPaging();
     setReplayAuditEmpty('Failed to load replay audit history due to network or browser error.');
   } finally {
     replayAuditInFlight = false;
@@ -1656,6 +1883,27 @@ document.getElementById('manualRefresh').addEventListener('click', refreshStatus
 document.getElementById('refreshFailedEvents').addEventListener('click', function() {
   refreshFailedEvents();
 });
+document.getElementById('failedEventsSelectAll').addEventListener('change', function(ev) {
+  if (ev.target.checked) {
+    failedEventVisibleOrder.forEach(function(eventID) {
+      failedEventSelection[eventID] = true;
+    });
+  } else {
+    failedEventVisibleOrder.forEach(function(eventID) {
+      delete failedEventSelection[eventID];
+    });
+  }
+  updateFailedEventSelectionState();
+});
+document.getElementById('failedEventsDryRunSelected').addEventListener('click', function() {
+  replayFailedEventsBatch(selectedFailedEventIDs(), true);
+});
+document.getElementById('failedEventsReplaySelected').addEventListener('click', function() {
+  replayFailedEventsBatch(selectedFailedEventIDs(), false);
+});
+document.getElementById('failedEventsClearSelection').addEventListener('click', function() {
+  clearFailedEventSelection();
+});
 document.getElementById('refreshReplayAudit').addEventListener('click', function() {
   refreshReplayAuditList();
 });
@@ -1743,6 +1991,7 @@ refreshStatus();
 setupAutoRefresh();
 updateLastRefresh();
 setSmokeSendEnabled(document.getElementById('allowSend').checked);
+updateFailedEventSelectionState();
 updateReplayAuditPagingState();
 setInterval(updateFreshnessIndicator, 1000);
 `
