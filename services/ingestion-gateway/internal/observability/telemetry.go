@@ -18,13 +18,17 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+
+	"teampulsebridge/services/ingestion-gateway/internal/queue"
 )
 
 type Telemetry struct {
-	MetricsHandler        http.Handler
-	WebhookCounter        metric.Int64Counter
-	SecurityRejectCounter metric.Int64Counter
-	shutdown              []func(context.Context) error
+	MetricsHandler           http.Handler
+	WebhookCounter           metric.Int64Counter
+	SecurityRejectCounter    metric.Int64Counter
+	QueueBackpressureCounter metric.Int64Counter
+	QueuePublishCounter      metric.Int64Counter
+	shutdown                 []func(context.Context) error
 }
 
 func (t *Telemetry) Shutdown(ctx context.Context) error {
@@ -80,8 +84,55 @@ func Setup(ctx context.Context, logger *slog.Logger, serviceName string) (*Telem
 	}
 	telemetry.SecurityRejectCounter = securityRejectCounter
 
+	queueBackpressureCounter, err := meterProvider.Meter(serviceName).Int64Counter("queue_backpressure_events_total")
+	if err != nil {
+		return nil, fmt.Errorf("create queue backpressure counter: %w", err)
+	}
+	telemetry.QueueBackpressureCounter = queueBackpressureCounter
+
+	queuePublishCounter, err := meterProvider.Meter(serviceName).Int64Counter("queue_publish_outcomes_total")
+	if err != nil {
+		return nil, fmt.Errorf("create queue publish counter: %w", err)
+	}
+	telemetry.QueuePublishCounter = queuePublishCounter
+
 	logger.Info("telemetry initialized", "otel_http_instrumentation", true)
 	return telemetry, nil
+}
+
+func (t *Telemetry) BindQueueMetrics(serviceName string, provider queue.SnapshotProvider) error {
+	if provider == nil {
+		return nil
+	}
+	meter := otel.GetMeterProvider().Meter(serviceName)
+
+	usageGauge, err := meter.Float64ObservableGauge("queue_buffer_usage_ratio")
+	if err != nil {
+		return fmt.Errorf("create queue buffer usage gauge: %w", err)
+	}
+	failureGauge, err := meter.Float64ObservableGauge("queue_failure_budget_ratio")
+	if err != nil {
+		return fmt.Errorf("create queue failure budget gauge: %w", err)
+	}
+	depthGauge, err := meter.Int64ObservableGauge("queue_buffer_depth")
+	if err != nil {
+		return fmt.Errorf("create queue buffer depth gauge: %w", err)
+	}
+
+	registration, err := meter.RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
+		snapshot := provider.Snapshot()
+		observer.ObserveFloat64(usageGauge, snapshot.UsageRatio)
+		observer.ObserveFloat64(failureGauge, snapshot.FailureRatio)
+		observer.ObserveInt64(depthGauge, int64(snapshot.Depth))
+		return nil
+	}, usageGauge, failureGauge, depthGauge)
+	if err != nil {
+		return fmt.Errorf("register queue metrics callback: %w", err)
+	}
+	t.shutdown = append(t.shutdown, func(context.Context) error {
+		return registration.Unregister()
+	})
+	return nil
 }
 
 func HTTPMiddleware(serviceName string) func(http.Handler) http.Handler {

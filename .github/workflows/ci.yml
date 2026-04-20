@@ -94,22 +94,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Setup Python
+      - name: Setup Python policy tooling
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install checkov==3.2.469
+          python3 -m pip install checkov==3.2.469 python-hcl2==8.1.2
 
-      - name: Terraform policy checks
+      - name: Install kubectl
         run: |
-          checkov \
-            --config-file .checkov.yaml \
-            --framework terraform \
-            --directory infrastructure/terraform
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSLo "$HOME/.local/bin/kubectl" "https://dl.k8s.io/release/v1.34.1/bin/linux/amd64/kubectl"
+          chmod +x "$HOME/.local/bin/kubectl"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          kubectl version --client --output=yaml
 
-      - name: Kubernetes manifest policy checks
-        run: |
-          checkov \
-            --config-file .checkov.yaml \
-            --framework kubernetes \
-            --directory deploy/k8s \
-            --directory deploy/gitops/argocd
+      - name: Policy-as-code checks
+        run: make ci-policy

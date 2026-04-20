@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -214,7 +215,15 @@ func (h *WebhookHandler) publishAndAck(w http.ResponseWriter, r *http.Request, s
 	if err := h.publisher.Publish(r.Context(), source, body, headers); err != nil {
 		status := http.StatusInternalServerError
 		errCode := apperr.CodePublishFailed
-		if errors.Is(err, queue.ErrQueueFull) {
+		if errors.Is(err, queue.ErrQueueThrottled) {
+			status = http.StatusTooManyRequests
+			errCode = apperr.CodeQueueThrottled
+			retryAfter := h.cfg.QueueThrottleRetryAfterSec
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		} else if errors.Is(err, queue.ErrQueueFull) {
 			status = http.StatusServiceUnavailable
 			errCode = apperr.CodeQueueFull
 		}

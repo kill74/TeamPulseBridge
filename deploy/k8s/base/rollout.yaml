@@ -1,5 +1,5 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: ingestion-gateway
 spec:
@@ -8,6 +8,10 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: ingestion-gateway
+  strategy:
+    canary:
+      maxSurge: 25%
+      maxUnavailable: 0
   template:
     metadata:
       labels:

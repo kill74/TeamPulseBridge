@@ -9,6 +9,8 @@ This folder contains the Argo CD control-plane declarations for TeamPulse Bridge
 - `apps/staging.yaml`: staging app (auto-sync)
 - `apps/prod.yaml`: production app (manual sync gate)
 
+The workload overlays now render Argo Rollouts resources for canary promotion. That requires the Argo Rollouts controller and access to the Prometheus endpoint referenced by the analysis templates.
+
 ## Apply
 
 ```bash

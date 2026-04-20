@@ -68,6 +68,17 @@ function Invoke-Checked([string]$FilePath, [string[]]$Arguments, [string]$Workin
     }
 }
 
+function Invoke-PythonScript([string]$ScriptPath, [string[]]$Arguments, [string]$WorkingDirectory) {
+    $pythonArgs = @()
+    if ([IO.Path]::GetFileNameWithoutExtension($pythonExe) -eq "py") {
+        $pythonArgs += "-3"
+    }
+    $pythonArgs += $ScriptPath
+    $pythonArgs += $Arguments
+
+    Invoke-Checked $pythonExe $pythonArgs $WorkingDirectory
+}
+
 function Invoke-GoCheck([string[]]$Arguments) {
     Push-Location $serviceRoot
     try {
@@ -98,6 +109,8 @@ $golangciLintExe = Resolve-CommandPath @("golangci-lint") "golangci-lint was not
 $govulncheckExe = Resolve-CommandPath @("govulncheck") "govulncheck was not found. Run 'make dev-setup' or 'go install golang.org/x/vuln/cmd/govulncheck@latest'."
 $terraformExe = if (-not $SkipTerraform) { Resolve-CommandPath @("terraform") "terraform was not found. Install Terraform to run local CI parity." } else { $null }
 $checkovExe = if (-not $SkipPolicy) { Resolve-CommandPath @("checkov", "checkov.cmd") "checkov was not found. Run 'make dev-setup' or install checkov==3.2.469." } else { $null }
+$pythonExe = if (-not $SkipPolicy) { Resolve-CommandPath @("python3", "python", "py") "Python 3 was not found. Install Python to run repo-specific IaC policy checks." } else { $null }
+$kubectlExe = if (-not $SkipPolicy) { Resolve-CommandPath @("kubectl") "kubectl was not found. Install kubectl to render Kubernetes overlays for policy checks." } else { $null }
 
 Write-Step "Go fmt check"
 Push-Location $serviceRoot
@@ -166,7 +179,42 @@ if (-not $SkipTerraform) {
 if (-not $SkipPolicy) {
     Write-Step "Checkov policy checks"
     Invoke-Checked $checkovExe @("--config-file", ".checkov.yaml", "--framework", "terraform", "--directory", "infrastructure/terraform") $repoRoot
-    Invoke-Checked $checkovExe @("--config-file", ".checkov.yaml", "--framework", "kubernetes", "--directory", "deploy/k8s", "--directory", "deploy/gitops/argocd") $repoRoot
+
+    $renderRoot = Join-Path $repoRoot ".ci\rendered"
+    New-Item -ItemType Directory -Path $renderRoot -Force | Out-Null
+
+    $stagingManifest = Join-Path $renderRoot "staging.yaml"
+    $prodManifest = Join-Path $renderRoot "prod.yaml"
+
+    Write-Step "Render Kubernetes overlays"
+    Push-Location $repoRoot
+    try {
+        $stagingOutput = & $kubectlExe kustomize "deploy/k8s/overlays/staging"
+        if ($LASTEXITCODE -ne 0) {
+            throw "kubectl kustomize failed for deploy/k8s/overlays/staging"
+        }
+        $stagingOutput | Set-Content -Path $stagingManifest -Encoding utf8
+
+        $prodOutput = & $kubectlExe kustomize "deploy/k8s/overlays/prod"
+        if ($LASTEXITCODE -ne 0) {
+            throw "kubectl kustomize failed for deploy/k8s/overlays/prod"
+        }
+        $prodOutput | Set-Content -Path $prodManifest -Encoding utf8
+    }
+    finally {
+        Pop-Location
+    }
+
+    Write-Step "Rendered manifest policy checks"
+    Invoke-Checked $checkovExe @("--config-file", ".checkov.yaml", "--framework", "kubernetes", "--directory", ".ci/rendered", "--directory", "deploy/gitops/argocd") $repoRoot
+
+    Write-Step "Repo-specific IaC policy checks"
+    Invoke-PythonScript "scripts/policy/check_iac.py" @(
+        "--terraform-env", "staging=infrastructure/terraform/environments/staging/terraform.tfvars",
+        "--terraform-env", "prod=infrastructure/terraform/environments/prod/terraform.tfvars",
+        "--manifest-env", "staging=.ci/rendered/staging.yaml",
+        "--manifest-env", "prod=.ci/rendered/prod.yaml"
+    ) $repoRoot
 }
 
 if (-not $SkipSmoke) {

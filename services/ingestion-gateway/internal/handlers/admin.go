@@ -88,16 +88,23 @@ func NewAdminHandlerWithDependencies(cfg config.Config, publisher queue.Publishe
 
 func (h *AdminHandler) Configz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"service":                    "ingestion-gateway",
-		"queue_backend":              h.cfg.QueueBackend,
-		"admin_auth_enabled":         h.cfg.AdminAuthEnabled,
-		"request_timeout_sec":        h.cfg.RequestTimeoutSec,
-		"queue_buffer":               h.cfg.QueueBuffer,
-		"dedup_enabled":              h.cfg.DedupEnabled,
-		"failed_event_store_enabled": h.cfg.FailedStoreEnabled,
-		"failed_event_store_path":    h.cfg.FailedStorePath,
-		"replay_audit_enabled":       h.cfg.ReplayAuditEnabled,
-		"replay_audit_path":          h.cfg.ReplayAuditPath,
+		"service":                               "ingestion-gateway",
+		"queue_backend":                         h.cfg.QueueBackend,
+		"admin_auth_enabled":                    h.cfg.AdminAuthEnabled,
+		"request_timeout_sec":                   h.cfg.RequestTimeoutSec,
+		"queue_buffer":                          h.cfg.QueueBuffer,
+		"queue_backpressure_enabled":            h.cfg.QueueBackpressureEnabled,
+		"queue_backpressure_soft_limit_percent": h.cfg.QueueBackpressureSoftLimitPercent,
+		"queue_backpressure_hard_limit_percent": h.cfg.QueueBackpressureHardLimitPercent,
+		"queue_failure_budget_percent":          h.cfg.QueueFailureBudgetPercent,
+		"queue_failure_budget_window":           h.cfg.QueueFailureBudgetWindow,
+		"queue_failure_budget_min_samples":      h.cfg.QueueFailureBudgetMinSamples,
+		"queue_throttle_retry_after_sec":        h.cfg.QueueThrottleRetryAfterSec,
+		"dedup_enabled":                         h.cfg.DedupEnabled,
+		"failed_event_store_enabled":            h.cfg.FailedStoreEnabled,
+		"failed_event_store_path":               h.cfg.FailedStorePath,
+		"replay_audit_enabled":                  h.cfg.ReplayAuditEnabled,
+		"replay_audit_path":                     h.cfg.ReplayAuditPath,
 	})
 }
 
@@ -669,7 +676,10 @@ func (h *AdminHandler) executeReplay(ctx context.Context, in replayExecutionInpu
 	if err := h.publisher.Publish(ctx, record.Source, record.Body, headers); err != nil {
 		code := apperr.CodeReplayPublishFailed
 		result.HTTPStatus = http.StatusInternalServerError
-		if errors.Is(err, queue.ErrQueueFull) {
+		if errors.Is(err, queue.ErrQueueThrottled) {
+			code = apperr.CodeQueueThrottled
+			result.HTTPStatus = http.StatusTooManyRequests
+		} else if errors.Is(err, queue.ErrQueueFull) {
 			code = apperr.CodeQueueFull
 			result.HTTPStatus = http.StatusServiceUnavailable
 		}

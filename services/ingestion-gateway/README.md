@@ -226,6 +226,13 @@ Runtime behavior:
 - `REQUEST_TIMEOUT_SEC` default `15`
 - `QUEUE_BACKEND` default `log`
 - `QUEUE_BUFFER` default `4096`
+- `QUEUE_BACKPRESSURE_ENABLED` default `true`
+- `QUEUE_BACKPRESSURE_SOFT_LIMIT_PERCENT` default `70`
+- `QUEUE_BACKPRESSURE_HARD_LIMIT_PERCENT` default `90`
+- `QUEUE_FAILURE_BUDGET_PERCENT` default `15`
+- `QUEUE_FAILURE_BUDGET_WINDOW` default `100`
+- `QUEUE_FAILURE_BUDGET_MIN_SAMPLES` default `20`
+- `QUEUE_THROTTLE_RETRY_AFTER_SEC` default `5`
 - `ENVIRONMENT` default `dev`
 
 Safety and traffic controls:
@@ -278,6 +285,8 @@ These matter when `ADMIN_AUTH_ENABLED=true`:
 ### Important validation rules
 
 - `QUEUE_BACKEND` must be `log` or `pubsub`
+- queue backpressure limits must be ordered so hard limit is greater than soft limit
+- queue failure budget sample size must not exceed the configured rolling window
 - `DEDUP_TTL_SEC` must be between `1` and `86400`
 - `FAILED_EVENT_STORE_PATH` must be set when failed-event storage is enabled
 - `REPLAY_AUDIT_PATH` must be set when replay audit is enabled

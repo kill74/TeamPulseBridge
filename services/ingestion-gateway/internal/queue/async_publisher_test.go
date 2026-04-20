@@ -2,8 +2,10 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,6 +34,36 @@ func (p *blockingPublisher) Publish(_ context.Context, source string, body []byt
 }
 
 func (p *blockingPublisher) Close() error {
+	return nil
+}
+
+type scriptedPublisher struct {
+	started chan struct{}
+	release chan struct{}
+	err     error
+
+	once  sync.Once
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *scriptedPublisher) Publish(_ context.Context, _ string, _ []byte, _ map[string]string) error {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+
+	if call == 1 {
+		return p.err
+	}
+	p.once.Do(func() {
+		close(p.started)
+	})
+	<-p.release
+	return nil
+}
+
+func (p *scriptedPublisher) Close() error {
 	return nil
 }
 
@@ -77,4 +109,44 @@ func TestAsyncPublisherClonesQueuedPayloads(t *testing.T) {
 	assert.Equal(t, "github", inner.source)
 	assert.Equal(t, `{"status":"ok"}`, string(inner.body))
 	assert.Equal(t, map[string]string{"X-Test": "original"}, inner.headers)
+}
+
+func TestAsyncPublisherAdaptiveBackpressureThrottlesUnderFailureBudgetBurn(t *testing.T) {
+	t.Parallel()
+
+	inner := &scriptedPublisher{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		err:     errors.New("downstream publish failed"),
+	}
+	p := NewAsyncPublisherWithOptions(inner, 4, nil, AsyncPublisherOptions{
+		Backpressure: BackpressureConfig{
+			Enabled:               true,
+			SoftLimitRatio:        0.50,
+			HardLimitRatio:        0.95,
+			FailureRatioThreshold: 0.25,
+			FailureWindow:         4,
+			MinSamples:            1,
+		},
+	})
+
+	require.NoError(t, p.Publish(context.Background(), "github", []byte(`{"id":1}`), nil))
+
+	require.Eventually(t, func() bool {
+		return p.Snapshot().RecentSamples == 1 && p.Snapshot().FailureRatio >= 1
+	}, time.Second, 10*time.Millisecond)
+
+	require.NoError(t, p.Publish(context.Background(), "github", []byte(`{"id":2}`), nil))
+	<-inner.started
+
+	require.NoError(t, p.Publish(context.Background(), "github", []byte(`{"id":3}`), nil))
+	require.NoError(t, p.Publish(context.Background(), "github", []byte(`{"id":4}`), nil))
+	require.NoError(t, p.Publish(context.Background(), "github", []byte(`{"id":5}`), nil))
+
+	err := p.Publish(context.Background(), "github", []byte(`{"id":6}`), nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrQueueThrottled)
+
+	close(inner.release)
+	require.NoError(t, p.Close())
 }

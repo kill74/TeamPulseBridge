@@ -184,6 +184,7 @@ Useful day-to-day commands:
 - `make dev-setup`: install local developer dependencies
 - `make dev-check`: run a fast local sanity check
 - `make ci-local`: run the local equivalents of the push-time CI checks before opening a PR
+- `make ci-policy`: render staging and prod Kubernetes overlays, then enforce Terraform and manifest policy-as-code checks
 - `make verify`: run formatting, linting, tests, and race checks defined by the Makefile
 - `make run`: run the gateway locally
 - `make up`: run the local stack with monitoring

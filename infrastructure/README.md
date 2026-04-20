@@ -134,6 +134,10 @@ The infrastructure also supports an optional multi-region active-active model fo
 
 If you enable that model, make sure the application and data layers are designed for it before treating both regions as writable.
 
+For resilience validation, use the regional failover drill documented in [docs/regional-failover-drill.md](docs/regional-failover-drill.md).
+
+From the repository root, operators can run `make infra-chaos-drill-failover` after exporting the required health-check URLs and any failover or recovery commands for the target environment.
+
 ## Safety Notes
 
 - review `terraform plan` output before every apply

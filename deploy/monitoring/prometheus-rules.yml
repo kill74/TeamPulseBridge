@@ -32,6 +32,18 @@ groups:
       - record: teampulse:webhook_error_budget_consumed:30d
         expr: (1 - teampulse:webhook_availability:30d) / 0.001
 
+      - record: teampulse:queue_backpressure:rate5m
+        expr: sum(rate(queue_backpressure_events_total{action=~"throttled|full"}[5m]))
+
+      - record: teampulse:queue_backpressure_ratio:5m
+        expr: teampulse:queue_backpressure:rate5m / clamp_min(teampulse:webhook_requests:rate5m, 0.001)
+
+      - record: teampulse:queue_publish_failures:rate5m
+        expr: sum(rate(queue_publish_outcomes_total{result="failed"}[5m]))
+
+      - record: teampulse:queue_publish_failure_ratio:5m
+        expr: teampulse:queue_publish_failures:rate5m / clamp_min(sum(rate(queue_publish_outcomes_total[5m])), 0.001)
+
   - name: ingestion-gateway-slo-alerts
     interval: 30s
     rules:
@@ -42,8 +54,8 @@ groups:
           severity: critical
           service: ingestion-gateway
         annotations:
-          summary: 'Ingestion Gateway consumindo orçamento de erro muito rápido'
-          description: 'Burn rate alto em 5m e 1h para SLO 99.9%.'
+          summary: "Ingestion Gateway is burning error budget too quickly"
+          description: "Burn rate is high over both 5m and 1h windows for the 99.9% SLO."
 
       - alert: IngestionGatewaySLOErrorBudgetSlowBurn
         expr: teampulse:webhook_error_budget_burn:1h > 3 and teampulse:webhook_error_budget_burn:6h > 3
@@ -52,8 +64,28 @@ groups:
           severity: warning
           service: ingestion-gateway
         annotations:
-          summary: 'Ingestion Gateway consumindo orçamento de erro continuamente'
-          description: 'Burn rate sustentado em 1h e 6h para SLO 99.9%.'
+          summary: "Ingestion Gateway is steadily consuming error budget"
+          description: "Burn rate is elevated over both 1h and 6h windows for the 99.9% SLO."
+
+      - alert: IngestionGatewayQueueBackpressureSustained
+        expr: teampulse:queue_backpressure_ratio:5m > 0.02
+        for: 10m
+        labels:
+          severity: warning
+          service: ingestion-gateway
+        annotations:
+          summary: "Ingestion Gateway is shedding traffic because queue pressure is sustained"
+          description: "Queue backpressure events are above 2% of webhook traffic for 10 minutes."
+
+      - alert: IngestionGatewayQueuePublishFailuresHigh
+        expr: teampulse:queue_publish_failure_ratio:5m > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          service: ingestion-gateway
+        annotations:
+          summary: "Ingestion Gateway queue publish failures are elevated"
+          description: "More than 5% of queue publish attempts are failing over the last 5 minutes."
 
   - name: ingestion-gateway-security-recording
     interval: 30s
@@ -83,8 +115,8 @@ groups:
           severity: warning
           service: ingestion-gateway
         annotations:
-          summary: 'Ingestion Gateway com pico de rejeicoes de seguranca'
-          description: 'Taxa de rejeicoes de seguranca acima de 2 req/s no ultimo minuto por 5m.'
+          summary: "Ingestion Gateway is seeing a burst of security rejections"
+          description: "Security rejection rate is above 2 requests per second over the last minute for 5 minutes."
 
       - alert: IngestionGatewayPotentialAdminAbuse
         expr: sum(rate(security_rejections_total{reason=~"admin_.*"}[5m])) > 0.5
@@ -93,5 +125,5 @@ groups:
           severity: critical
           service: ingestion-gateway
         annotations:
-          summary: 'Possivel abuso em endpoints administrativos'
-          description: 'Rejeicoes de seguranca com reason=admin_* acima de 0.5 req/s por 10m.'
+          summary: "Possible abuse on administrative endpoints"
+          description: "Security rejections with reason=admin_* are above 0.5 requests per second for 10 minutes."

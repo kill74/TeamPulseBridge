@@ -9,8 +9,9 @@ import (
 )
 
 type RuntimePublisher struct {
-	Publisher Publisher
-	closers   []func() error
+	Publisher     Publisher
+	closers       []func() error
+	statsProvider SnapshotProvider
 }
 
 func (r *RuntimePublisher) Close() error {
@@ -22,7 +23,14 @@ func (r *RuntimePublisher) Close() error {
 	return nil
 }
 
-func BuildRuntimePublisher(ctx context.Context, cfg config.Config, logger *slog.Logger) (*RuntimePublisher, error) {
+func (r *RuntimePublisher) Snapshot() PublisherSnapshot {
+	if r.statsProvider == nil {
+		return PublisherSnapshot{}
+	}
+	return r.statsProvider.Snapshot()
+}
+
+func BuildRuntimePublisher(ctx context.Context, cfg config.Config, logger *slog.Logger, options AsyncPublisherOptions) (*RuntimePublisher, error) {
 	var base Publisher
 	r := &RuntimePublisher{}
 
@@ -38,8 +46,16 @@ func BuildRuntimePublisher(ctx context.Context, cfg config.Config, logger *slog.
 		base = NewLogPublisher(logger)
 	}
 
-	async := NewAsyncPublisher(base, cfg.QueueBuffer, logger)
+	options.Backpressure.Enabled = cfg.QueueBackpressureEnabled
+	options.Backpressure.SoftLimitRatio = float64(cfg.QueueBackpressureSoftLimitPercent) / 100
+	options.Backpressure.HardLimitRatio = float64(cfg.QueueBackpressureHardLimitPercent) / 100
+	options.Backpressure.FailureRatioThreshold = float64(cfg.QueueFailureBudgetPercent) / 100
+	options.Backpressure.FailureWindow = cfg.QueueFailureBudgetWindow
+	options.Backpressure.MinSamples = cfg.QueueFailureBudgetMinSamples
+
+	async := NewAsyncPublisherWithOptions(base, cfg.QueueBuffer, logger, options)
 	r.closers = append(r.closers, async.Close)
 	r.Publisher = async
+	r.statsProvider = async
 	return r, nil
 }

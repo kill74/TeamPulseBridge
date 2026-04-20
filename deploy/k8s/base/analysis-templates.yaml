@@ -1,0 +1,55 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: ingestion-gateway-error-budget
+spec:
+  args:
+    - name: prometheus-address
+  metrics:
+    - name: webhook-error-budget-burn
+      interval: 1m
+      count: 3
+      failureLimit: 1
+      consecutiveErrorLimit: 1
+      successCondition: result[0] < 3
+      provider:
+        prometheus:
+          address: "{{args.prometheus-address}}"
+          query: |
+            (
+              sum(rate(webhook_requests_total{status=~"5.."}[5m])) /
+              clamp_min(sum(rate(webhook_requests_total[5m])), 0.001)
+            ) / 0.001
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: ingestion-gateway-queue-resilience
+spec:
+  args:
+    - name: prometheus-address
+  metrics:
+    - name: queue-backpressure-ratio
+      interval: 1m
+      count: 3
+      failureLimit: 1
+      consecutiveErrorLimit: 1
+      successCondition: result[0] < 0.02
+      provider:
+        prometheus:
+          address: "{{args.prometheus-address}}"
+          query: |
+            sum(rate(queue_backpressure_events_total{action=~"throttled|full"}[5m])) /
+            clamp_min(sum(rate(webhook_requests_total[5m])), 0.001)
+    - name: queue-publish-failure-ratio
+      interval: 1m
+      count: 3
+      failureLimit: 1
+      consecutiveErrorLimit: 1
+      successCondition: result[0] < 0.05
+      provider:
+        prometheus:
+          address: "{{args.prometheus-address}}"
+          query: |
+            sum(rate(queue_publish_outcomes_total{result="failed"}[5m])) /
+            clamp_min(sum(rate(queue_publish_outcomes_total[5m])), 0.001)

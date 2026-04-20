@@ -240,6 +240,40 @@ func TestHandleGitHubQueueFailurePersistsFailedEvent(t *testing.T) {
 	}
 }
 
+func TestHandleGitHubQueueThrottledReturnsRetryableResponse(t *testing.T) {
+	cfg := config.Config{
+		GitHubWebhookSecret:        "gh-secret",
+		QueueThrottleRetryAfterSec: 9,
+	}
+	pub := &stubPublisher{err: queue.ErrQueueThrottled}
+	store := &captureFailedStore{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), store)
+
+	body := []byte(`{"action":"opened"}`)
+	sig := githubSig("gh-secret", body)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("X-Hub-Signature-256", sig)
+	req.Header.Set("X-GitHub-Delivery", "delivery-throttled")
+	rr := httptest.NewRecorder()
+	h.HandleGitHub(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", rr.Code)
+	}
+	if got := rr.Header().Get("Retry-After"); got != "9" {
+		t.Fatalf("expected Retry-After header 9, got %q", got)
+	}
+	assertErrorCode(t, rr.Body.Bytes(), apperr.CodeQueueThrottled)
+	if store.calls != 1 {
+		t.Fatalf("expected failed event persisted once, got %d", store.calls)
+	}
+	if store.last.Reason != string(apperr.CodeQueueThrottled) {
+		t.Fatalf("expected reason %q, got %q", apperr.CodeQueueThrottled, store.last.Reason)
+	}
+}
+
 func slackSig(secret, ts, body string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte("v0:" + ts + ":" + body))

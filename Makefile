@@ -5,7 +5,7 @@ CHECKOV ?= checkov
 GOLANGCI_LINT ?= golangci-lint
 GOVULNCHECK ?= govulncheck
 
-.PHONY: help doctor env-init replay dev-setup dev-check precommit-install precommit-run verify ci-go ci-terraform ci-policy ci-smoke ci-local lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
+.PHONY: help doctor env-init replay dev-setup dev-check precommit-install precommit-run verify ci-go ci-terraform ci-policy ci-smoke ci-local lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod infra-chaos-drill-failover gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
 
 help:
 	@echo "Application Targets:"
@@ -41,7 +41,7 @@ help:
 	@echo "CI Parity Targets:"
 	@echo "  make ci-go                    - Run local Go checks that mirror CI"
 	@echo "  make ci-terraform             - Run terraform fmt/init/validate locally"
-	@echo "  make ci-policy                - Run local Checkov policy checks"
+	@echo "  make ci-policy                - Run local policy-as-code checks for Terraform and Kubernetes"
 	@echo "  make ci-smoke                 - Run the local docker compose smoke check"
 	@echo "  make ci-local                 - Run ci-go + race + ci-terraform + ci-policy + ci-smoke"
 	@echo ""
@@ -50,6 +50,7 @@ help:
 	@echo "  make infra-init-backend-*    - Initialize Terraform backend (*=staging|prod)"
 	@echo "  make infra-plan-*            - Plan infrastructure deployment"
 	@echo "  make infra-deploy-*          - Deploy infrastructure"
+	@echo "  make infra-chaos-drill-failover - Run the regional failover drill"
 	@echo "  make infra-destroy-*         - Destroy infrastructure (⚠️ dangerous)"
 	@echo ""
 	@echo "GitOps Targets (see make gitops-help for details):"
@@ -76,7 +77,7 @@ replay:
 dev-setup:
 	@command -v go >/dev/null 2>&1 || (echo "Go is required" && exit 1)
 	@command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1)
-	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469
+	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469 python-hcl2==8.1.2
 	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@python3 -m pre_commit install --install-hooks
@@ -129,8 +130,19 @@ ci-terraform:
 	TF_DATA_DIR="$$tf_data_dir" $(TERRAFORM) validate
 
 ci-policy:
-	$(CHECKOV) --config-file .checkov.yaml --framework terraform --directory infrastructure/terraform
-	$(CHECKOV) --config-file .checkov.yaml --framework kubernetes --directory deploy/k8s --directory deploy/gitops/argocd
+	@set -e; \
+	command -v kubectl >/dev/null 2>&1 || (echo "kubectl is required" && exit 1); \
+	command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1); \
+	mkdir -p .ci/rendered; \
+	kubectl kustomize deploy/k8s/overlays/staging > .ci/rendered/staging.yaml; \
+	kubectl kustomize deploy/k8s/overlays/prod > .ci/rendered/prod.yaml; \
+	$(CHECKOV) --config-file .checkov.yaml --framework terraform --directory infrastructure/terraform; \
+	$(CHECKOV) --config-file .checkov.yaml --framework kubernetes --directory .ci/rendered --directory deploy/gitops/argocd; \
+	python3 scripts/policy/check_iac.py \
+		--terraform-env staging=infrastructure/terraform/environments/staging/terraform.tfvars \
+		--terraform-env prod=infrastructure/terraform/environments/prod/terraform.tfvars \
+		--manifest-env staging=.ci/rendered/staging.yaml \
+		--manifest-env prod=.ci/rendered/prod.yaml
 
 ci-smoke:
 	@set -e; \
@@ -270,6 +282,9 @@ infra-help:
 	@echo "  make infra-destroy-staging       - Destroy staging infrastructure"
 	@echo "  make infra-destroy-prod          - Destroy production infrastructure"
 	@echo ""
+	@echo "Reliability and Resilience:"
+	@echo "  make infra-chaos-drill-failover  - Run the regional failover drill"
+	@echo ""
 	@echo "Documentation:"
 	@echo "  Complete guide: infrastructure/docs/README.md"
 
@@ -296,6 +311,9 @@ infra-destroy-staging:
 
 infra-destroy-prod:
 	cd infrastructure/scripts && bash destroy.sh prod
+
+infra-chaos-drill-failover:
+	bash infrastructure/scripts/regional-failover-drill.sh
 
 # GitOps Targets
 

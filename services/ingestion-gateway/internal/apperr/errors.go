@@ -15,6 +15,7 @@ const (
 	CodeRateLimitExceeded   Code = "ERR_RATE_LIMIT_EXCEEDED"
 	CodeInternalServerError Code = "ERR_INTERNAL_SERVER_ERROR"
 	CodeQueueFull           Code = "ERR_QUEUE_FULL"
+	CodeQueueThrottled      Code = "ERR_QUEUE_THROTTLED"
 	CodePublishFailed       Code = "ERR_PUBLISH_FAILED"
 	CodeDuplicateEvent      Code = "ERR_DUPLICATE_EVENT"
 	CodeFailedEventStore    Code = "ERR_FAILED_EVENT_STORE"

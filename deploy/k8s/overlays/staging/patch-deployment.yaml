@@ -1,13 +1,62 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: ingestion-gateway
 spec:
   replicas: 2
+  strategy:
+    canary:
+      steps:
+        - setWeight: 25
+        - pause:
+            duration: 1m
+        - analysis:
+            templates:
+              - templateName: ingestion-gateway-error-budget
+              - templateName: ingestion-gateway-queue-resilience
+            args:
+              - name: prometheus-address
+                value: http://prometheus.monitoring.svc.cluster.local:9090
+        - setWeight: 60
+        - pause:
+            duration: 2m
+        - analysis:
+            templates:
+              - templateName: ingestion-gateway-error-budget
+              - templateName: ingestion-gateway-queue-resilience
+            args:
+              - name: prometheus-address
+                value: http://prometheus.monitoring.svc.cluster.local:9090
   template:
     spec:
       containers:
         - name: ingestion-gateway
+          image: ghcr.io/kill74/teampulse-ingestion-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: ingestion-gateway-config
+            - secretRef:
+                name: ingestion-gateway-secrets
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
           resources:
             requests:
               cpu: 100m
@@ -15,3 +64,10 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL

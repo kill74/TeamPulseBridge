@@ -78,6 +78,7 @@ temp/
 dist/
 build/
 *.tmp
+.ci/
 
 # ------------------------------
 # Terraform / IaC

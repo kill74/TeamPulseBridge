@@ -297,6 +297,37 @@ func TestAdminReplayFailedEventQueueFull(t *testing.T) {
 	}
 }
 
+func TestAdminReplayFailedEventQueueThrottled(t *testing.T) {
+	store := &adminStoreStub{
+		events: map[string]failstore.FailedEvent{
+			"evt_1": {
+				EventID: "evt_1",
+				Source:  "github",
+				Body:    json.RawMessage(`{"action":"opened"}`),
+			},
+		},
+	}
+	pub := &adminPublisherStub{err: queue.ErrQueueThrottled}
+	audit := &adminAuditStub{}
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay", bytes.NewBufferString(`{"event_id":"evt_1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ReplayFailedEvent(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", rr.Code)
+	}
+	assertAdminErrorCode(t, rr.Body.Bytes(), apperr.CodeQueueThrottled)
+	if audit.calls != 1 {
+		t.Fatalf("expected one replay audit record, got %d", audit.calls)
+	}
+	if audit.saved[0].Result != "failed" || audit.saved[0].ErrorCode != string(apperr.CodeQueueThrottled) {
+		t.Fatalf("unexpected replay audit failure payload: %+v", audit.saved[0])
+	}
+}
+
 func TestAdminReplayFailedEventsBatchDryRun(t *testing.T) {
 	store := &adminStoreStub{
 		events: map[string]failstore.FailedEvent{

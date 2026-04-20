@@ -11,64 +11,78 @@ import (
 
 // Config contains runtime values for webhook signature validation.
 type Config struct {
-	Environment         string
-	Port                string
-	SlackSigningSecret  string
-	GitHubWebhookSecret string
-	GitLabWebhookToken  string
-	TeamsClientState    string
-	QueueBuffer         int
-	RequestTimeoutSec   int
-	RequireSecrets      bool
-	QueueBackend        string
-	PubSubProjectID     string
-	PubSubTopicID       string
-	AdminAuthEnabled    bool
-	AdminJWTIssuer      string
-	AdminJWTAudience    string
-	AdminJWTSecret      string
-	AdminAllowCIDRs     []string
-	TrustedProxyCIDRs   []string
-	RateLimitEnabled    bool
-	RateLimitRPM        int
-	AdminRateLimitRPM   int
-	DedupEnabled        bool
-	DedupTTLSeconds     int
-	FailedStoreEnabled  bool
-	FailedStorePath     string
-	ReplayAuditEnabled  bool
-	ReplayAuditPath     string
+	Environment                       string
+	Port                              string
+	SlackSigningSecret                string
+	GitHubWebhookSecret               string
+	GitLabWebhookToken                string
+	TeamsClientState                  string
+	QueueBuffer                       int
+	RequestTimeoutSec                 int
+	RequireSecrets                    bool
+	QueueBackend                      string
+	PubSubProjectID                   string
+	PubSubTopicID                     string
+	AdminAuthEnabled                  bool
+	AdminJWTIssuer                    string
+	AdminJWTAudience                  string
+	AdminJWTSecret                    string
+	AdminAllowCIDRs                   []string
+	TrustedProxyCIDRs                 []string
+	RateLimitEnabled                  bool
+	RateLimitRPM                      int
+	AdminRateLimitRPM                 int
+	DedupEnabled                      bool
+	DedupTTLSeconds                   int
+	FailedStoreEnabled                bool
+	FailedStorePath                   string
+	ReplayAuditEnabled                bool
+	ReplayAuditPath                   string
+	QueueBackpressureEnabled          bool
+	QueueBackpressureSoftLimitPercent int
+	QueueBackpressureHardLimitPercent int
+	QueueFailureBudgetPercent         int
+	QueueFailureBudgetWindow          int
+	QueueFailureBudgetMinSamples      int
+	QueueThrottleRetryAfterSec        int
 }
 
 func LoadFromEnv() Config {
 	return Config{
-		Environment:         envOrDefault("ENVIRONMENT", "dev"),
-		Port:                envOrDefault("PORT", "8080"),
-		SlackSigningSecret:  os.Getenv("SLACK_SIGNING_SECRET"),
-		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
-		GitLabWebhookToken:  os.Getenv("GITLAB_WEBHOOK_TOKEN"),
-		TeamsClientState:    os.Getenv("TEAMS_CLIENT_STATE"),
-		QueueBuffer:         intOrDefault("QUEUE_BUFFER", 4096),
-		RequestTimeoutSec:   intOrDefault("REQUEST_TIMEOUT_SEC", 15),
-		RequireSecrets:      boolOrDefault("REQUIRE_SECRETS", true),
-		QueueBackend:        envOrDefault("QUEUE_BACKEND", "log"),
-		PubSubProjectID:     os.Getenv("PUBSUB_PROJECT_ID"),
-		PubSubTopicID:       os.Getenv("PUBSUB_TOPIC_ID"),
-		AdminAuthEnabled:    boolOrDefault("ADMIN_AUTH_ENABLED", false),
-		AdminJWTIssuer:      os.Getenv("ADMIN_JWT_ISSUER"),
-		AdminJWTAudience:    os.Getenv("ADMIN_JWT_AUDIENCE"),
-		AdminJWTSecret:      os.Getenv("ADMIN_JWT_SECRET"),
-		AdminAllowCIDRs:     splitCSVEnv("ADMIN_ALLOW_CIDRS"),
-		TrustedProxyCIDRs:   splitCSVEnv("TRUSTED_PROXY_CIDRS"),
-		RateLimitEnabled:    boolOrDefault("RATE_LIMIT_ENABLED", true),
-		RateLimitRPM:        intOrDefault("RATE_LIMIT_RPM", 300),
-		AdminRateLimitRPM:   intOrDefault("ADMIN_RATE_LIMIT_RPM", 60),
-		DedupEnabled:        boolOrDefault("DEDUP_ENABLED", true),
-		DedupTTLSeconds:     intOrDefault("DEDUP_TTL_SEC", 300),
-		FailedStoreEnabled:  boolOrDefault("FAILED_EVENT_STORE_ENABLED", true),
-		FailedStorePath:     envOrDefault("FAILED_EVENT_STORE_PATH", "data/failed-events.jsonl"),
-		ReplayAuditEnabled:  boolOrDefault("REPLAY_AUDIT_ENABLED", true),
-		ReplayAuditPath:     envOrDefault("REPLAY_AUDIT_PATH", "data/replay-audit.jsonl"),
+		Environment:                       envOrDefault("ENVIRONMENT", "dev"),
+		Port:                              envOrDefault("PORT", "8080"),
+		SlackSigningSecret:                os.Getenv("SLACK_SIGNING_SECRET"),
+		GitHubWebhookSecret:               os.Getenv("GITHUB_WEBHOOK_SECRET"),
+		GitLabWebhookToken:                os.Getenv("GITLAB_WEBHOOK_TOKEN"),
+		TeamsClientState:                  os.Getenv("TEAMS_CLIENT_STATE"),
+		QueueBuffer:                       intOrDefault("QUEUE_BUFFER", 4096),
+		RequestTimeoutSec:                 intOrDefault("REQUEST_TIMEOUT_SEC", 15),
+		RequireSecrets:                    boolOrDefault("REQUIRE_SECRETS", true),
+		QueueBackend:                      envOrDefault("QUEUE_BACKEND", "log"),
+		PubSubProjectID:                   os.Getenv("PUBSUB_PROJECT_ID"),
+		PubSubTopicID:                     os.Getenv("PUBSUB_TOPIC_ID"),
+		AdminAuthEnabled:                  boolOrDefault("ADMIN_AUTH_ENABLED", false),
+		AdminJWTIssuer:                    os.Getenv("ADMIN_JWT_ISSUER"),
+		AdminJWTAudience:                  os.Getenv("ADMIN_JWT_AUDIENCE"),
+		AdminJWTSecret:                    os.Getenv("ADMIN_JWT_SECRET"),
+		AdminAllowCIDRs:                   splitCSVEnv("ADMIN_ALLOW_CIDRS"),
+		TrustedProxyCIDRs:                 splitCSVEnv("TRUSTED_PROXY_CIDRS"),
+		RateLimitEnabled:                  boolOrDefault("RATE_LIMIT_ENABLED", true),
+		RateLimitRPM:                      intOrDefault("RATE_LIMIT_RPM", 300),
+		AdminRateLimitRPM:                 intOrDefault("ADMIN_RATE_LIMIT_RPM", 60),
+		DedupEnabled:                      boolOrDefault("DEDUP_ENABLED", true),
+		DedupTTLSeconds:                   intOrDefault("DEDUP_TTL_SEC", 300),
+		FailedStoreEnabled:                boolOrDefault("FAILED_EVENT_STORE_ENABLED", true),
+		FailedStorePath:                   envOrDefault("FAILED_EVENT_STORE_PATH", "data/failed-events.jsonl"),
+		ReplayAuditEnabled:                boolOrDefault("REPLAY_AUDIT_ENABLED", true),
+		ReplayAuditPath:                   envOrDefault("REPLAY_AUDIT_PATH", "data/replay-audit.jsonl"),
+		QueueBackpressureEnabled:          boolOrDefault("QUEUE_BACKPRESSURE_ENABLED", true),
+		QueueBackpressureSoftLimitPercent: intOrDefault("QUEUE_BACKPRESSURE_SOFT_LIMIT_PERCENT", 70),
+		QueueBackpressureHardLimitPercent: intOrDefault("QUEUE_BACKPRESSURE_HARD_LIMIT_PERCENT", 90),
+		QueueFailureBudgetPercent:         intOrDefault("QUEUE_FAILURE_BUDGET_PERCENT", 15),
+		QueueFailureBudgetWindow:          intOrDefault("QUEUE_FAILURE_BUDGET_WINDOW", 100),
+		QueueFailureBudgetMinSamples:      intOrDefault("QUEUE_FAILURE_BUDGET_MIN_SAMPLES", 20),
+		QueueThrottleRetryAfterSec:        intOrDefault("QUEUE_THROTTLE_RETRY_AFTER_SEC", 5),
 	}
 }
 
@@ -112,6 +126,37 @@ func (c Config) Validate() error {
 	}
 	if c.ReplayAuditEnabled && strings.TrimSpace(c.ReplayAuditPath) == "" {
 		return errors.New("REPLAY_AUDIT_PATH must not be empty when REPLAY_AUDIT_ENABLED=true")
+	}
+	if c.QueueBackpressureEnabled {
+		if c.QueueBackpressureSoftLimitPercent < 1 || c.QueueBackpressureSoftLimitPercent > 99 {
+			return fmt.Errorf("QUEUE_BACKPRESSURE_SOFT_LIMIT_PERCENT must be between 1 and 99, got %d", c.QueueBackpressureSoftLimitPercent)
+		}
+		if c.QueueBackpressureHardLimitPercent < 1 || c.QueueBackpressureHardLimitPercent > 100 {
+			return fmt.Errorf("QUEUE_BACKPRESSURE_HARD_LIMIT_PERCENT must be between 1 and 100, got %d", c.QueueBackpressureHardLimitPercent)
+		}
+		if c.QueueBackpressureHardLimitPercent <= c.QueueBackpressureSoftLimitPercent {
+			return fmt.Errorf(
+				"QUEUE_BACKPRESSURE_HARD_LIMIT_PERCENT (%d) must be greater than QUEUE_BACKPRESSURE_SOFT_LIMIT_PERCENT (%d)",
+				c.QueueBackpressureHardLimitPercent,
+				c.QueueBackpressureSoftLimitPercent,
+			)
+		}
+		if c.QueueFailureBudgetPercent < 1 || c.QueueFailureBudgetPercent > 100 {
+			return fmt.Errorf("QUEUE_FAILURE_BUDGET_PERCENT must be between 1 and 100, got %d", c.QueueFailureBudgetPercent)
+		}
+		if c.QueueFailureBudgetWindow < 1 || c.QueueFailureBudgetWindow > 100000 {
+			return fmt.Errorf("QUEUE_FAILURE_BUDGET_WINDOW must be between 1 and 100000, got %d", c.QueueFailureBudgetWindow)
+		}
+		if c.QueueFailureBudgetMinSamples < 1 || c.QueueFailureBudgetMinSamples > c.QueueFailureBudgetWindow {
+			return fmt.Errorf(
+				"QUEUE_FAILURE_BUDGET_MIN_SAMPLES must be between 1 and QUEUE_FAILURE_BUDGET_WINDOW (%d), got %d",
+				c.QueueFailureBudgetWindow,
+				c.QueueFailureBudgetMinSamples,
+			)
+		}
+		if c.QueueThrottleRetryAfterSec < 1 || c.QueueThrottleRetryAfterSec > 300 {
+			return fmt.Errorf("QUEUE_THROTTLE_RETRY_AFTER_SEC must be between 1 and 300, got %d", c.QueueThrottleRetryAfterSec)
+		}
 	}
 	for _, cidr := range c.TrustedProxyCIDRs {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {

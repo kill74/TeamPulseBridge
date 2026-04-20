@@ -168,3 +168,45 @@ func TestValidateRejectsEmptyReplayAuditPathWhenEnabled(t *testing.T) {
 		t.Fatal("expected REPLAY_AUDIT_PATH validation error")
 	}
 }
+
+func TestValidateRejectsInvalidQueueBackpressureLimits(t *testing.T) {
+	cfg := Config{
+		Environment:                       "local",
+		Port:                              "8080",
+		QueueBuffer:                       100,
+		RequestTimeoutSec:                 15,
+		QueueBackend:                      "log",
+		RequireSecrets:                    false,
+		QueueBackpressureEnabled:          true,
+		QueueBackpressureSoftLimitPercent: 90,
+		QueueBackpressureHardLimitPercent: 80,
+		QueueFailureBudgetPercent:         15,
+		QueueFailureBudgetWindow:          100,
+		QueueFailureBudgetMinSamples:      20,
+		QueueThrottleRetryAfterSec:        5,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid backpressure limit error")
+	}
+}
+
+func TestValidateRejectsQueueFailureBudgetMinSamplesAboveWindow(t *testing.T) {
+	cfg := Config{
+		Environment:                       "local",
+		Port:                              "8080",
+		QueueBuffer:                       100,
+		RequestTimeoutSec:                 15,
+		QueueBackend:                      "log",
+		RequireSecrets:                    false,
+		QueueBackpressureEnabled:          true,
+		QueueBackpressureSoftLimitPercent: 70,
+		QueueBackpressureHardLimitPercent: 90,
+		QueueFailureBudgetPercent:         15,
+		QueueFailureBudgetWindow:          10,
+		QueueFailureBudgetMinSamples:      20,
+		QueueThrottleRetryAfterSec:        5,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid failure budget sample window error")
+	}
+}

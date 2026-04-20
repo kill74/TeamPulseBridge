@@ -47,7 +47,26 @@ func main() {
 		}
 	}()
 
-	runtimePublisher, err := queue.BuildRuntimePublisher(ctx, cfg, logger)
+	runtimePublisher, err := queue.BuildRuntimePublisher(ctx, cfg, logger, queue.AsyncPublisherOptions{
+		Hooks: queue.AsyncPublisherHooks{
+			OnBackpressure: func(metricCtx context.Context, source, action string, _ queue.PublisherSnapshot) {
+				telemetry.QueueBackpressureCounter.Add(metricCtx, 1,
+					metric.WithAttributes(
+						attribute.String("source", source),
+						attribute.String("action", action),
+					),
+				)
+			},
+			OnPublish: func(metricCtx context.Context, source, result string, _ queue.PublisherSnapshot) {
+				telemetry.QueuePublishCounter.Add(metricCtx, 1,
+					metric.WithAttributes(
+						attribute.String("source", source),
+						attribute.String("result", result),
+					),
+				)
+			},
+		},
+	})
 	if err != nil {
 		logger.Error("publisher initialization failed", "error", err)
 		os.Exit(1)
@@ -57,6 +76,10 @@ func main() {
 			logger.Error("publisher close failed", "error", closeErr)
 		}
 	}()
+	if err := telemetry.BindQueueMetrics("ingestion-gateway", runtimePublisher); err != nil {
+		logger.Error("queue telemetry binding failed", "error", err)
+		os.Exit(1)
+	}
 
 	h := handlers.NewWebhookHandler(cfg, runtimePublisher.Publisher, logger, func(reqCtx context.Context, source string, status int) {
 		telemetry.WebhookCounter.Add(reqCtx, 1,

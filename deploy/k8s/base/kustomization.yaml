@@ -4,7 +4,8 @@ resources:
   - serviceaccount.yaml
   - configmap.yaml
   - secret.yaml
-  - deployment.yaml
+  - analysis-templates.yaml
+  - rollout.yaml
   - service.yaml
   - hpa.yaml
   - pdb.yaml
