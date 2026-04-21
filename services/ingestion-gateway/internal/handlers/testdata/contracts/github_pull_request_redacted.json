@@ -1,0 +1,22 @@
+{
+  "action": "edited",
+  "number": 42,
+  "repository": {
+    "id": 999,
+    "name": "TeamPulseBridge",
+    "full_name": "kill74/TeamPulseBridge"
+  },
+  "pull_request": {
+    "id": 123456,
+    "number": 42,
+    "title": null,
+    "state": "open",
+    "user": null
+  },
+  "sender": null,
+  "changes": {
+    "title": {
+      "from": "draft title"
+    }
+  }
+}

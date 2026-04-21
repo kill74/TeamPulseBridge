@@ -55,6 +55,14 @@ func (s *captureFailedStore) ListRecent(_ context.Context, _ int) ([]failstore.F
 	return nil, nil
 }
 
+type captureSecurityEvents struct {
+	events []SecurityEvent
+}
+
+func (s *captureSecurityEvents) Record(_ *http.Request, event SecurityEvent) {
+	s.events = append(s.events, event)
+}
+
 func TestHandleSlackURLVerification(t *testing.T) {
 	cfg := config.Config{SlackSigningSecret: "secret"}
 	pub := &stubPublisher{}
@@ -181,7 +189,7 @@ func TestHandleGitHubDuplicateIgnored(t *testing.T) {
 	cfg := config.Config{GitHubWebhookSecret: "gh-secret"}
 	pub := &stubPublisher{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), nil)
+	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), nil, nil)
 
 	body := []byte(`{"action":"opened"}`)
 	sig := githubSig("gh-secret", body)
@@ -214,7 +222,7 @@ func TestHandleGitHubQueueFailurePersistsFailedEvent(t *testing.T) {
 	pub := &stubPublisher{err: queue.ErrQueueFull}
 	store := &captureFailedStore{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), store)
+	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), store, nil)
 
 	body := []byte(`{"action":"opened"}`)
 	sig := githubSig("gh-secret", body)
@@ -248,7 +256,7 @@ func TestHandleGitHubQueueThrottledReturnsRetryableResponse(t *testing.T) {
 	pub := &stubPublisher{err: queue.ErrQueueThrottled}
 	store := &captureFailedStore{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), store)
+	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), store, nil)
 
 	body := []byte(`{"action":"opened"}`)
 	sig := githubSig("gh-secret", body)
@@ -271,6 +279,32 @@ func TestHandleGitHubQueueThrottledReturnsRetryableResponse(t *testing.T) {
 	}
 	if store.last.Reason != string(apperr.CodeQueueThrottled) {
 		t.Fatalf("expected reason %q, got %q", apperr.CodeQueueThrottled, store.last.Reason)
+	}
+}
+
+func TestHandleGitHubUnauthorizedRecordsSecurityEvent(t *testing.T) {
+	cfg := config.Config{GitHubWebhookSecret: "gh-secret"}
+	pub := &stubPublisher{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	securityEvents := &captureSecurityEvents{}
+	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), nil, securityEvents.Record)
+
+	body := []byte(`{"action":"opened"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("X-Hub-Signature-256", "sha256=bad")
+	rr := httptest.NewRecorder()
+
+	h.HandleGitHub(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+	if len(securityEvents.events) != 1 {
+		t.Fatalf("expected 1 security event, got %d", len(securityEvents.events))
+	}
+	event := securityEvents.events[0]
+	if event.Category != "webhook_request_rejected" || event.Source != "github" || event.Reason != "webhook_auth_failed" || event.Status != http.StatusUnauthorized {
+		t.Fatalf("unexpected security event: %+v", event)
 	}
 }
 

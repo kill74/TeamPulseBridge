@@ -1,0 +1,10 @@
+{
+  "value": [
+    {
+      "tenantId": "tenant-123",
+      "changeType": "updated",
+      "resource": "/teams('team-123')/channels('channel-123')",
+      "clientState": "test-teams-state"
+    }
+  ]
+}

@@ -96,18 +96,75 @@ groups:
       - record: teampulse:security_rejections:rate5m
         expr: sum(rate(security_rejections_total[5m]))
 
+      - record: teampulse:security_rejections:rate1h
+        expr: sum(rate(security_rejections_total[1h]))
+
+      - record: teampulse:security_rejections:rate6h
+        expr: sum(rate(security_rejections_total[6h]))
+
       - record: teampulse:security_rejections:rate5m_by_reason
         expr: sum(rate(security_rejections_total[5m])) by (reason)
 
       - record: teampulse:security_rejections:rate5m_by_status
         expr: sum(rate(security_rejections_total[5m])) by (status)
 
+      - record: teampulse:security_rejections:rate5m_by_source
+        expr: sum(rate(security_rejections_total[5m])) by (source)
+
+      - record: teampulse:security_rejections:rate5m_by_path
+        expr: sum(rate(security_rejections_total[5m])) by (path)
+
       - record: teampulse:security_rejections_ratio:5m
         expr: teampulse:security_rejections:rate5m / clamp_min(sum(rate(webhook_requests_total[5m])), 0.001)
+
+      - record: teampulse:security_rejections_ratio:1h
+        expr: teampulse:security_rejections:rate1h / clamp_min(sum(rate(webhook_requests_total[1h])), 0.001)
+
+      - record: teampulse:security_rejections_ratio:6h
+        expr: teampulse:security_rejections:rate6h / clamp_min(sum(rate(webhook_requests_total[6h])), 0.001)
+
+      - record: teampulse:security_rejections_ratio:30d
+        expr: sum(increase(security_rejections_total[30d])) / clamp_min(sum(increase(webhook_requests_total[30d])), 1)
+
+      - record: teampulse:security_rejection_budget_burn:5m
+        expr: teampulse:security_rejections_ratio:5m / 0.002
+
+      - record: teampulse:security_rejection_budget_burn:1h
+        expr: teampulse:security_rejections_ratio:1h / 0.002
+
+      - record: teampulse:security_rejection_budget_burn:6h
+        expr: teampulse:security_rejections_ratio:6h / 0.002
+
+      - record: teampulse:security_rejection_budget_consumed:30d
+        expr: teampulse:security_rejections_ratio:30d / 0.002
 
   - name: ingestion-gateway-security-alerts
     interval: 30s
     rules:
+      - alert: IngestionGatewaySecurityRejectionFastBurn
+        expr: teampulse:security_rejection_budget_burn:5m > 14.4 and teampulse:security_rejection_budget_burn:1h > 14.4
+        for: 5m
+        labels:
+          severity: critical
+          service: ingestion-gateway
+          team: security
+        annotations:
+          summary: "Security rejection anomaly budget is burning too fast"
+          description: "Security rejection ratio is elevated over both 5m and 1h windows relative to the 0.2% anomaly budget."
+          runbook_url: "https://guilhermesales.github.io/TeamPulseBridge/runbooks/security-incident-triage/"
+
+      - alert: IngestionGatewaySecurityRejectionSlowBurn
+        expr: teampulse:security_rejection_budget_burn:1h > 6 and teampulse:security_rejection_budget_burn:6h > 6
+        for: 30m
+        labels:
+          severity: warning
+          service: ingestion-gateway
+          team: security
+        annotations:
+          summary: "Security rejection anomaly budget is steadily elevated"
+          description: "Security rejection ratio remains above the expected baseline over both 1h and 6h windows."
+          runbook_url: "https://guilhermesales.github.io/TeamPulseBridge/runbooks/security-incident-triage/"
+
       - alert: IngestionGatewaySecurityRejectionsBurst
         expr: teampulse:security_rejections:rate1m > 2
         for: 5m
@@ -117,6 +174,7 @@ groups:
         annotations:
           summary: "Ingestion Gateway is seeing a burst of security rejections"
           description: "Security rejection rate is above 2 requests per second over the last minute for 5 minutes."
+          runbook_url: "https://guilhermesales.github.io/TeamPulseBridge/runbooks/security-incident-triage/"
 
       - alert: IngestionGatewayPotentialAdminAbuse
         expr: sum(rate(security_rejections_total{reason=~"admin_.*"}[5m])) > 0.5
@@ -127,3 +185,4 @@ groups:
         annotations:
           summary: "Possible abuse on administrative endpoints"
           description: "Security rejections with reason=admin_* are above 0.5 requests per second for 10 minutes."
+          runbook_url: "https://guilhermesales.github.io/TeamPulseBridge/runbooks/security-incident-triage/"

@@ -7,6 +7,11 @@ terraform {
   }
 }
 
+locals {
+  production_iam_exception_expiry_matches = regexall("20[0-9]{2}-[01][0-9]-[0-3][0-9]", var.production_iam_exception_justification)
+  production_iam_exception_expiry         = length(local.production_iam_exception_expiry_matches) > 0 ? local.production_iam_exception_expiry_matches[0] : ""
+}
+
 # Service account for GKE nodes
 resource "google_service_account" "gke_nodes" {
   account_id   = "${var.cluster_name}-nodes"
@@ -63,13 +68,15 @@ resource "google_project_iam_member" "additional_permissions" {
   project = var.gcp_project
   role    = each.value
   member  = "serviceAccount:${google_service_account.app_workload.email}"
-}
 
-# Allow app workload to impersonate Pub/Sub service account
-resource "google_service_account_iam_member" "pubsub_user" {
-  service_account_id = google_service_account.pubsub.name
-  role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${google_service_account.app_workload.email}"
+  dynamic "condition" {
+    for_each = var.environment == "prod" && local.production_iam_exception_expiry != "" ? [local.production_iam_exception_expiry] : []
+    content {
+      title       = "temporary_prod_exception"
+      description = "Temporary production IAM exception expiring on ${condition.value}"
+      expression  = "request.time < timestamp(\"${condition.value}T23:59:59Z\")"
+    }
+  }
 }
 
 # Logging roles

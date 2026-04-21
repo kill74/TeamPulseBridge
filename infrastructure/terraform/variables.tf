@@ -250,6 +250,15 @@ variable "security_pubsub_role" {
     ], var.security_pubsub_role)
     error_message = "security_pubsub_role must be one of: roles/pubsub.publisher, roles/pubsub.subscriber, roles/pubsub.viewer."
   }
+  validation {
+    condition = var.environment != "prod" || var.security_pubsub_role == "roles/pubsub.publisher" || (
+      var.security_allow_production_iam_exceptions &&
+      length(trimspace(var.security_production_iam_exception_justification)) >= 20 &&
+      length(regexall("[A-Z]{2,10}-[0-9]{1,6}", var.security_production_iam_exception_justification)) > 0 &&
+      length(regexall("20[0-9]{2}-[01][0-9]-[0-3][0-9]", var.security_production_iam_exception_justification)) > 0
+    )
+    error_message = "In production, security_pubsub_role must remain roles/pubsub.publisher unless a documented exception is enabled with a ticket and expiry date."
+  }
 }
 
 variable "security_additional_permissions" {
@@ -267,6 +276,8 @@ variable "security_additional_permissions" {
         "roles/iam.securityAdmin",
         "roles/iam.serviceAccountAdmin",
         "roles/iam.serviceAccountKeyAdmin",
+        "roles/iam.serviceAccountUser",
+        "roles/iam.serviceAccountOpenIdTokenCreator",
         "roles/iam.serviceAccountTokenCreator",
         "roles/iam.workloadIdentityPoolAdmin",
         "roles/orgpolicy.policyAdmin",
@@ -408,6 +419,16 @@ variable "log_retention_days" {
   description = "Log retention in days"
   type        = number
   default     = 14
+}
+
+variable "security_audit_log_retention_days" {
+  description = "Retention in days for structured security audit logs"
+  type        = number
+  default     = 90
+  validation {
+    condition     = var.security_audit_log_retention_days >= 1 && var.security_audit_log_retention_days <= 3650
+    error_message = "security_audit_log_retention_days must be between 1 and 3650."
+  }
 }
 
 variable "backup_location" {

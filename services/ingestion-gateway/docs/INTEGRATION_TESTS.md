@@ -101,6 +101,9 @@ docker stop pubsub-emulator
 ### Using Makefile
 
 ```bash
+# Run contract and schema drift checks
+make contract-test
+
 # Run all integration tests
 make integration-test
 
@@ -473,6 +476,23 @@ cd services/ingestion-gateway
 go test -race -count=1 ./internal/queue ./internal/handlers || exit 1
 ```
 
+## Contract and Data Quality
+
+The ingress contract suite is intentionally separate from Pub/Sub emulator integration coverage.
+
+Use it when you change webhook fixtures, queue schema shape, or provider-specific parsing assumptions:
+
+```bash
+make contract-test
+```
+
+That target verifies:
+
+- the versioned fixture catalog is complete and internally consistent
+- publishable fixtures still fit the versioned raw webhook envelope schema
+- negative fixtures capture common degraded-but-authenticated provider payloads
+- the compatibility matrix stays in sync with the executable catalog
+
 ## Best Practices
 
 ✅ **Do:**
@@ -495,7 +515,6 @@ go test -race -count=1 ./internal/queue ./internal/handlers || exit 1
 
 ## Future Enhancements
 
-- [ ] Add contract tests for message schema validation
 - [ ] Add stress tests (high throughput)
 - [ ] Add chaos tests (emulator failures)
 - [ ] Add multi-region emulator testing

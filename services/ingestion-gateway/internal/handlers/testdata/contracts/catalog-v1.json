@@ -1,0 +1,118 @@
+{
+  "catalog_version": 1,
+  "envelope_schema": {
+    "name": "raw-webhook-envelope",
+    "version": 1,
+    "file": "internal/queue/testdata/schemas/raw-webhook-envelope-v1.schema.json"
+  },
+  "fixtures": [
+    {
+      "id": "slack.event_callback.baseline.v1",
+      "version": 1,
+      "provider": "slack",
+      "event_family": "event_callback",
+      "variant": "baseline",
+      "path": "slack_event_callback.json",
+      "negative": false,
+      "expected_status": 202,
+      "publish": true,
+      "notes": "Canonical Slack Events API callback."
+    },
+    {
+      "id": "slack.event_callback.sparse_payload.v1",
+      "version": 1,
+      "provider": "slack",
+      "event_family": "event_callback",
+      "variant": "sparse_payload",
+      "path": "slack_event_callback_sparse.json",
+      "negative": true,
+      "expected_status": 202,
+      "publish": true,
+      "notes": "Authenticated callback missing event_id and several common event fields; the gateway must still preserve and publish the raw body."
+    },
+    {
+      "id": "slack.url_verification.baseline.v1",
+      "version": 1,
+      "provider": "slack",
+      "event_family": "url_verification",
+      "variant": "baseline",
+      "path": "slack_url_verification.json",
+      "negative": false,
+      "expected_status": 200,
+      "publish": false,
+      "notes": "Special-case registration handshake; challenge must be echoed without publishing."
+    },
+    {
+      "id": "github.pull_request.baseline.v1",
+      "version": 1,
+      "provider": "github",
+      "event_family": "pull_request",
+      "variant": "baseline",
+      "path": "github_pull_request_opened.json",
+      "negative": false,
+      "expected_status": 202,
+      "publish": true,
+      "notes": "Canonical GitHub pull_request payload."
+    },
+    {
+      "id": "github.pull_request.redacted_nested_fields.v1",
+      "version": 1,
+      "provider": "github",
+      "event_family": "pull_request",
+      "variant": "redacted_nested_fields",
+      "path": "github_pull_request_redacted.json",
+      "negative": true,
+      "expected_status": 202,
+      "publish": true,
+      "notes": "Authenticated payload with null sender and partially redacted pull_request fields; common in replay tooling and privacy filters."
+    },
+    {
+      "id": "gitlab.merge_request.baseline.v1",
+      "version": 1,
+      "provider": "gitlab",
+      "event_family": "merge_request",
+      "variant": "baseline",
+      "path": "gitlab_merge_request.json",
+      "negative": false,
+      "expected_status": 202,
+      "publish": true,
+      "notes": "Canonical GitLab merge_request payload."
+    },
+    {
+      "id": "gitlab.merge_request.truncated_attributes.v1",
+      "version": 1,
+      "provider": "gitlab",
+      "event_family": "merge_request",
+      "variant": "truncated_attributes",
+      "path": "gitlab_merge_request_truncated.json",
+      "negative": true,
+      "expected_status": 202,
+      "publish": true,
+      "notes": "Authenticated payload with minimal object_attributes after upstream truncation or redaction."
+    },
+    {
+      "id": "teams.change_notification.baseline.v1",
+      "version": 1,
+      "provider": "teams",
+      "event_family": "change_notification",
+      "variant": "baseline",
+      "path": "teams_change_notification.json",
+      "negative": false,
+      "expected_status": 202,
+      "publish": true,
+      "notes": "Canonical Microsoft Graph Teams change notification payload."
+    },
+    {
+      "id": "teams.change_notification.sparse_entries.v1",
+      "version": 1,
+      "provider": "teams",
+      "event_family": "change_notification",
+      "variant": "sparse_entries",
+      "path": "teams_change_notification_sparse.json",
+      "negative": true,
+      "expected_status": 202,
+      "publish": true,
+      "notes": "Authenticated notification with sparse value entries and no top-level item ids; the gateway should still accept and fall back to hash-based event ids."
+    }
+  ]
+}

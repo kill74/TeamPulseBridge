@@ -21,15 +21,61 @@ class TerraformPolicyTests(unittest.TestCase):
                 "database_availability_type": "ZONAL",
                 "enable_network_policies": False,
                 "enable_ssh_access": True,
+                "create_service_account_key": True,
             },
         )
 
-        self.assertGreaterEqual(len(violations), 7)
+        self.assertGreaterEqual(len(violations), 8)
         self.assertTrue(
             any("multi-region failover" in violation for violation in violations)
         )
         self.assertTrue(
             any("deletion protection" in violation for violation in violations)
+        )
+        self.assertTrue(
+            any("service account keys" in violation for violation in violations)
+        )
+
+    def test_prod_rejects_unsafe_iam_exception_roles(self) -> None:
+        violations = check_iac.validate_terraform_env(
+            "prod",
+            {
+                "enable_multi_region": True,
+                "secondary_region": "us-east1",
+                "cluster_deletion_protection": True,
+                "database_deletion_protection": True,
+                "database_availability_type": "REGIONAL",
+                "enable_network_policies": True,
+                "enable_ssh_access": False,
+                "create_service_account_key": False,
+                "security_allow_production_iam_exceptions": True,
+                "security_production_iam_exception_justification": "SEC-1234 temporary access for incident replay until 2026-12-31",
+                "security_additional_permissions": ["roles/iam.serviceAccountUser"],
+            },
+        )
+
+        self.assertTrue(
+            any("unsafe IAM roles" in violation for violation in violations)
+        )
+
+    def test_prod_requires_documented_pubsub_exception(self) -> None:
+        violations = check_iac.validate_terraform_env(
+            "prod",
+            {
+                "enable_multi_region": True,
+                "secondary_region": "us-east1",
+                "cluster_deletion_protection": True,
+                "database_deletion_protection": True,
+                "database_availability_type": "REGIONAL",
+                "enable_network_policies": True,
+                "enable_ssh_access": False,
+                "create_service_account_key": False,
+                "security_pubsub_role": "roles/pubsub.subscriber",
+            },
+        )
+
+        self.assertTrue(
+            any("security_pubsub_role" in violation for violation in violations)
         )
 
 

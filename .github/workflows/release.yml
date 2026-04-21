@@ -45,16 +45,13 @@ jobs:
         shell: bash
         run: cp release-notes.md /tmp/release-notes.md
 
+      - name: Setup ingestion-gateway Go
+        uses: ./.github/actions/setup-ingestion-gateway-go
+
       - name: Build release artifacts
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-          git archive --format=tar.gz --output "teampulsebridge-${VERSION}-source.tar.gz" "$TAG"
-          git archive --format=zip --output "teampulsebridge-${VERSION}-source.zip" "$TAG"
-          sha256sum \
-            "teampulsebridge-${VERSION}-source.tar.gz" \
-            "teampulsebridge-${VERSION}-source.zip" > SHA256SUMS
+          bash ./scripts/release/build-release-artifacts.sh "${GITHUB_REF_NAME}"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.9.1
@@ -62,54 +59,54 @@ jobs:
       - name: Sign release artifacts (keyless)
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-
-          cosign sign-blob --yes \
-            --output-signature "teampulsebridge-${VERSION}-source.tar.gz.sig" \
-            --output-certificate "teampulsebridge-${VERSION}-source.tar.gz.pem" \
-            "teampulsebridge-${VERSION}-source.tar.gz"
-
-          cosign sign-blob --yes \
-            --output-signature "teampulsebridge-${VERSION}-source.zip.sig" \
-            --output-certificate "teampulsebridge-${VERSION}-source.zip.pem" \
-            "teampulsebridge-${VERSION}-source.zip"
-
-          cosign sign-blob --yes \
-            --output-signature "SHA256SUMS.sig" \
-            --output-certificate "SHA256SUMS.pem" \
-            SHA256SUMS
+          mapfile -t artifacts < release-artifacts.txt
+          for artifact in "${artifacts[@]}" "SHA256SUMS"; do
+            cosign sign-blob --yes \
+              --output-signature "${artifact}.sig" \
+              --output-certificate "${artifact}.pem" \
+              "${artifact}"
+          done
 
       - name: Verify signed artifacts
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
           CERT_IDENTITY="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${TAG}"
           CERT_ISSUER="https://token.actions.githubusercontent.com"
 
+          mapfile -t artifacts < release-artifacts.txt
           sha256sum -c SHA256SUMS
 
-          cosign verify-blob \
-            --signature "teampulsebridge-${VERSION}-source.tar.gz.sig" \
-            --certificate "teampulsebridge-${VERSION}-source.tar.gz.pem" \
-            --certificate-identity "$CERT_IDENTITY" \
-            --certificate-oidc-issuer "$CERT_ISSUER" \
-            "teampulsebridge-${VERSION}-source.tar.gz"
+          for artifact in "${artifacts[@]}" "SHA256SUMS"; do
+            cosign verify-blob \
+              --signature "${artifact}.sig" \
+              --certificate "${artifact}.pem" \
+              --certificate-identity "$CERT_IDENTITY" \
+              --certificate-oidc-issuer "$CERT_ISSUER" \
+              "${artifact}"
+          done
 
-          cosign verify-blob \
-            --signature "teampulsebridge-${VERSION}-source.zip.sig" \
-            --certificate "teampulsebridge-${VERSION}-source.zip.pem" \
-            --certificate-identity "$CERT_IDENTITY" \
-            --certificate-oidc-issuer "$CERT_ISSUER" \
-            "teampulsebridge-${VERSION}-source.zip"
-
-          cosign verify-blob \
-            --signature "SHA256SUMS.sig" \
-            --certificate "SHA256SUMS.pem" \
-            --certificate-identity "$CERT_IDENTITY" \
-            --certificate-oidc-issuer "$CERT_ISSUER" \
-            SHA256SUMS
+      - name: Render release checklist
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          {
+            echo "# Release Checklist"
+            echo
+            echo "- Version: ${TAG}"
+            echo "- Workflow: release.yml"
+            echo "- Signed artifacts: yes"
+            echo "- Checksums verified: yes"
+            echo "- Changelog update automation: enabled"
+            echo "- Automated pre-tag workflow gates: ci, smoke, docs, integration"
+            echo
+            echo "## Published Artifacts"
+            while read -r artifact; do
+              [ -n "${artifact}" ] || continue
+              echo "- ${artifact}"
+            done < release-artifacts.txt
+            echo "- SHA256SUMS"
+          } > release-checklist.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
@@ -117,15 +114,11 @@ jobs:
           body_path: release-notes.md
           generate_release_notes: true
           files: |
-            teampulsebridge-*-source.tar.gz
-            teampulsebridge-*-source.tar.gz.sig
-            teampulsebridge-*-source.tar.gz.pem
-            teampulsebridge-*-source.zip
-            teampulsebridge-*-source.zip.sig
-            teampulsebridge-*-source.zip.pem
+            teampulsebridge-*
             SHA256SUMS
             SHA256SUMS.sig
             SHA256SUMS.pem
+            release-checklist.md
 
       - name: Checkout default branch for changelog update
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

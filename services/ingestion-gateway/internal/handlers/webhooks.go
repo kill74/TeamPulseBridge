@@ -21,17 +21,27 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/httpx"
 	"teampulsebridge/services/ingestion-gateway/internal/platform/signature"
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
+	"teampulsebridge/services/ingestion-gateway/internal/securityaudit"
 )
 
 const maxBodyBytes = 1 << 20 // 1 MiB
 
 type WebhookHandler struct {
-	cfg       config.Config
-	publisher queue.Publisher
-	logger    *slog.Logger
-	record    func(ctx context.Context, source string, status int)
-	deduper   dedupStore
-	failed    failstore.Store
+	cfg             config.Config
+	publisher       queue.Publisher
+	logger          *slog.Logger
+	record          func(ctx context.Context, source string, status int)
+	deduper         dedupStore
+	failed          failstore.Store
+	onSecurityEvent func(r *http.Request, event SecurityEvent)
+}
+
+type SecurityEvent struct {
+	Category string
+	Source   string
+	Reason   string
+	Status   int
+	Actor    string
 }
 
 type slackChallenge struct {
@@ -64,7 +74,7 @@ func NewWebhookHandler(cfg config.Config, publisher queue.Publisher, logger *slo
 		}
 	}
 
-	return NewWebhookHandlerWithDependencies(cfg, publisher, logger, record, deduper, failedStore)
+	return NewWebhookHandlerWithDependencies(cfg, publisher, logger, record, deduper, failedStore, nil)
 }
 
 func NewWebhookHandlerWithDependencies(
@@ -74,14 +84,19 @@ func NewWebhookHandlerWithDependencies(
 	record func(ctx context.Context, source string, status int),
 	deduper dedupStore,
 	failed failstore.Store,
+	onSecurityEvent func(r *http.Request, event SecurityEvent),
 ) *WebhookHandler {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	return &WebhookHandler{
-		cfg:       cfg,
-		publisher: publisher,
-		logger:    logger,
-		record:    record,
-		deduper:   deduper,
-		failed:    failed,
+		cfg:             cfg,
+		publisher:       publisher,
+		logger:          logger,
+		record:          record,
+		deduper:         deduper,
+		failed:          failed,
+		onSecurityEvent: onSecurityEvent,
 	}
 }
 
@@ -268,6 +283,12 @@ func (h *WebhookHandler) rejectMethod(w http.ResponseWriter, r *http.Request, so
 	}
 	appErr := apperr.New("handlers.rejectMethod", apperr.CodeMethodNotAllowed, "method not allowed", fmt.Errorf("method=%s allow=%s", r.Method, allow))
 	h.observe(r.Context(), source, http.StatusMethodNotAllowed)
+	h.recordSecurityEvent(r, SecurityEvent{
+		Category: "webhook_request_rejected",
+		Source:   source,
+		Reason:   "webhook_method_not_allowed",
+		Status:   http.StatusMethodNotAllowed,
+	})
 	h.logger.Warn("webhook method rejected",
 		"request_id", httpx.RequestIDFromContext(r.Context()),
 		"source", source,
@@ -285,6 +306,12 @@ func (h *WebhookHandler) rejectUnauthorized(w http.ResponseWriter, r *http.Reque
 	}
 	appErr := apperr.New("handlers.rejectUnauthorized", apperr.CodeUnauthorized, "webhook authentication failed", cause)
 	h.observe(r.Context(), source, http.StatusUnauthorized)
+	h.recordSecurityEvent(r, SecurityEvent{
+		Category: "webhook_request_rejected",
+		Source:   source,
+		Reason:   "webhook_auth_failed",
+		Status:   http.StatusUnauthorized,
+	})
 	h.logger.Warn("webhook authentication failed",
 		"request_id", httpx.RequestIDFromContext(r.Context()),
 		"source", source,
@@ -351,6 +378,44 @@ func (h *WebhookHandler) persistFailedEvent(ctx context.Context, eventID, source
 		"payload_hash", record.PayloadHash,
 		"failed_at", record.FailedAt,
 	)
+}
+
+func (h *WebhookHandler) recordSecurityEvent(r *http.Request, event SecurityEvent) {
+	if h.onSecurityEvent == nil {
+		return
+	}
+	h.onSecurityEvent(r, event)
+}
+
+func SecurityAuditRecord(r *http.Request, event SecurityEvent) securityaudit.SaveInput {
+	actor := strings.TrimSpace(event.Actor)
+	if actor == "" {
+		actor = securityActorFromRequest(r)
+	}
+	return securityaudit.SaveInput{
+		Category:   strings.TrimSpace(event.Category),
+		Outcome:    "rejected",
+		Source:     strings.TrimSpace(event.Source),
+		Reason:     strings.TrimSpace(event.Reason),
+		Path:       r.URL.Path,
+		HTTPStatus: event.Status,
+		RequestID:  httpx.RequestIDFromContext(r.Context()),
+		Actor:      actor,
+		ClientIP:   httpx.ClientIP(r, nil),
+	}
+}
+
+func securityActorFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Operator")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-User")); v != "" {
+		return v
+	}
+	return ""
 }
 
 type dedupStore interface {

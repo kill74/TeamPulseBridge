@@ -29,4 +29,6 @@ See `outputs.tf` for complete output contract.
 
 - Prefer Workload Identity over long-lived service account keys.
 - Keep `permissions` minimal and review every non-default role.
+- Production IAM exceptions are time-bounded automatically from the expiry date embedded in `production_iam_exception_justification`.
+- The workload no longer receives default `roles/iam.serviceAccountUser` impersonation over the Pub/Sub service account.
 - Treat network policy changes as availability-sensitive.

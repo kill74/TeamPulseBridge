@@ -33,6 +33,14 @@ Use this guide together with the PR template to keep changes safe, reviewable, a
 - [ ] Ownership and operational responsibilities are clear.
 - [ ] Examples do not contain secrets or sensitive values.
 
+## Provider Integration Checklist
+
+- [ ] Baseline fixtures are added to the versioned contract catalog.
+- [ ] Degraded or malformed real-world payload variants are covered.
+- [ ] Compatibility matrix rows are updated for every supported event family.
+- [ ] Auth boundaries, secrets, and smoke-test guidance are documented.
+- [ ] Contract lint and targeted contract checks were run before review.
+
 ## Security Review Checklist
 
 - [ ] No credentials, keys, or tokens are committed.

@@ -38,6 +38,7 @@ flowchart LR
   E --> F["Queue backend"]
   B --> G["Failed-event store"]
   B --> H["Replay audit log"]
+  B --> J["Security audit stream"]
   D --> I["Logs, metrics, request IDs"]
 ```
 
@@ -117,6 +118,7 @@ Public and operator-facing routes:
 - `GET /admin/configz`
 - `GET /admin/events/failed`
 - `GET /admin/events/replay-audit`
+- `GET /admin/events/security-audit`
 - `POST /admin/events/replay`
 - `POST /admin/events/replay/batch`
 - `POST /webhooks/slack`
@@ -139,6 +141,7 @@ It includes:
 - failed-event browsing
 - batch dry-run and batch replay for failed events
 - replay audit browsing with filters for actor, event ID, result, and sort order
+- security audit inspection for rejected admin and webhook requests
 - controlled webhook smoke testing through an internal proxy
 
 The UI is especially useful when you are validating environments, debugging a publish issue, or checking replay history after an incident.
@@ -151,6 +154,7 @@ By default, the service uses:
 
 - `data/failed-events.jsonl` for failed events
 - `data/replay-audit.jsonl` for replay audit history
+- `data/security-audit.jsonl` for structured security audit events
 
 ### Replay paths
 
@@ -249,6 +253,9 @@ Failed-event and replay storage:
 - `FAILED_EVENT_STORE_PATH` default `data/failed-events.jsonl`
 - `REPLAY_AUDIT_ENABLED` default `true`
 - `REPLAY_AUDIT_PATH` default `data/replay-audit.jsonl`
+- `SECURITY_AUDIT_ENABLED` default `true`
+- `SECURITY_AUDIT_PATH` default `data/security-audit.jsonl`
+- `SECURITY_AUDIT_RETENTION_DAYS` default `30`
 
 Proxy and tracing support:
 
@@ -290,6 +297,8 @@ These matter when `ADMIN_AUTH_ENABLED=true`:
 - `DEDUP_TTL_SEC` must be between `1` and `86400`
 - `FAILED_EVENT_STORE_PATH` must be set when failed-event storage is enabled
 - `REPLAY_AUDIT_PATH` must be set when replay audit is enabled
+- `SECURITY_AUDIT_PATH` must be set when security audit is enabled
+- `SECURITY_AUDIT_RETENTION_DAYS` must be between `1` and `3650`
 - `ADMIN_JWT_SECRET` must be strong and at least 32 characters
 - `REQUIRE_SECRETS=false` is only allowed in non-production-style environments
 - trusted forwarded headers are only honored for sources in `TRUSTED_PROXY_CIDRS`
@@ -313,6 +322,7 @@ make integration-test
 Useful targeted runs:
 
 ```bash
+make contract-test
 make integration-test-queue
 make integration-test-handlers
 make integration-bench
@@ -329,8 +339,12 @@ This service publishes a versioned raw webhook envelope to the queue backend.
 The current schema is documented here:
 
 - `internal/queue/testdata/schemas/raw-webhook-envelope-v1.schema.json`
+- `internal/handlers/testdata/contracts/catalog-v1.json`
+- [docs/WEBHOOK_COMPATIBILITY_MATRIX.md](docs/WEBHOOK_COMPATIBILITY_MATRIX.md)
 
 That schema is the stable contract between ingress and downstream consumers.
+
+The fixture catalog and compatibility matrix are the maintainers' source of truth for provider coverage, negative payload variants, and schema drift protection.
 
 ## Operational Notes
 
@@ -341,6 +355,7 @@ If you are running this somewhere shared or production-like, these defaults are 
 - prefer `QUEUE_BACKEND=pubsub` for durability
 - monitor `5xx` responses and publish failures
 - treat the failed-event store and replay audit log as operational data, not temporary debug output
+- treat the security audit stream as retained incident-response evidence, not debug-only logs
 
 ## Troubleshooting
 

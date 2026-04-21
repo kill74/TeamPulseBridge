@@ -29,6 +29,7 @@ nav:
       - Multi-Region Active-Active: runbooks/multi-region-active-active.md
       - Release Process: runbooks/release.md
       - SLO and Observability: runbooks/slo-observability.md
+      - Security Incident Triage: runbooks/security-incident-triage.md
       - GitOps with Argo CD: runbooks/gitops-argocd.md
       - Branch Protection: runbooks/branch-protection.md
 markdown_extensions:

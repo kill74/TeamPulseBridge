@@ -1,0 +1,15 @@
+{
+  "object_kind": "merge_request",
+  "event_type": "merge_request",
+  "project": {
+    "id": 21,
+    "name": "TeamPulseBridge",
+    "path_with_namespace": "kill74/TeamPulseBridge"
+  },
+  "object_attributes": {
+    "id": 555,
+    "iid": 12,
+    "state": "opened"
+  },
+  "labels": []
+}

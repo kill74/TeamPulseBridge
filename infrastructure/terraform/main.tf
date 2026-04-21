@@ -161,6 +161,7 @@ module "monitoring" {
   health_check_path          = var.health_check_path
   health_check_port          = var.health_check_port
   log_retention_days         = var.log_retention_days
+  security_audit_log_retention_days = var.security_audit_log_retention_days
   pod_restart_threshold      = var.pod_restart_threshold
   memory_threshold           = var.memory_threshold
   cpu_threshold              = var.cpu_threshold
@@ -325,6 +326,7 @@ module "monitoring_secondary" {
   health_check_path          = var.health_check_path
   health_check_port          = var.health_check_port
   log_retention_days         = var.log_retention_days
+  security_audit_log_retention_days = var.security_audit_log_retention_days
   pod_restart_threshold      = var.pod_restart_threshold
   memory_threshold           = var.memory_threshold
   cpu_threshold              = var.cpu_threshold

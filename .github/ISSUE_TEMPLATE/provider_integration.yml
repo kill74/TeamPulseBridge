@@ -1,0 +1,83 @@
+name: Provider Integration
+description: Propose or track a new webhook provider integration
+labels: ['enhancement']
+body:
+  - type: input
+    id: provider_name
+    attributes:
+      label: Provider Name
+      placeholder: Linear
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Integration Goal
+      description: What workflow or user signal should this provider unlock?
+      placeholder: We need to ingest merge, comment, and incident events from Provider X into the gateway.
+    validations:
+      required: true
+  - type: dropdown
+    id: auth_model
+    attributes:
+      label: Authentication Model
+      options:
+        - HMAC signature
+        - Shared secret/token
+        - OAuth callback validation
+        - Query-token handshake
+        - Other / mixed
+    validations:
+      required: true
+  - type: textarea
+    id: event_families
+    attributes:
+      label: Webhook Event Families
+      description: List the event families that need first-class support.
+      placeholder: |
+        - issue.created
+        - issue.updated
+        - comment.created
+    validations:
+      required: true
+  - type: textarea
+    id: payload_samples
+    attributes:
+      label: Canonical Payload Samples
+      description: Link or paste representative payloads for the baseline happy path.
+    validations:
+      required: true
+  - type: textarea
+    id: degraded_samples
+    attributes:
+      label: Degraded or Real-World Negative Payloads
+      description: Capture malformed, sparse, redacted, retried, or handshake payload variants that still appear in production.
+      placeholder: |
+        - missing top-level id after provider replay
+        - partially redacted nested actor object
+        - registration handshake that must not publish
+    validations:
+      required: true
+  - type: checkboxes
+    id: contract_requirements
+    attributes:
+      label: Contract Requirements
+      description: These items must be planned up front for a provider integration to be reviewable.
+      options:
+        - label: Add versioned fixtures to `internal/handlers/testdata/contracts/catalog-v1.json`
+          required: true
+        - label: Add at least one baseline fixture per supported event family
+          required: true
+        - label: Add malformed or negative fixture variants for realistic degraded payloads
+          required: true
+        - label: Update `services/ingestion-gateway/docs/WEBHOOK_COMPATIBILITY_MATRIX.md`
+          required: true
+        - label: Update config, secrets, smoke-test guidance, and operator docs
+          required: true
+  - type: textarea
+    id: rollout
+    attributes:
+      label: Rollout and Risk Notes
+      description: Describe security, observability, and rollback expectations for the first release.
+    validations:
+      required: true

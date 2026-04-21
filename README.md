@@ -71,13 +71,49 @@ Helpful starting points:
 
 ## Quick Start
 
+### Fast Local Install
+
+If you want to try TeamPulse Bridge locally without setting up the full contributor toolchain, use the installer scripts from the repository root.
+
+macOS/Linux:
+
+```bash
+bash ./scripts/install.sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+The installer will:
+
+- verify Docker and Docker Compose are available
+- create a local `.env` from `.env.example` if needed
+- build and start the local stack with Docker Compose
+- wait for `http://127.0.0.1:8080/healthz`
+- print the local URLs for the operator UI, Prometheus, and Grafana
+
+To stop the stack later:
+
+```bash
+docker compose down -v
+```
+
 ### What you need
+
+For the installer path:
+
+- Docker Desktop or Docker Engine with Docker Compose v2
+
+For contributor setup:
 
 - Go 1.22+
 - Docker and Docker Compose
 - Make
 
-### First-time setup
+### Contributor setup
 
 ```bash
 make env-init
@@ -91,6 +127,18 @@ PowerShell alternative for Windows developers:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\env-init.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\ci-local.ps1 -SkipSmoke -SkipRace
+```
+
+To boot the full local stack after setup:
+
+```bash
+make install-local
+```
+
+Windows PowerShell equivalent:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
 ### Run the service
@@ -179,10 +227,13 @@ make help
 
 Useful day-to-day commands:
 
+- `make install-local`: bootstrap the local stack with Docker Compose
 - `make doctor`: check local tooling and environment readiness
 - `make env-init`: create a local `.env` from `.env.example`
 - `make dev-setup`: install local developer dependencies
 - `make dev-check`: run a fast local sanity check
+- `make contract-lint`: lint fixture catalog conventions for contract coverage
+- `make ci-contract`: run fixture lint plus targeted contract checks
 - `make ci-local`: run the local equivalents of the push-time CI checks before opening a PR
 - `make ci-policy`: render staging and prod Kubernetes overlays, then enforce Terraform and manifest policy-as-code checks
 - `make verify`: run formatting, linting, tests, and race checks defined by the Makefile

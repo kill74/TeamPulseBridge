@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,22 @@ ERROR_BUDGET_TEMPLATE = "ingestion-gateway-error-budget"
 QUEUE_RESILIENCE_TEMPLATE = "ingestion-gateway-queue-resilience"
 ROLLOUT_NAME = "ingestion-gateway"
 HPA_NAME = "ingestion-gateway"
+UNSAFE_IAM_ROLES = {
+    "roles/owner",
+    "roles/editor",
+    "roles/resourcemanager.projectIamAdmin",
+    "roles/iam.roleAdmin",
+    "roles/iam.securityAdmin",
+    "roles/iam.serviceAccountAdmin",
+    "roles/iam.serviceAccountKeyAdmin",
+    "roles/iam.serviceAccountUser",
+    "roles/iam.serviceAccountOpenIdTokenCreator",
+    "roles/iam.serviceAccountTokenCreator",
+    "roles/iam.workloadIdentityPoolAdmin",
+    "roles/orgpolicy.policyAdmin",
+}
+EXCEPTION_TICKET_PATTERN = re.compile(r"[A-Z]{2,10}-[0-9]{1,6}")
+EXCEPTION_EXPIRY_PATTERN = re.compile(r"20[0-9]{2}-[01][0-9]-[0-3][0-9]")
 
 
 def parse_named_path(value: str) -> tuple[str, Path]:
@@ -79,6 +96,26 @@ def validate_terraform_env(environment: str, values: dict[str, Any]) -> list[str
             violations.append(f"[terraform:{environment}] {message}")
 
     if environment == "prod":
+        security_pubsub_role = str(
+            values.get("security_pubsub_role", "roles/pubsub.publisher")
+        ).strip()
+        security_additional_permissions = [
+            str(role).strip()
+            for role in values.get("security_additional_permissions", []) or []
+            if str(role).strip()
+        ]
+        security_allow_exceptions = (
+            values.get("security_allow_production_iam_exceptions") is True
+        )
+        security_exception_justification = str(
+            values.get("security_production_iam_exception_justification", "")
+        ).strip()
+        has_exception_justification = (
+            len(security_exception_justification) >= 20
+            and EXCEPTION_TICKET_PATTERN.search(security_exception_justification)
+            and EXCEPTION_EXPIRY_PATTERN.search(security_exception_justification)
+        )
+
         require(
             values.get("enable_multi_region") is True,
             "production must enable multi-region failover",
@@ -106,6 +143,32 @@ def validate_terraform_env(environment: str, values: dict[str, Any]) -> list[str
         require(
             values.get("enable_ssh_access") is False,
             "production must not allow SSH access",
+        )
+        require(
+            values.get("create_service_account_key") is False,
+            "production must not create service account keys",
+        )
+        require(
+            security_pubsub_role == "roles/pubsub.publisher"
+            or (security_allow_exceptions and has_exception_justification),
+            "production must keep security_pubsub_role at roles/pubsub.publisher unless an approved exception is documented with ticket and expiry",
+        )
+        require(
+            not security_additional_permissions
+            or (security_allow_exceptions and has_exception_justification),
+            "production additional IAM roles require security_allow_production_iam_exceptions=true with ticket and expiry justification",
+        )
+
+        unsafe_roles = sorted(
+            {
+                role
+                for role in security_additional_permissions
+                if role in UNSAFE_IAM_ROLES
+            }
+        )
+        require(
+            not unsafe_roles,
+            f"production must not grant unsafe IAM roles: {', '.join(unsafe_roles)}",
         )
 
     return violations

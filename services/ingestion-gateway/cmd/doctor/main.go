@@ -190,6 +190,9 @@ func (r *doctorReport) checkEnvFiles(root string) {
 	if isTruthy(values["REQUIRE_SECRETS"]) {
 		r.checkRequiredEnvValues(envName, values, "%s is required but empty in %s", "SLACK_SIGNING_SECRET", "GITHUB_WEBHOOK_SECRET", "GITLAB_WEBHOOK_TOKEN", "TEAMS_CLIENT_STATE")
 	}
+	if isTruthy(values["SECURITY_AUDIT_ENABLED"]) {
+		r.checkRequiredEnvValues(envName, values, "%s is required but empty in %s", "SECURITY_AUDIT_PATH")
+	}
 
 	if isTruthy(values["ADMIN_AUTH_ENABLED"]) {
 		r.checkRequiredEnvValues(envName, values, "%s is required but empty in %s", "ADMIN_JWT_ISSUER", "ADMIN_JWT_AUDIENCE")

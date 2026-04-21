@@ -4,7 +4,21 @@ This guide is the shortest path from clone to productive local development.
 
 ## First 5 Minutes
 
-Run these commands from the repository root:
+If you only want to run the product locally and do not need the full contributor toolchain yet, use the installer:
+
+```bash
+bash ./scripts/install.sh
+```
+
+PowerShell alternative:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+That path is ideal for evaluators, demos, and new teammates who first want to see the system working before they install lint, policy, and Terraform tooling.
+
+If you plan to contribute code, run these commands from the repository root:
 
 ```bash
 make env-init
@@ -44,6 +58,12 @@ Run the same classes of checks that run on push in GitHub Actions:
 make ci-local
 ```
 
+If your change adds or modifies webhook provider contracts, also run:
+
+```bash
+make ci-contract
+```
+
 PowerShell equivalent:
 
 ```powershell
@@ -60,6 +80,7 @@ That command runs:
 
 - Go formatting, `go vet`, unit tests, lint, and vulnerability scan
 - race detector tests
+- fixture catalog lint plus targeted contract checks
 - Terraform fmt/init/validate
 - Checkov policy checks for Terraform and Kubernetes
 - docker compose smoke validation against `/healthz` and `/metrics`

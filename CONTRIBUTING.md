@@ -40,6 +40,7 @@ make dev-check
 Recommended pre-PR command sequence (repository root):
 
 ```bash
+make ci-contract
 make ci-local
 make integration-test
 ```
@@ -55,6 +56,18 @@ If your change is deployment-related, also run:
 ```bash
 make gitops-validate
 ```
+
+If your change adds a new provider integration, also:
+
+```bash
+make contract-lint
+```
+
+And complete:
+
+- `docs/provider-integration-template.md`
+- `services/ingestion-gateway/docs/WEBHOOK_COMPATIBILITY_MATRIX.md`
+- `services/ingestion-gateway/internal/handlers/testdata/contracts/catalog-v1.json`
 
 ## Branch Naming
 
@@ -85,6 +98,7 @@ Keep the first line concise and explain rationale in the body for non-trivial ch
 - [ ] Backward compatibility considered
 - [ ] Rollback strategy considered (when applicable)
 - [ ] Risk level documented in PR description
+- [ ] Provider integration checklist completed when adding a new webhook source
 
 ## Branch Protection Expectations
 

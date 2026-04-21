@@ -45,7 +45,17 @@ resource "google_logging_project_sink" "app_logs" {
   name        = "${var.app_name}-app-logs"
   destination = "logging.googleapis.com/projects/${var.gcp_project}/locations/${var.region}/buckets/app-logs"
 
-  filter = "resource.type = \"k8s_container\" AND resource.label.namespace_name = \"${var.namespace}\""
+  filter = "resource.type = \"k8s_container\" AND resource.labels.namespace_name = \"${var.namespace}\""
+
+  unique_writer_identity = true
+}
+
+# Log sink for structured security audit events
+resource "google_logging_project_sink" "security_audit_logs" {
+  name        = "${var.app_name}-security-audit-logs"
+  destination = "logging.googleapis.com/projects/${var.gcp_project}/locations/${var.region}/buckets/security-audit-logs"
+
+  filter = "resource.type = \"k8s_container\" AND resource.labels.namespace_name = \"${var.namespace}\" AND jsonPayload.audit_stream = \"security\""
 
   unique_writer_identity = true
 }
@@ -63,6 +73,13 @@ resource "google_logging_project_bucket_config" "app_bucket" {
   location       = var.region
   bucket_id      = "app-logs"
   retention_days = var.log_retention_days
+}
+
+resource "google_logging_project_bucket_config" "security_audit_bucket" {
+  project        = var.gcp_project
+  location       = var.region
+  bucket_id      = "security-audit-logs"
+  retention_days = var.security_audit_log_retention_days
 }
 
 # Alert policy for pod restarts

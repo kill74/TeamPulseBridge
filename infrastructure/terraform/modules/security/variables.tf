@@ -73,6 +73,8 @@ variable "permissions" {
         "roles/iam.securityAdmin",
         "roles/iam.serviceAccountAdmin",
         "roles/iam.serviceAccountKeyAdmin",
+        "roles/iam.serviceAccountUser",
+        "roles/iam.serviceAccountOpenIdTokenCreator",
         "roles/iam.serviceAccountTokenCreator",
         "roles/iam.workloadIdentityPoolAdmin",
         "roles/orgpolicy.policyAdmin",
@@ -122,6 +124,15 @@ variable "pubsub_role" {
       "roles/pubsub.viewer",
     ], var.pubsub_role)
     error_message = "pubsub_role must be one of: roles/pubsub.publisher, roles/pubsub.subscriber, roles/pubsub.viewer."
+  }
+  validation {
+    condition = var.environment != "prod" || var.pubsub_role == "roles/pubsub.publisher" || (
+      var.allow_production_iam_exceptions &&
+      length(trimspace(var.production_iam_exception_justification)) >= 20 &&
+      length(regexall("[A-Z]{2,10}-[0-9]{1,6}", var.production_iam_exception_justification)) > 0 &&
+      length(regexall("20[0-9]{2}-[01][0-9]-[0-3][0-9]", var.production_iam_exception_justification)) > 0
+    )
+    error_message = "In production, pubsub_role must remain roles/pubsub.publisher unless a documented exception is enabled with a ticket and expiry date."
   }
 }
 

@@ -7,17 +7,19 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"teampulsebridge/services/ingestion-gateway/internal/config"
+	"teampulsebridge/services/ingestion-gateway/internal/testhelpers/fixturecatalog"
 )
 
 type capturePublisher struct {
@@ -45,104 +47,80 @@ func (c *capturePublisher) Close() error {
 	return nil
 }
 
-func TestWebhookPayloadContracts_PublishRawCompatiblePayloads(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	metricsFn := func(context.Context, string, int) {}
-
-	tests := []struct {
-		name       string
-		source     string
-		payload    string
-		newRequest func(t *testing.T, payload []byte) *http.Request
-		handle     func(h *WebhookHandler, w http.ResponseWriter, r *http.Request)
-		cfg        config.Config
-	}{
-		{
-			name:    "slack event_callback",
-			source:  "slack",
-			payload: "slack_event_callback.json",
-			cfg:     config.Config{SlackSigningSecret: "test-slack-secret"},
-			newRequest: func(t *testing.T, payload []byte) *http.Request {
-				t.Helper()
-				ts := strconv.FormatInt(time.Now().Unix(), 10)
-				sig := slackSignature("test-slack-secret", ts, payload)
-				req := httptest.NewRequest(http.MethodPost, "/webhooks/slack", bytes.NewReader(payload))
-				req.Header.Set("X-Slack-Request-Timestamp", ts)
-				req.Header.Set("X-Slack-Signature", sig)
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("User-Agent", "contract-test/slack")
-				return req
-			},
-			handle: func(h *WebhookHandler, w http.ResponseWriter, r *http.Request) { h.HandleSlack(w, r) },
-		},
-		{
-			name:    "github pull_request",
-			source:  "github",
-			payload: "github_pull_request_opened.json",
-			cfg:     config.Config{GitHubWebhookSecret: "test-github-secret"},
-			newRequest: func(t *testing.T, payload []byte) *http.Request {
-				t.Helper()
-				sig := githubSignature("test-github-secret", payload)
-				req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))
-				req.Header.Set("X-Hub-Signature-256", sig)
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("User-Agent", "contract-test/github")
-				return req
-			},
-			handle: func(h *WebhookHandler, w http.ResponseWriter, r *http.Request) { h.HandleGitHub(w, r) },
-		},
-		{
-			name:    "gitlab merge_request",
-			source:  "gitlab",
-			payload: "gitlab_merge_request.json",
-			cfg:     config.Config{GitLabWebhookToken: "test-gitlab-token"},
-			newRequest: func(t *testing.T, payload []byte) *http.Request {
-				t.Helper()
-				req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab", bytes.NewReader(payload))
-				req.Header.Set("X-Gitlab-Token", "test-gitlab-token")
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("User-Agent", "contract-test/gitlab")
-				return req
-			},
-			handle: func(h *WebhookHandler, w http.ResponseWriter, r *http.Request) { h.HandleGitLab(w, r) },
-		},
-		{
-			name:    "teams change notification",
-			source:  "teams",
-			payload: "teams_change_notification.json",
-			cfg:     config.Config{TeamsClientState: "test-teams-state"},
-			newRequest: func(t *testing.T, payload []byte) *http.Request {
-				t.Helper()
-				req := httptest.NewRequest(http.MethodPost, "/webhooks/teams", bytes.NewReader(payload))
-				req.Header.Set("X-Client-State", "test-teams-state")
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("User-Agent", "contract-test/teams")
-				return req
-			},
-			handle: func(h *WebhookHandler, w http.ResponseWriter, r *http.Request) { h.HandleTeams(w, r) },
-		},
+func TestWebhookFixtureCatalog_IsVersionedAndComplete(t *testing.T) {
+	catalog, err := fixturecatalog.Load()
+	if err != nil {
+		t.Fatalf("load fixture catalog: %v", err)
+	}
+	if catalog.CatalogVersion != 1 {
+		t.Fatalf("expected catalog_version=1, got %d", catalog.CatalogVersion)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			pub := &capturePublisher{}
-			h := NewWebhookHandler(tc.cfg, pub, logger, metricsFn)
+	files, err := fixturecatalog.ListFixtureFiles()
+	if err != nil {
+		t.Fatalf("list fixture files: %v", err)
+	}
 
-			payload := mustReadFixture(t, tc.payload)
-			req := tc.newRequest(t, payload)
+	catalogPaths := make(map[string]struct{}, len(catalog.Fixtures))
+	for _, fixture := range catalog.Fixtures {
+		catalogPaths[fixture.Path] = struct{}{}
+	}
+	if len(files) != len(catalogPaths) {
+		t.Fatalf("fixture catalog/file count mismatch: files=%d catalog=%d", len(files), len(catalogPaths))
+	}
+	for _, file := range files {
+		if _, ok := catalogPaths[file]; !ok {
+			t.Fatalf("fixture file %q is not registered in catalog-v1.json", file)
+		}
+	}
+}
+
+func TestWebhookPayloadContracts_FromCatalog(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	metricsFn := func(context.Context, string, int) {}
+	catalog, err := fixturecatalog.Load()
+	if err != nil {
+		t.Fatalf("load fixture catalog: %v", err)
+	}
+
+	for _, tc := range catalog.Fixtures {
+		t.Run(tc.ID, func(t *testing.T) {
+			pub := &capturePublisher{}
+			h := NewWebhookHandler(contractConfig(tc.Provider), pub, logger, metricsFn)
+
+			payload, err := fixturecatalog.ReadFixture(tc)
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			req := newCatalogRequest(t, tc, payload)
 			rr := httptest.NewRecorder()
 
-			tc.handle(h, rr, req)
+			handleCatalogFixture(h, tc.Provider, rr, req)
 
-			if rr.Code != http.StatusAccepted {
-				t.Fatalf("expected status 202, got %d, body=%s", rr.Code, rr.Body.String())
+			if rr.Code != tc.ExpectedStatus {
+				t.Fatalf("expected status %d, got %d, body=%s", tc.ExpectedStatus, rr.Code, rr.Body.String())
+			}
+			if !tc.Publish {
+				if len(pub.calls) != 0 {
+					t.Fatalf("expected no publish calls, got %d", len(pub.calls))
+				}
+				if tc.Provider == "slack" && tc.EventFamily == "url_verification" {
+					var response map[string]string
+					if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+						t.Fatalf("unmarshal url verification response: %v", err)
+					}
+					if response["challenge"] == "" {
+						t.Fatal("expected slack challenge echo in response")
+					}
+				}
+				return
 			}
 			if len(pub.calls) != 1 {
 				t.Fatalf("expected 1 publish call, got %d", len(pub.calls))
 			}
 			call := pub.calls[0]
-			if call.source != tc.source {
-				t.Fatalf("expected source %q, got %q", tc.source, call.source)
+			if call.source != tc.Provider {
+				t.Fatalf("expected source %q, got %q", tc.Provider, call.source)
 			}
 			assertJSONEqual(t, payload, call.body)
 			if call.headers["Content-Type"] != "application/json" {
@@ -155,39 +133,93 @@ func TestWebhookPayloadContracts_PublishRawCompatiblePayloads(t *testing.T) {
 	}
 }
 
-func TestWebhookPayloadContracts_SlackURLVerification_NoPublish(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	pub := &capturePublisher{}
-	h := NewWebhookHandler(config.Config{SlackSigningSecret: "test-slack-secret"}, pub, logger, nil)
-
-	payload := []byte(`{"type":"url_verification","challenge":"contract-challenge"}`)
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	sig := slackSignature("test-slack-secret", ts, payload)
-
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/slack", bytes.NewReader(payload))
-	req.Header.Set("X-Slack-Request-Timestamp", ts)
-	req.Header.Set("X-Slack-Signature", sig)
-	req.Header.Set("Content-Type", "application/json")
-
-	rr := httptest.NewRecorder()
-	h.HandleSlack(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rr.Code)
+func TestWebhookCompatibilityMatrix_CoversCatalogFamilies(t *testing.T) {
+	catalog, err := fixturecatalog.Load()
+	if err != nil {
+		t.Fatalf("load fixture catalog: %v", err)
 	}
-	if len(pub.calls) != 0 {
-		t.Fatalf("expected 0 publish calls, got %d", len(pub.calls))
+	doc, err := os.ReadFile(fixturecatalog.CompatibilityMatrixPath())
+	if err != nil {
+		t.Fatalf("read compatibility matrix: %v", err)
+	}
+	matrix := strings.ToLower(string(doc))
+	for _, family := range catalog.ProviderFamilies() {
+		parts := strings.SplitN(family, "|", 2)
+		rowMarker := fmt.Sprintf("| %s | %s |", parts[0], parts[1])
+		if !strings.Contains(matrix, rowMarker) {
+			t.Fatalf("compatibility matrix is missing provider/event family row %q", rowMarker)
+		}
 	}
 }
 
-func mustReadFixture(t *testing.T, fileName string) []byte {
-	t.Helper()
-	path := filepath.Join("testdata", "contracts", fileName)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read fixture %s: %v", path, err)
+func contractConfig(provider string) config.Config {
+	switch provider {
+	case "slack":
+		return config.Config{SlackSigningSecret: "test-slack-secret"}
+	case "github":
+		return config.Config{GitHubWebhookSecret: "test-github-secret"}
+	case "gitlab":
+		return config.Config{GitLabWebhookToken: "test-gitlab-token"}
+	case "teams":
+		return config.Config{TeamsClientState: "test-teams-state"}
+	default:
+		return config.Config{}
 	}
-	return b
+}
+
+func handleCatalogFixture(h *WebhookHandler, provider string, w http.ResponseWriter, r *http.Request) {
+	switch provider {
+	case "slack":
+		h.HandleSlack(w, r)
+	case "github":
+		h.HandleGitHub(w, r)
+	case "gitlab":
+		h.HandleGitLab(w, r)
+	case "teams":
+		h.HandleTeams(w, r)
+	default:
+		panic("unexpected provider: " + provider)
+	}
+}
+
+func newCatalogRequest(t *testing.T, fixture fixturecatalog.Fixture, payload []byte) *http.Request {
+	t.Helper()
+	userAgent := "contract-test/" + fixture.ID
+	switch fixture.Provider {
+	case "slack":
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		sig := slackSignature("test-slack-secret", ts, payload)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/slack", bytes.NewReader(payload))
+		req.Header.Set("X-Slack-Request-Timestamp", ts)
+		req.Header.Set("X-Slack-Signature", sig)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", userAgent)
+		return req
+	case "github":
+		sig := githubSignature("test-github-secret", payload)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))
+		req.Header.Set("X-Hub-Signature-256", sig)
+		req.Header.Set("X-GitHub-Delivery", fixture.ID)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", userAgent)
+		return req
+	case "gitlab":
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab", bytes.NewReader(payload))
+		req.Header.Set("X-Gitlab-Token", "test-gitlab-token")
+		req.Header.Set("X-Request-Id", fixture.ID)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", userAgent)
+		return req
+	case "teams":
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/teams", bytes.NewReader(payload))
+		req.Header.Set("X-Client-State", "test-teams-state")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", userAgent)
+		return req
+	default:
+		t.Fatalf("unsupported provider %q", fixture.Provider)
+		return nil
+	}
 }
 
 func slackSignature(secret, ts string, body []byte) string {

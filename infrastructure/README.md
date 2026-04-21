@@ -143,6 +143,8 @@ From the repository root, operators can run `make infra-chaos-drill-failover` af
 - review `terraform plan` output before every apply
 - do not manually edit remote Terraform state
 - keep production applies behind review and approval
+- production IAM exceptions must carry a ticket, expiry date, and are automatically time-bounded in Terraform
+- structured security audit logs are routed into a dedicated Cloud Logging bucket with separate retention
 - treat `destroy.sh` as a restricted operation, especially outside non-prod
 - validate backup and restore assumptions, not just deployment success
 

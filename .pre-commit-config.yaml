@@ -26,6 +26,13 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      - id: contract-fixture-lint
+        name: contract fixture lint
+        entry: bash -c 'cd services/ingestion-gateway && go run ./cmd/fixturelint'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
       - id: terraform-fmt-check
         name: terraform fmt check
         entry: bash -c 'cd infrastructure/terraform && terraform fmt -check -recursive'

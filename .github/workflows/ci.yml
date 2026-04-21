@@ -71,6 +71,19 @@ jobs:
       - name: Vulnerability check
         run: govulncheck -format text ./...
 
+  contract-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup ingestion-gateway Go
+        uses: ./.github/actions/setup-ingestion-gateway-go
+
+      - name: Contract quality checks
+        run: make ci-contract
+
   race-linux:
     runs-on: ubuntu-latest
     defaults:

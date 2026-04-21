@@ -41,6 +41,7 @@ database_deletion_protection = false
 data_retention_days   = 30
 backup_retention_days = 7
 log_retention_days    = 7
+security_audit_log_retention_days = 30
 
 # Application domain
 app_domain           = "staging.api.example.com"

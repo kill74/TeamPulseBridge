@@ -52,6 +52,13 @@ Describe what changed and why.
 - [ ] Metrics/logs/traces updated where behavior changed
 - [ ] Alerting impact reviewed (if applicable)
 
+## Provider Integration Checklist (if applicable)
+
+- [ ] Added or updated versioned fixtures in `internal/handlers/testdata/contracts/catalog-v1.json`
+- [ ] Added baseline and malformed/negative provider payload variants
+- [ ] Updated `services/ingestion-gateway/docs/WEBHOOK_COMPATIBILITY_MATRIX.md`
+- [ ] Updated config, smoke-test, and operator documentation for the provider
+
 ## Rollout Plan
 
 Describe deployment or migration impact.

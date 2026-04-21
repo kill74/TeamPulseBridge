@@ -41,6 +41,7 @@ database_deletion_protection = true
 data_retention_days   = 90
 backup_retention_days = 30
 log_retention_days    = 30
+security_audit_log_retention_days = 180
 
 # Application domain
 app_domain           = "api.example.com"
@@ -63,6 +64,7 @@ security_pubsub_role            = "roles/pubsub.publisher"
 security_additional_permissions = []
 # Production IAM exceptions are blocked by default.
 # Enable only with approved risk acceptance and bounded expiry.
+# Any approved additional role is automatically time-bounded with an IAM condition.
 # security_allow_production_iam_exceptions = true
 # security_additional_permissions = ["roles/pubsub.subscriber"]
 # security_production_iam_exception_justification = "SEC-1234 temporary subscriber access for incident replay until 2026-12-31"

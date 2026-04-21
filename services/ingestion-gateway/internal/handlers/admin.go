@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/httpx"
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
 	"teampulsebridge/services/ingestion-gateway/internal/replayaudit"
+	"teampulsebridge/services/ingestion-gateway/internal/securityaudit"
 )
 
 const (
@@ -35,6 +37,7 @@ type AdminHandler struct {
 	logger    *slog.Logger
 	failed    failstore.Store
 	audit     replayaudit.Store
+	security  securityaudit.Store
 }
 
 func NewAdminHandler(cfg config.Config, publisher queue.Publisher, logger *slog.Logger) *AdminHandler {
@@ -70,10 +73,25 @@ func NewAdminHandler(cfg config.Config, publisher queue.Publisher, logger *slog.
 		}
 	}
 
-	return NewAdminHandlerWithDependencies(cfg, publisher, logger, failedStore, auditStore)
+	var securityStore securityaudit.Store
+	if cfg.SecurityAuditEnabled {
+		store, err := securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)
+		if err != nil {
+			logger.Error("admin security audit explorer disabled due to invalid configuration",
+				"path", cfg.SecurityAuditPath,
+				"retention_days", cfg.SecurityAuditRetentionDays,
+				"error", err,
+				"error_code", apperr.CodeReplayConfigInvalid,
+			)
+		} else {
+			securityStore = store
+		}
+	}
+
+	return NewAdminHandlerWithDependencies(cfg, publisher, logger, failedStore, auditStore, securityStore)
 }
 
-func NewAdminHandlerWithDependencies(cfg config.Config, publisher queue.Publisher, logger *slog.Logger, failed failstore.Store, audit replayaudit.Store) *AdminHandler {
+func NewAdminHandlerWithDependencies(cfg config.Config, publisher queue.Publisher, logger *slog.Logger, failed failstore.Store, audit replayaudit.Store, security securityaudit.Store) *AdminHandler {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -83,6 +101,7 @@ func NewAdminHandlerWithDependencies(cfg config.Config, publisher queue.Publishe
 		logger:    logger,
 		failed:    failed,
 		audit:     audit,
+		security:  security,
 	}
 }
 
@@ -105,6 +124,9 @@ func (h *AdminHandler) Configz(w http.ResponseWriter, _ *http.Request) {
 		"failed_event_store_path":               h.cfg.FailedStorePath,
 		"replay_audit_enabled":                  h.cfg.ReplayAuditEnabled,
 		"replay_audit_path":                     h.cfg.ReplayAuditPath,
+		"security_audit_enabled":                h.cfg.SecurityAuditEnabled,
+		"security_audit_path":                   h.cfg.SecurityAuditPath,
+		"security_audit_retention_days":         h.cfg.SecurityAuditRetentionDays,
 	})
 }
 
@@ -379,36 +401,69 @@ func (h *AdminHandler) ReplayAudit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *AdminHandler) SecurityAudit(w http.ResponseWriter, r *http.Request) {
+	limit, err := parseSecurityAuditLimit(r)
+	if err != nil {
+		h.respondError(w, r, http.StatusBadRequest, apperr.New(
+			"handlers.admin.securityAudit",
+			apperr.CodeReplayInputInvalid,
+			"invalid security-audit list query",
+			err,
+		))
+		return
+	}
+	if h.security == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"records": []any{},
+		})
+		return
+	}
+
+	records, err := h.security.ListRecent(r.Context(), limit)
+	if err != nil {
+		h.respondError(w, r, http.StatusInternalServerError, apperr.New(
+			"handlers.admin.securityAudit",
+			apperr.CodeReplayReadFailed,
+			"failed to load security audit history",
+			err,
+		))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": true,
+		"records": records,
+	})
+}
+
 func (h *AdminHandler) respondError(w http.ResponseWriter, r *http.Request, status int, err *apperr.Error) {
 	httpx.WriteError(w, r.Context(), status, err, nil)
 }
 
 func parseFailedEventsLimit(r *http.Request) (int, error) {
-	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
-	if raw == "" {
-		return adminFailedEventsDefaultLimit, nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, errors.New("limit must be an integer")
-	}
-	if n < 1 || n > adminFailedEventsMaxLimit {
-		return 0, errors.New("limit must be between 1 and 100")
-	}
-	return n, nil
+	return parseAdminLimit(r.URL.Query().Get("limit"), adminFailedEventsDefaultLimit, adminFailedEventsMaxLimit)
 }
 
 func parseReplayAuditLimit(r *http.Request) (int, error) {
-	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
+	return parseAdminLimit(r.URL.Query().Get("limit"), adminReplayAuditDefaultLimit, adminReplayAuditMaxLimit)
+}
+
+func parseSecurityAuditLimit(r *http.Request) (int, error) {
+	return parseAdminLimit(r.URL.Query().Get("limit"), adminReplayAuditDefaultLimit, adminReplayAuditMaxLimit)
+}
+
+func parseAdminLimit(raw string, defaultLimit, maxLimit int) (int, error) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return adminReplayAuditDefaultLimit, nil
+		return defaultLimit, nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
 		return 0, errors.New("limit must be an integer")
 	}
-	if n < 1 || n > adminReplayAuditMaxLimit {
-		return 0, errors.New("limit must be between 1 and 100")
+	if n < 1 || n > maxLimit {
+		return 0, fmt.Errorf("limit must be between 1 and %d", maxLimit)
 	}
 	return n, nil
 }

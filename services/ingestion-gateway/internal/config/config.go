@@ -38,6 +38,9 @@ type Config struct {
 	FailedStorePath                   string
 	ReplayAuditEnabled                bool
 	ReplayAuditPath                   string
+	SecurityAuditEnabled              bool
+	SecurityAuditPath                 string
+	SecurityAuditRetentionDays        int
 	QueueBackpressureEnabled          bool
 	QueueBackpressureSoftLimitPercent int
 	QueueBackpressureHardLimitPercent int
@@ -76,6 +79,9 @@ func LoadFromEnv() Config {
 		FailedStorePath:                   envOrDefault("FAILED_EVENT_STORE_PATH", "data/failed-events.jsonl"),
 		ReplayAuditEnabled:                boolOrDefault("REPLAY_AUDIT_ENABLED", true),
 		ReplayAuditPath:                   envOrDefault("REPLAY_AUDIT_PATH", "data/replay-audit.jsonl"),
+		SecurityAuditEnabled:              boolOrDefault("SECURITY_AUDIT_ENABLED", true),
+		SecurityAuditPath:                 envOrDefault("SECURITY_AUDIT_PATH", "data/security-audit.jsonl"),
+		SecurityAuditRetentionDays:        intOrDefault("SECURITY_AUDIT_RETENTION_DAYS", 30),
 		QueueBackpressureEnabled:          boolOrDefault("QUEUE_BACKPRESSURE_ENABLED", true),
 		QueueBackpressureSoftLimitPercent: intOrDefault("QUEUE_BACKPRESSURE_SOFT_LIMIT_PERCENT", 70),
 		QueueBackpressureHardLimitPercent: intOrDefault("QUEUE_BACKPRESSURE_HARD_LIMIT_PERCENT", 90),
@@ -126,6 +132,14 @@ func (c Config) Validate() error {
 	}
 	if c.ReplayAuditEnabled && strings.TrimSpace(c.ReplayAuditPath) == "" {
 		return errors.New("REPLAY_AUDIT_PATH must not be empty when REPLAY_AUDIT_ENABLED=true")
+	}
+	if c.SecurityAuditEnabled {
+		if strings.TrimSpace(c.SecurityAuditPath) == "" {
+			return errors.New("SECURITY_AUDIT_PATH must not be empty when SECURITY_AUDIT_ENABLED=true")
+		}
+		if c.SecurityAuditRetentionDays < 1 || c.SecurityAuditRetentionDays > 3650 {
+			return fmt.Errorf("SECURITY_AUDIT_RETENTION_DAYS must be between 1 and 3650, got %d", c.SecurityAuditRetentionDays)
+		}
 	}
 	if c.QueueBackpressureEnabled {
 		if c.QueueBackpressureSoftLimitPercent < 1 || c.QueueBackpressureSoftLimitPercent > 99 {

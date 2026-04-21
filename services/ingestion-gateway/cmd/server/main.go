@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -12,10 +13,14 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"teampulsebridge/services/ingestion-gateway/internal/config"
+	"teampulsebridge/services/ingestion-gateway/internal/dedup"
+	"teampulsebridge/services/ingestion-gateway/internal/failstore"
 	"teampulsebridge/services/ingestion-gateway/internal/handlers"
 	"teampulsebridge/services/ingestion-gateway/internal/httpx"
 	"teampulsebridge/services/ingestion-gateway/internal/observability"
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
+	"teampulsebridge/services/ingestion-gateway/internal/replayaudit"
+	"teampulsebridge/services/ingestion-gateway/internal/securityaudit"
 )
 
 func newPublicMux(appHandler http.Handler, smokeHandler http.Handler) *http.ServeMux {
@@ -81,24 +86,133 @@ func main() {
 		os.Exit(1)
 	}
 
-	h := handlers.NewWebhookHandler(cfg, runtimePublisher.Publisher, logger, func(reqCtx context.Context, source string, status int) {
+	dedupTTL := time.Duration(cfg.DedupTTLSeconds) * time.Second
+	if dedupTTL <= 0 {
+		dedupTTL = 5 * time.Minute
+	}
+
+	var failedStore failstore.Store
+	if cfg.FailedStoreEnabled {
+		store, err := failstore.NewFileStore(cfg.FailedStorePath)
+		if err != nil {
+			logger.Error("failed event store disabled due to invalid configuration",
+				"path", cfg.FailedStorePath,
+				"error", err,
+			)
+		} else {
+			failedStore = store
+		}
+	}
+
+	var replayAuditStore replayaudit.Store
+	if cfg.ReplayAuditEnabled {
+		store, err := replayaudit.NewFileStore(cfg.ReplayAuditPath)
+		if err != nil {
+			logger.Error("replay audit history disabled due to invalid configuration",
+				"path", cfg.ReplayAuditPath,
+				"error", err,
+			)
+		} else {
+			replayAuditStore = store
+		}
+	}
+
+	var securityAuditStore securityaudit.Store
+	if cfg.SecurityAuditEnabled {
+		store, err := securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)
+		if err != nil {
+			logger.Error("security audit stream disabled due to invalid configuration",
+				"path", cfg.SecurityAuditPath,
+				"retention_days", cfg.SecurityAuditRetentionDays,
+				"error", err,
+			)
+		} else {
+			securityAuditStore = store
+		}
+	}
+
+	recordSecurityEvent := func(req *http.Request, in securityaudit.SaveInput) {
+		reqCtx := req.Context()
+		source := strings.TrimSpace(in.Source)
+		if source == "" {
+			source = securitySourceFromPath(req.URL.Path)
+		}
+		if strings.TrimSpace(in.Outcome) == "" {
+			in.Outcome = "rejected"
+		}
+		if strings.TrimSpace(in.Path) == "" {
+			in.Path = req.URL.Path
+		}
+		if strings.TrimSpace(in.RequestID) == "" {
+			in.RequestID = httpx.RequestIDFromContext(req.Context())
+		}
+		if strings.TrimSpace(in.ClientIP) == "" {
+			in.ClientIP = httpx.ClientIP(req, cfg.TrustedProxyCIDRs)
+		}
+		if strings.TrimSpace(in.Source) == "" {
+			in.Source = source
+		}
+
+		telemetry.SecurityRejectCounter.Add(reqCtx, 1,
+			metric.WithAttributes(
+				attribute.String("reason", in.Reason),
+				attribute.String("path", in.Path),
+				attribute.Int("status", in.HTTPStatus),
+				attribute.String("source", in.Source),
+				attribute.String("category", in.Category),
+			),
+		)
+		logger.Warn("security event recorded",
+			"audit_stream", "security",
+			"category", in.Category,
+			"source", in.Source,
+			"reason", in.Reason,
+			"path", in.Path,
+			"status", in.HTTPStatus,
+			"request_id", in.RequestID,
+			"client_ip", in.ClientIP,
+			"actor", in.Actor,
+		)
+
+		if securityAuditStore == nil {
+			return
+		}
+		if _, err := securityAuditStore.Save(reqCtx, in); err != nil {
+			logger.Error("failed to persist security audit record",
+				"category", in.Category,
+				"source", in.Source,
+				"reason", in.Reason,
+				"path", in.Path,
+				"status", in.HTTPStatus,
+				"request_id", in.RequestID,
+				"error", err,
+			)
+		}
+	}
+
+	h := handlers.NewWebhookHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger, func(reqCtx context.Context, source string, status int) {
 		telemetry.WebhookCounter.Add(reqCtx, 1,
 			metric.WithAttributes(
 				attribute.String("source", source),
 				attribute.Int("status", status),
 			),
 		)
+	}, dedup.NewMemory(cfg.DedupEnabled, dedupTTL), failedStore, func(r *http.Request, event handlers.SecurityEvent) {
+		record := handlers.SecurityAuditRecord(r, event)
+		record.ClientIP = httpx.ClientIP(r, cfg.TrustedProxyCIDRs)
+		recordSecurityEvent(r, record)
 	})
 	securityRejectFn := func(req *http.Request, reason string, status int) {
-		telemetry.SecurityRejectCounter.Add(req.Context(), 1,
-			metric.WithAttributes(
-				attribute.String("reason", reason),
-				attribute.String("path", req.URL.Path),
-				attribute.Int("status", status),
-			),
-		)
+		recordSecurityEvent(req, securityaudit.SaveInput{
+			Category:   "request_rejected",
+			Outcome:    "rejected",
+			Source:     securitySourceFromPath(req.URL.Path),
+			Reason:     reason,
+			Path:       req.URL.Path,
+			HTTPStatus: status,
+		})
 	}
-	admin := handlers.NewAdminHandler(cfg, runtimePublisher.Publisher, logger)
+	admin := handlers.NewAdminHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger, failedStore, replayAuditStore, securityAuditStore)
 
 	webhookMux := http.NewServeMux()
 	webhookMux.HandleFunc("GET /", handlers.ProductUI)
@@ -110,6 +224,7 @@ func main() {
 	webhookMux.HandleFunc("GET /admin/configz", admin.Configz)
 	webhookMux.HandleFunc("GET /admin/events/failed", admin.FailedEvents)
 	webhookMux.HandleFunc("GET /admin/events/replay-audit", admin.ReplayAudit)
+	webhookMux.HandleFunc("GET /admin/events/security-audit", admin.SecurityAudit)
 	webhookMux.HandleFunc("POST /admin/events/replay/batch", admin.ReplayFailedEventsBatch)
 	webhookMux.HandleFunc("POST /admin/events/replay", admin.ReplayFailedEvent)
 	webhookMux.HandleFunc("POST /webhooks/slack", h.HandleSlack)
@@ -180,4 +295,18 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 	}
+}
+
+func securitySourceFromPath(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/admin"):
+		return "admin"
+	case strings.HasPrefix(path, "/webhooks/"):
+		source := strings.TrimPrefix(path, "/webhooks/")
+		source = strings.Trim(source, "/")
+		if source != "" {
+			return source
+		}
+	}
+	return "http"
 }

@@ -169,6 +169,40 @@ func TestValidateRejectsEmptyReplayAuditPathWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsEmptySecurityAuditPathWhenEnabled(t *testing.T) {
+	cfg := Config{
+		Environment:                "local",
+		Port:                       "8080",
+		QueueBuffer:                100,
+		RequestTimeoutSec:          15,
+		QueueBackend:               "log",
+		RequireSecrets:             false,
+		SecurityAuditEnabled:       true,
+		SecurityAuditPath:          " ",
+		SecurityAuditRetentionDays: 30,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected SECURITY_AUDIT_PATH validation error")
+	}
+}
+
+func TestValidateRejectsInvalidSecurityAuditRetentionDays(t *testing.T) {
+	cfg := Config{
+		Environment:                "local",
+		Port:                       "8080",
+		QueueBuffer:                100,
+		RequestTimeoutSec:          15,
+		QueueBackend:               "log",
+		RequireSecrets:             false,
+		SecurityAuditEnabled:       true,
+		SecurityAuditPath:          "data/security-audit.jsonl",
+		SecurityAuditRetentionDays: 0,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected SECURITY_AUDIT_RETENTION_DAYS validation error")
+	}
+}
+
 func TestValidateRejectsInvalidQueueBackpressureLimits(t *testing.T) {
 	cfg := Config{
 		Environment:                       "local",

@@ -6,19 +6,24 @@ Semantic Versioning is used: `vMAJOR.MINOR.PATCH`.
 
 ## Steps
 
-1. Run verify and smoke checks on main branch.
+1. Ensure the default branch head is green for `ci`, `smoke`, `docs`, and `integration`.
 2. Trigger `tag-release` workflow on default branch with a valid SemVer tag.
-3. Complete all automated checklist gates in workflow inputs.
-4. Wait for `release` workflow to publish release notes and signed artifacts.
+3. Complete the remaining human checklist gates in workflow inputs for risk, rollback, and monitoring readiness.
+4. Wait for `release` workflow to build, sign, verify, and publish release artifacts.
 5. Confirm changelog update commit on default branch.
 
 ## Signed Artifacts
 
-The release workflow publishes source artifacts and signatures:
+The release workflow publishes signed source and binary artifacts:
 
 - `teampulsebridge-<version>-source.tar.gz`
 - `teampulsebridge-<version>-source.zip`
+- `teampulsebridge-<version>-ingestion-gateway-linux-amd64.tar.gz`
+- `teampulsebridge-<version>-ingestion-gateway-linux-arm64.tar.gz`
+- `teampulsebridge-<version>-ingestion-gateway-darwin-arm64.tar.gz`
+- `teampulsebridge-<version>-ingestion-gateway-windows-amd64.zip`
 - `SHA256SUMS`
+- `release-checklist.md`
 - Cosign keyless signatures (`.sig`) and certificates (`.pem`) for each artifact
 
 Verification example:

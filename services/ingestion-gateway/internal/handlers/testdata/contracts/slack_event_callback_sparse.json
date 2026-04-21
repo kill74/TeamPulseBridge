@@ -1,0 +1,11 @@
+{
+  "token": "legacy-token",
+  "team_id": "T123",
+  "api_app_id": "A123",
+  "type": "event_callback",
+  "event": {
+    "type": "app_mention",
+    "text": "hello from a sparse payload"
+  },
+  "event_time": 1710000001
+}

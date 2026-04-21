@@ -283,6 +283,10 @@ func ClientIPFromRequest(r *http.Request, trustedProxyNets []*net.IPNet) string 
 	return clientIPNoProxyTrust(r)
 }
 
+func ClientIP(r *http.Request, trustedProxyCIDRs []string) string {
+	return ClientIPFromRequest(r, parseCIDRs(trustedProxyCIDRs))
+}
+
 func clientIPNoProxyTrust(r *http.Request) string {
 	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
 	if err == nil && host != "" {

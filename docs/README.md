@@ -35,6 +35,7 @@ If a document helps the team think, plan, review, or communicate internally whil
 
 - `media/`: screenshots, visuals, and showcase assets
 - `developer-workflow.md`: practical onboarding and pre-push workflow
+- `provider-integration-template.md`: reusable template for adding webhook providers with contract requirements
 - standards and process docs for contributors
 - roadmap and release planning material
 - interview and portfolio support notes

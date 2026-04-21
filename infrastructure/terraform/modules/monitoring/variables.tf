@@ -64,6 +64,12 @@ variable "log_retention_days" {
   default     = 30
 }
 
+variable "security_audit_log_retention_days" {
+  description = "Retention in days for structured security audit logs"
+  type        = number
+  default     = 90
+}
+
 variable "pod_restart_threshold" {
   description = "Pod restart alert threshold"
   type        = number

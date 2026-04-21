@@ -7,11 +7,6 @@ on:
         description: "Semantic version tag (example: v1.2.3)"
         required: true
         type: string
-      checklist_ci_green:
-        description: "Release checklist: CI and smoke checks are green on default branch"
-        required: true
-        type: boolean
-        default: false
       checklist_risk_reviewed:
         description: "Release checklist: risk level, blast radius, and rollout strategy reviewed"
         required: true
@@ -30,6 +25,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: tag-release
@@ -62,13 +58,61 @@ jobs:
             exit 1
           fi
 
+      - name: Validate automated release readiness gates
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = context.payload.repository.default_branch;
+            const requiredWorkflows = [
+              { file: "ci.yml", name: "ci" },
+              { file: "smoke.yml", name: "smoke" },
+              { file: "docs.yml", name: "docs" },
+              { file: "integration.yml", name: "integration" },
+            ];
+
+            const branchInfo = await github.rest.repos.getBranch({ owner, repo, branch });
+            const headSha = branchInfo.data.commit.sha;
+            const failures = [];
+            const summaryLines = [];
+
+            for (const workflow of requiredWorkflows) {
+              const runs = await github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: workflow.file,
+                branch,
+                per_page: 20,
+              });
+
+              const matchingRun = runs.data.workflow_runs.find((run) => run.head_sha === headSha && run.status === "completed");
+              if (!matchingRun) {
+                failures.push(`No completed ${workflow.name} workflow run was found for ${branch}@${headSha}.`);
+                summaryLines.push(`- ${workflow.name}: missing for ${headSha}`);
+                continue;
+              }
+
+              summaryLines.push(`- ${workflow.name}: ${matchingRun.conclusion} (${matchingRun.html_url})`);
+              if (matchingRun.conclusion !== "success") {
+                failures.push(`${workflow.name} workflow for ${branch}@${headSha} concluded ${matchingRun.conclusion}.`);
+              }
+            }
+
+            await core.summary
+              .addHeading("Automated Release Checklist")
+              .addRaw(`- Default branch: ${branch}\n`)
+              .addRaw(`- Default branch HEAD: ${headSha}\n`)
+              .addRaw(summaryLines.join("\n") + "\n")
+              .write();
+
+            if (failures.length > 0) {
+              core.setFailed(failures.join("\n"));
+            }
+
       - name: Validate release checklist gates
         shell: bash
         run: |
-          if [[ "${{ github.event.inputs.checklist_ci_green }}" != "true" ]]; then
-            echo "Checklist gate failed: CI and smoke checks must be green"
-            exit 1
-          fi
           if [[ "${{ github.event.inputs.checklist_risk_reviewed }}" != "true" ]]; then
             echo "Checklist gate failed: risk review must be completed"
             exit 1
@@ -89,7 +133,7 @@ jobs:
             echo "## Release Checklist Validation"
             echo
             echo "- Version: ${{ github.event.inputs.version }}"
-            echo "- CI and smoke green: ${{ github.event.inputs.checklist_ci_green }}"
+            echo "- Automated workflow gates: validated against the current default branch head"
             echo "- Risk reviewed: ${{ github.event.inputs.checklist_risk_reviewed }}"
             echo "- Rollback ready: ${{ github.event.inputs.checklist_rollback_ready }}"
             echo "- Monitoring ready: ${{ github.event.inputs.checklist_monitoring_ready }}"

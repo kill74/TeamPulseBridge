@@ -48,6 +48,12 @@ This is where GitOps bootstrap and app-of-apps style wiring lives.
 
 Use this when you are changing local Prometheus config, alert rules, Grafana provisioning, or dashboards.
 
+Current monitoring assets include:
+
+- service overview dashboard
+- SLO and error-budget dashboard
+- security operations dashboard with rejection burn overlays and top offender panels
+
 ## Common Commands
 
 Validate rendered manifests before you commit deployment changes:

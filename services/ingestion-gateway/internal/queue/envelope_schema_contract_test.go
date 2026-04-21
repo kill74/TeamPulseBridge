@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
+
+	"teampulsebridge/services/ingestion-gateway/internal/testhelpers/fixturecatalog"
 )
 
 type schemaDocument struct {
@@ -26,35 +27,31 @@ type schemaObject struct {
 	AdditionalProperties *schemaObject `json:"additionalProperties"`
 }
 
-func TestRawWebhookEnvelopeSchema_ValidProviderFixtures(t *testing.T) {
-	schema, err := loadSchema()
+func TestRawWebhookEnvelopeSchema_CatalogFixturesStayCompatible(t *testing.T) {
+	catalog, err := fixturecatalog.Load()
+	if err != nil {
+		t.Fatalf("load fixture catalog: %v", err)
+	}
+	if catalog.EnvelopeSchema.Name != "raw-webhook-envelope" || catalog.EnvelopeSchema.Version != 1 {
+		t.Fatalf("unexpected envelope schema reference: %+v", catalog.EnvelopeSchema)
+	}
+	schema, err := loadSchema(catalog.EnvelopeSchemaPath())
 	if err != nil {
 		t.Fatalf("load schema: %v", err)
 	}
 
-	cases := []struct {
-		name    string
-		source  string
-		fixture string
-	}{
-		{name: "slack", source: "slack", fixture: "slack_event_callback.json"},
-		{name: "github", source: "github", fixture: "github_pull_request_opened.json"},
-		{name: "gitlab", source: "gitlab", fixture: "gitlab_merge_request.json"},
-		{name: "teams", source: "teams", fixture: "teams_change_notification.json"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			body, err := os.ReadFile(filepath.Join("..", "handlers", "testdata", "contracts", tc.fixture))
+	for _, tc := range catalog.PublishedFixtures() {
+		t.Run(tc.ID, func(t *testing.T) {
+			body, err := fixturecatalog.ReadFixture(tc)
 			if err != nil {
 				t.Fatalf("read fixture: %v", err)
 			}
 
 			payload, err := json.Marshal(pubSubEnvelope{
-				Source: tc.source,
+				Source: tc.Provider,
 				Headers: map[string]string{
 					"Content-Type": "application/json",
-					"User-Agent":   "contract-test",
+					"User-Agent":   "contract-test/" + tc.ID,
 				},
 				Body:        body,
 				ReceivedAt:  time.Now().UTC(),
@@ -73,7 +70,11 @@ func TestRawWebhookEnvelopeSchema_ValidProviderFixtures(t *testing.T) {
 }
 
 func TestRawWebhookEnvelopeSchema_RejectsDrift(t *testing.T) {
-	schema, err := loadSchema()
+	catalog, err := fixturecatalog.Load()
+	if err != nil {
+		t.Fatalf("load fixture catalog: %v", err)
+	}
+	schema, err := loadSchema(catalog.EnvelopeSchemaPath())
 	if err != nil {
 		t.Fatalf("load schema: %v", err)
 	}
@@ -93,9 +94,9 @@ func TestRawWebhookEnvelopeSchema_RejectsDrift(t *testing.T) {
 	}
 }
 
-func loadSchema() (schemaDocument, error) {
+func loadSchema(path string) (schemaDocument, error) {
 	var schema schemaDocument
-	raw, err := os.ReadFile(filepath.Join("testdata", "schemas", "raw-webhook-envelope-v1.schema.json"))
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return schema, err
 	}

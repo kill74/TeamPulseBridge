@@ -5,12 +5,19 @@ CHECKOV ?= checkov
 GOLANGCI_LINT ?= golangci-lint
 GOVULNCHECK ?= govulncheck
 
-.PHONY: help doctor env-init replay dev-setup dev-check precommit-install precommit-run verify ci-go ci-terraform ci-policy ci-smoke ci-local lint test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod infra-chaos-drill-failover gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
+ifeq ($(OS),Windows_NT)
+INSTALL_LOCAL_CMD := powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+else
+INSTALL_LOCAL_CMD := bash ./scripts/install.sh
+endif
+
+.PHONY: help doctor env-init install-local replay dev-setup dev-check precommit-install precommit-run verify ci-go ci-contract ci-terraform ci-policy ci-smoke ci-local lint test contract-lint contract-test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod infra-chaos-drill-failover gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
 
 help:
 	@echo "Application Targets:"
 	@echo "  make doctor        - Verify local developer environment"
 	@echo "  make env-init      - Create a local .env from .env.example if needed"
+	@echo "  make install-local - Bootstrap the local stack with Docker Compose"
 	@echo "  make replay FILE=<path>|EVENT_ID=<id> [REPLAY_ARGS='<args>'] - Replay a webhook payload"
 	@echo "  make dev-setup     - Install local developer tooling and git hooks"
 	@echo "  make dev-check     - Run fast local quality gates"
@@ -20,6 +27,9 @@ help:
 	@echo "  make fmt           - Format all Go code"
 	@echo "  make lint          - Run golangci-lint"
 	@echo "  make test          - Run unit tests"
+	@echo "  make contract-lint - Lint fixture catalog conventions for webhook contracts"
+	@echo "  make contract-test - Run webhook contract, fixture catalog, and schema drift checks"
+	@echo "  make ci-contract   - Run fixture lint + targeted contract quality checks"
 	@echo "  make race          - Run race detector tests"
 	@echo "  make verify        - fmt + lint + test + race"
 	@echo "  make run           - Run ingestion gateway locally"
@@ -40,10 +50,11 @@ help:
 	@echo ""
 	@echo "CI Parity Targets:"
 	@echo "  make ci-go                    - Run local Go checks that mirror CI"
+	@echo "  make ci-contract              - Run local contract lint + targeted contract tests"
 	@echo "  make ci-terraform             - Run terraform fmt/init/validate locally"
 	@echo "  make ci-policy                - Run local policy-as-code checks for Terraform and Kubernetes"
 	@echo "  make ci-smoke                 - Run the local docker compose smoke check"
-	@echo "  make ci-local                 - Run ci-go + race + ci-terraform + ci-policy + ci-smoke"
+	@echo "  make ci-local                 - Run ci-go + race + ci-contract + ci-terraform + ci-policy + ci-smoke"
 	@echo ""
 	@echo "Infrastructure Targets (see make infra-help for details):"
 	@echo "  make infra-help              - Show infrastructure targets"
@@ -69,6 +80,9 @@ env-init:
 		cp .env.example .env; \
 		echo "Created .env from .env.example"; \
 	fi
+
+install-local:
+	$(INSTALL_LOCAL_CMD)
 
 replay:
 	@test -n "$(FILE)$(EVENT_ID)" || (echo "Either FILE or EVENT_ID is required. Example: make replay FILE=internal/handlers/testdata/contracts/github_pull_request_opened.json REPLAY_ARGS='-source github'" && exit 1)
@@ -98,6 +112,7 @@ precommit-run:
 dev-check:
 	@$(MAKE) precommit-run
 	@$(MAKE) verify
+	@$(MAKE) contract-lint
 
 fmt:
 	cd services/ingestion-gateway && gofmt -w ./cmd ./internal
@@ -107,6 +122,12 @@ lint:
 
 test:
 	cd services/ingestion-gateway && go test ./...
+
+contract-lint:
+	cd services/ingestion-gateway && go run ./cmd/fixturelint
+
+contract-test:
+	cd services/ingestion-gateway && go test -count=1 ./internal/handlers ./internal/queue -run 'TestWebhook(FixtureCatalog|PayloadContracts|CompatibilityMatrix)|TestRawWebhookEnvelopeSchema'
 
 race:
 	cd services/ingestion-gateway && go test -race ./...
@@ -119,6 +140,8 @@ ci-go:
 	cd services/ingestion-gateway && go test ./...
 	cd services/ingestion-gateway && $(GOLANGCI_LINT) run --config ../../.golangci.yml ./...
 	cd services/ingestion-gateway && $(GOVULNCHECK) -format text ./...
+
+ci-contract: contract-lint contract-test
 
 ci-terraform:
 	@set -e; \
@@ -166,7 +189,7 @@ ci-smoke:
 	docker compose logs --no-color --tail=200; \
 	exit 1
 
-ci-local: ci-go race ci-terraform ci-policy ci-smoke
+ci-local: ci-go race ci-contract ci-terraform ci-policy ci-smoke
 
 run:
 	cd services/ingestion-gateway && go run ./cmd/server
