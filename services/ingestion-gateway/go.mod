@@ -1,6 +1,6 @@
 module teampulsebridge/services/ingestion-gateway
 
-go 1.25.0
+go 1.23
 
 require (
 	cloud.google.com/go/pubsub/v2 v2.4.0
