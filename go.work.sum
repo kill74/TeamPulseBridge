@@ -27,6 +27,7 @@ cloud.google.com/go/clouddms v1.7.10/go.mod h1:PzHELq0QDyA7VaD9z6mzh2mxeBz4kM6oD
 cloud.google.com/go/cloudtasks v1.12.12/go.mod h1:8UmM+duMrQpzzRREo0i3x3TrFjsgI/3FQw3664/JblA=
 cloud.google.com/go/compute v1.27.4 h1:XM8ulx6crjdl09XBfji7viFgZOEQuIxBwKmjRH9Rtmc=
 cloud.google.com/go/compute v1.27.4/go.mod h1:7JZS+h21ERAGHOy5qb7+EPyXlQwzshzrx1x6L9JhTqU=
+cloud.google.com/go/compute v1.54.0 h1:4CKmnpO+40z44bKG5bdcKxQ7ocNpRtOc9SCLLUzze1w=
 cloud.google.com/go/contactcenterinsights v1.13.6/go.mod h1:mL+DbN3pMQGaAbDC4wZhryLciwSwHf5Tfk4Itr72Zyk=
 cloud.google.com/go/container v1.38.0/go.mod h1:U0uPBvkVWOJGY/0qTVuPS7NeafFEUsHSPqT5pB8+fCY=
 cloud.google.com/go/containeranalysis v0.12.1/go.mod h1:+/lcJIQSFt45TC0N9Nq7/dPbl0isk6hnC4EvBBqyXsM=
@@ -81,6 +82,7 @@ cloud.google.com/go/oslogin v1.13.7/go.mod h1:xq027cL0fojpcEcpEQdWayiDn8tIx3WEFY
 cloud.google.com/go/phishingprotection v0.8.11/go.mod h1:Mge0cylqVFs+D0EyxlsTOJ1Guf3qDgrztHzxZqkhRQM=
 cloud.google.com/go/policytroubleshooter v1.10.9/go.mod h1:X8HEPVBWz8E+qwI/QXnhBLahEHdcuPO3M9YvSj0LDek=
 cloud.google.com/go/privatecatalog v0.9.11/go.mod h1:awEF2a8M6UgoqVJcF/MthkF8SSo6OoWQ7TtPNxUlljY=
+cloud.google.com/go/pubsub v1.50.1 h1:fzbXpPyJnSGvWXF1jabhQeXyxdbCIkXTpjXHy7xviBM=
 cloud.google.com/go/pubsublite v1.8.2/go.mod h1:4r8GSa9NznExjuLPEJlF1VjOPOpgf3IT6k8x/YgaOPI=
 cloud.google.com/go/recaptchaenterprise/v2 v2.14.2/go.mod h1:MwPgdgvBkE46aWuuXeBTCB8hQJ88p+CpXInROZYCTkc=
 cloud.google.com/go/recommendationengine v0.8.11/go.mod h1:cEkU4tCXAF88a4boMFZym7U7uyxvVwcQtKzS85IbQio=

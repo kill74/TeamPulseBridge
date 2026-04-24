@@ -23,6 +23,10 @@ var reqCounter uint64
 
 type Middleware func(http.Handler) http.Handler
 
+type RateLimitOptions struct {
+	CleanupFunc func()
+}
+
 type RateLimitConfig struct {
 	Enabled           bool
 	General           int
@@ -32,6 +36,7 @@ type RateLimitConfig struct {
 	Now               func() time.Time
 	Window            time.Duration
 	CleanupN          int
+	Limiter           *IPRateLimiter
 }
 
 type rateWindow struct {
@@ -39,7 +44,7 @@ type rateWindow struct {
 	count       int
 }
 
-type ipRateLimiter struct {
+type IPRateLimiter struct {
 	mu      sync.Mutex
 	entries map[string]rateWindow
 	now     func() time.Time
@@ -50,7 +55,7 @@ type ipRateLimiter struct {
 	stop    chan struct{}
 }
 
-func newIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN int) *ipRateLimiter {
+func NewIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN int) *IPRateLimiter {
 	if now == nil {
 		now = time.Now
 	}
@@ -60,7 +65,7 @@ func newIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN 
 	if cleanupEveryN <= 0 {
 		cleanupEveryN = 1024
 	}
-	l := &ipRateLimiter{
+	l := &IPRateLimiter{
 		entries: make(map[string]rateWindow, 256),
 		now:     now,
 		window:  window,
@@ -72,24 +77,24 @@ func newIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN 
 	return l
 }
 
-func (l *ipRateLimiter) Stop() {
+func (l *IPRateLimiter) Stop() {
 	close(l.stop)
 }
 
-func (l *ipRateLimiter) periodicCleanup() {
+func (l *IPRateLimiter) periodicCleanup() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			l.cleanupStale()
+			l.CleanupStale()
 		case <-l.stop:
 			return
 		}
 	}
 }
 
-func (l *ipRateLimiter) cleanupStale() {
+func (l *IPRateLimiter) CleanupStale() {
 	now := l.now().Unix()
 	currentWindowStart := now - (now % l.windowS)
 	threshold := currentWindowStart - l.windowS
@@ -104,7 +109,7 @@ func (l *ipRateLimiter) cleanupStale() {
 	}
 }
 
-func (l *ipRateLimiter) allow(key string, limit int) bool {
+func (l *IPRateLimiter) Allow(key string, limit int) bool {
 	if limit <= 0 {
 		return false
 	}
@@ -129,7 +134,7 @@ func (l *ipRateLimiter) allow(key string, limit int) bool {
 	return true
 }
 
-func (l *ipRateLimiter) maybeCleanupLocked(currentWindowStart int64) {
+func (l *IPRateLimiter) maybeCleanupLocked(currentWindowStart int64) {
 	h := atomic.AddUint64(&l.hits, 1)
 	if h%uint64(l.cleanup) != 0 {
 		return
@@ -225,7 +230,10 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 	if !cfg.Enabled {
 		return func(next http.Handler) http.Handler { return next }
 	}
-	limiter := newIPRateLimiter(cfg.Now, cfg.Window, cfg.CleanupN)
+	limiter := cfg.Limiter
+	if limiter == nil {
+		limiter = NewIPRateLimiter(cfg.Now, cfg.Window, cfg.CleanupN)
+	}
 	trusted := parseCIDRs(cfg.TrustedProxyCIDRs)
 	general := cfg.General
 	admin := cfg.Admin
@@ -239,7 +247,7 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 				limit = admin
 				scope = "admin"
 			}
-			if !limiter.allow(scope+"|"+ip, limit) {
+			if !limiter.Allow(scope+"|"+ip, limit) {
 				if cfg.OnReject != nil {
 					cfg.OnReject(r, "rate_limit_exceeded", http.StatusTooManyRequests)
 				}
