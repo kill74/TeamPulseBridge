@@ -7,31 +7,29 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/ingestion-gateway
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-      - name: Cache modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('services/ingestion-gateway/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+
+      - name: Download modules
+        working-directory: services/ingestion-gateway
+        run: go mod download
+
       - name: Tidy modules
+        working-directory: services/ingestion-gateway
         run: go mod tidy
+
       - name: Run tests
-        run: go test ./... -v
-      - name: Run linters
-        uses: golangci/golangci-lint-action@v3
+        working-directory: services/ingestion-gateway
+        run: go test ./...
+
+      - name: Run linter
+        working-directory: services/ingestion-gateway
+        uses: golangci/golangci-lint-action@v6
         with:
-          args: run --timeout=5m
           version: latest
