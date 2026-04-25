@@ -54,7 +54,7 @@ jobs:
           bash ./scripts/release/build-release-artifacts.sh "${GITHUB_REF_NAME}"
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.9.1
+        uses: sigstore/cosign-installer@v4.1.1
 
       - name: Sign release artifacts (keyless)
         shell: bash
