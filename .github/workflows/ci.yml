@@ -14,7 +14,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25.x'
 
       - name: Download modules
         working-directory: services/ingestion-gateway
@@ -22,14 +22,18 @@ jobs:
 
       - name: Tidy modules
         working-directory: services/ingestion-gateway
-        run: go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
 
       - name: Run tests
         working-directory: services/ingestion-gateway
         run: go test ./...
 
       - name: Run linter
-        working-directory: services/ingestion-gateway
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.64.8
+          install-mode: goinstall
+          working-directory: services/ingestion-gateway
+          args: --timeout=5m
