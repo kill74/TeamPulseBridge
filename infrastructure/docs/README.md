@@ -8,56 +8,56 @@ Professional-grade Terraform infrastructure for staging and production GCP envir
 ┌─────────────────────────────────────────────────────────────┐
 │                    GCP Project                              │
 ├─────────────────────────────────────────────────────────────┤
-│                                                               │
+│                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │            VPC Network (10.0.0.0/16)                │   │
-│  │  ┌──────────────────────────────────────────────┐   │   │
-│  │  │  GKE Cluster                                 │   │   │
-│  │  │  ├─ Default Node Pool (system)              │   │   │
-│  │  │  │  └─ 1-5 nodes (preemptible)              │   │   │
-│  │  │  └─ Workload Node Pool (app)                │   │   │
-│  │  │     └─ 1-10 nodes (standard)                │   │   │
-│  │  │                                              │   │   │
-│  │  │  Pods CIDR: 10.1.0.0/16                     │   │   │
-│  │  │  Services CIDR: 10.2.0.0/16                 │   │   │
-│  │  └──────────────────────────────────────────────┘   │   │
+│  │            VPC Network (10.0.0.0/16)                 │   │
+│  │  ┌──────────────────────────────────────────────┐    │   │
+│  │  │  GKE Cluster                                 │    │   │
+│  │  │  ├─ Default Node Pool (system)               │    │   │
+│  │  │  │  └─ 1-5 nodes (preemptible)               │    │   │
+│  │  │  └─ Workload Node Pool (app)                 │    │   │
+│  │  │     └─ 1-10 nodes (standard)                 │    │   │
+│  │  │                                              │    │   │
+│  │  │  Pods CIDR: 10.1.0.0/16                      │    │   │
+│  │  │  Services CIDR: 10.2.0.0/16                  │    │   │
+│  │  └──────────────────────────────────────────────┘    │   │
 │  │                                                      │   │
-│  │  ┌──────────────────────────────────────────────┐   │   │
-│  │  │  Cloud SQL (Private IP)                      │   │   │
-│  │  │  ├─ PostgreSQL 15                            │   │   │
-│  │  │  ├─ Regional HA (prod) / Zonal (staging)  │   │   │
-│  │  │  └─ Daily automated backups                  │   │   │
-│  │  └──────────────────────────────────────────────┘   │   │
+│  │  ┌──────────────────────────────────────────────┐    │   │
+│  │  │  Cloud SQL (Private IP)                      │    │   │
+│  │  │  ├─ PostgreSQL 15                            │    │   │
+│  │  │  ├─ Regional HA (prod) / Zonal (staging)     │    │   │
+│  │  │  └─ Daily automated backups                  │    │   │
+│  │  └──────────────────────────────────────────────┘    │   │
 │  │                                                      │   │
-│  │  Cloud NAT ──→ External IP for egress              │   │
+│  │  Cloud NAT ──→ External IP for egress                │   │
 │  └──────────────────────────────────────────────────────┘   │
-│                                                               │
+│                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │            Cloud Storage                             │   │
-│  │  ├─ Artifacts bucket (versioned)                    │   │
-│  │  ├─ App data bucket (with lifecycle)                │   │
-│  │  ├─ Backups bucket (30-90 day retention)            │   │
-│  │  └─ Logs bucket (compressed, 14-30 day retention)  │   │
+│  │  ├─ Artifacts bucket (versioned)                     │   │
+│  │  ├─ App data bucket (with lifecycle)                 │   │
+│  │  ├─ Backups bucket (30-90 day retention)             │   │
+│  │  └─ Logs bucket (compressed, 14-30 day retention)    │   │
 │  └──────────────────────────────────────────────────────┘   │
-│                                                               │
+│                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │            Monitoring & Alerting                     │   │
-│  │  ├─ Cloud Monitoring dashboard                      │   │
-│  │  ├─ Uptime checks (multi-region)                    │   │
-│  │  ├─ Alert policies (CPU, memory, errors)            │   │
-│  │  ├─ Email notifications                             │   │
-│  │  └─ Slack integration (prod only)                   │   │
+│  │  ├─ Cloud Monitoring dashboard                       │   │
+│  │  ├─ Uptime checks (multi-region)                     │   │
+│  │  ├─ Alert policies (CPU, memory, errors)             │   │
+│  │  ├─ Email notifications                              │   │
+│  │  └─ Slack integration (prod only)                    │   │
 │  └──────────────────────────────────────────────────────┘   │
-│                                                               │
+│                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │            Security & Access Control                │   │
-│  │  ├─ Workload Identity binding                       │   │
-│  │  ├─ IAM roles (least privilege)                     │   │
-│  │  ├─ Network policies (Kubernetes)                   │   │
-│  │  ├─ Pod security policies                           │   │
-│  │  └─ Cloud Armor (DDoS protection)                   │   │
+│  │            Security & Access Control                 │   │
+│  │  ├─ Workload Identity binding                        │   │
+│  │  ├─ IAM roles (least privilege)                      │   │
+│  │  ├─ Network policies (Kubernetes)                    │   │
+│  │  ├─ Pod security policies                            │   │
+│  │  └─ Cloud Armor (DDoS protection)                    │   │
 │  └──────────────────────────────────────────────────────┘   │
-│                                                               │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 

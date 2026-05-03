@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,9 +26,63 @@ import (
 
 func newPublicMux(appHandler http.Handler, smokeHandler http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.Handle("/ui/smoke-test", smokeHandler)
+	if smokeHandler != nil {
+		mux.Handle("/ui/smoke-test", smokeHandler)
+	}
 	mux.Handle("/", appHandler)
 	return mux
+}
+
+type HandlerBuilder struct {
+	logger     *slog.Logger
+	cfg       *config.Config
+	securityFn func(req *http.Request, reason string, status int)
+	limiter   *httpx.IPRateLimiter
+}
+
+func NewHandlerBuilder(logger *slog.Logger, cfg *config.Config, securityFn func(req *http.Request, reason string, status int)) *HandlerBuilder {
+	limiter := httpx.NewIPRateLimiter(nil, time.Minute, 1024)
+	return &HandlerBuilder{
+		logger:     logger,
+		cfg:       cfg,
+		securityFn: securityFn,
+		limiter:   limiter,
+	}
+}
+
+func (b *HandlerBuilder) Build(publicMux http.Handler) http.Handler {
+	return httpx.Chain(
+		publicMux,
+		httpx.RequestID(),
+		httpx.RateLimit(httpx.RateLimitConfig{
+			Enabled:           b.cfg.RateLimitEnabled,
+			General:           b.cfg.RateLimitRPM,
+			Admin:             b.cfg.AdminRateLimitRPM,
+			TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
+			OnReject:          b.securityFn,
+			Limiter:          b.limiter,
+		}),
+		httpx.RequireAdminCIDRAllowlist(httpx.AdminCIDRConfig{
+			Enabled:           b.cfg.AdminAuthEnabled,
+			CIDRs:             b.cfg.AdminAllowCIDRs,
+			TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
+			OnReject:          b.securityFn,
+		}),
+		httpx.RequireAdminJWT(httpx.JWTConfig{
+			Enabled:  b.cfg.AdminAuthEnabled,
+			Issuer:   b.cfg.AdminJWTIssuer,
+			Audience: b.cfg.AdminJWTAudience,
+			Secret:   b.cfg.AdminJWTSecret,
+			OnReject: b.securityFn,
+		}),
+		httpx.Recoverer(b.logger),
+		httpx.AccessLog(b.logger),
+		observability.HTTPMiddleware("ingestion-gateway"),
+	)
+}
+
+func (b *HandlerBuilder) Stop() {
+	b.limiter.Stop()
 }
 
 func main() {
@@ -232,41 +287,16 @@ func main() {
 	webhookMux.HandleFunc("POST /webhooks/github", h.HandleGitHub)
 	webhookMux.HandleFunc("POST /webhooks/gitlab", h.HandleGitLab)
 
-	var handler http.Handler
-	publicMux := newPublicMux(
-		webhookMux,
-		handlers.NewUISmokeTestProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			handler.ServeHTTP(w, r)
-		}), cfg.TrustedProxyCIDRs),
-	)
+	publicMux := newPublicMux(webhookMux, nil)
 
-	handler = httpx.Chain(
-		publicMux,
-		httpx.RequestID(),
-		httpx.RateLimit(httpx.RateLimitConfig{
-			Enabled:           cfg.RateLimitEnabled,
-			General:           cfg.RateLimitRPM,
-			Admin:             cfg.AdminRateLimitRPM,
-			TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
-			OnReject:          securityRejectFn,
-		}),
-		httpx.RequireAdminCIDRAllowlist(httpx.AdminCIDRConfig{
-			Enabled:           cfg.AdminAuthEnabled,
-			CIDRs:             cfg.AdminAllowCIDRs,
-			TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
-			OnReject:          securityRejectFn,
-		}),
-		httpx.RequireAdminJWT(httpx.JWTConfig{
-			Enabled:  cfg.AdminAuthEnabled,
-			Issuer:   cfg.AdminJWTIssuer,
-			Audience: cfg.AdminJWTAudience,
-			Secret:   cfg.AdminJWTSecret,
-			OnReject: securityRejectFn,
-		}),
-		httpx.Recoverer(logger),
-		httpx.AccessLog(logger),
-		observability.HTTPMiddleware("ingestion-gateway"),
-	)
+	handlerBuilder := NewHandlerBuilder(logger, &cfg, securityRejectFn)
+	handler := handlerBuilder.Build(publicMux)
+
+	uiSmokeProxy := handlers.NewUISmokeTestProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.ServeHTTP(w, r)
+	}), cfg.TrustedProxyCIDRs)
+	publicMux = newPublicMux(webhookMux, uiSmokeProxy)
+	handler = handlerBuilder.Build(publicMux)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -295,6 +325,8 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 	}
+
+	handlerBuilder.Stop()
 }
 
 func securitySourceFromPath(path string) string {

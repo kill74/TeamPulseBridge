@@ -10,25 +10,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.20.x'
-      - name: Cache modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          go-version: '1.25.x'
+
+      - name: Download modules
+        working-directory: services/ingestion-gateway
+        run: go mod download
+
       - name: Tidy modules
-        run: go mod tidy
+        working-directory: services/ingestion-gateway
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - name: Run tests
-        run: go test ./... -v
-      - name: Run linters
-        uses: golangci/golangci-lint-action@v3
+        working-directory: services/ingestion-gateway
+        run: go test ./...
+
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v6
         with:
-          args: run
-          version: latest
+          version: v1.64.8
+          install-mode: goinstall
+          working-directory: services/ingestion-gateway
+          args: --timeout=5m
