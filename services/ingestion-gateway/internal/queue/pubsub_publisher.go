@@ -14,9 +14,10 @@ import (
 )
 
 type PubSubPublisher struct {
-	client *pubsub.Client
-	topic  *pubsub.Publisher
-	logger *slog.Logger
+	client    *pubsub.Client
+	topic     *pubsub.Publisher
+	topicName string
+	logger    *slog.Logger
 }
 
 type pubSubEnvelope struct {
@@ -46,7 +47,7 @@ func NewPubSubPublisher(ctx context.Context, projectID, topicID string, logger *
 	}
 
 	topic := client.Publisher(topicID)
-	return &PubSubPublisher{client: client, topic: topic, logger: logger}, nil
+	return &PubSubPublisher{client: client, topic: topic, topicName: topicName, logger: logger}, nil
 }
 
 func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byte, headers map[string]string) error {
@@ -86,4 +87,14 @@ func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byt
 func (p *PubSubPublisher) Close() error {
 	p.topic.Stop()
 	return p.client.Close()
+}
+
+func (p *PubSubPublisher) HealthCheck(ctx context.Context) error {
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_, err := p.client.TopicAdminClient.GetTopic(checkCtx, &pubsubpb.GetTopicRequest{Topic: p.topicName})
+	if err != nil {
+		return fmt.Errorf("pubsub health check failed: %w", err)
+	}
+	return nil
 }

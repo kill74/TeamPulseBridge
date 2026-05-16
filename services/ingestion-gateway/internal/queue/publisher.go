@@ -6,4 +6,5 @@ import "context"
 type Publisher interface {
 	Publish(ctx context.Context, source string, body []byte, headers map[string]string) error
 	Close() error
+	HealthCheck(ctx context.Context) error
 }

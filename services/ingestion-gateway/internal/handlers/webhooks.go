@@ -21,6 +21,7 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/httpx"
 	"teampulsebridge/services/ingestion-gateway/internal/platform/signature"
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
+	"teampulsebridge/services/ingestion-gateway/internal/schema"
 	"teampulsebridge/services/ingestion-gateway/internal/securityaudit"
 )
 
@@ -34,6 +35,7 @@ type WebhookHandler struct {
 	deduper         dedupStore
 	failed          failstore.Store
 	onSecurityEvent func(r *http.Request, event SecurityEvent)
+	validator       *schema.Validator
 }
 
 type SecurityEvent struct {
@@ -74,7 +76,7 @@ func NewWebhookHandler(cfg config.Config, publisher queue.Publisher, logger *slo
 		}
 	}
 
-	return NewWebhookHandlerWithDependencies(cfg, publisher, logger, record, deduper, failedStore, nil)
+	return NewWebhookHandlerWithDependencies(cfg, publisher, logger, record, deduper, failedStore, nil, nil)
 }
 
 func NewWebhookHandlerWithDependencies(
@@ -85,6 +87,7 @@ func NewWebhookHandlerWithDependencies(
 	deduper dedupStore,
 	failed failstore.Store,
 	onSecurityEvent func(r *http.Request, event SecurityEvent),
+	validator *schema.Validator,
 ) *WebhookHandler {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -97,6 +100,7 @@ func NewWebhookHandlerWithDependencies(
 		deduper:         deduper,
 		failed:          failed,
 		onSecurityEvent: onSecurityEvent,
+		validator:       validator,
 	}
 }
 
@@ -105,6 +109,7 @@ func (h *WebhookHandler) HandleSlack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.Context().Err(); err != nil {
+		h.observe(r.Context(), "slack", 499)
 		return
 	}
 	body, readErr, status := readBody(w, r)
@@ -141,6 +146,7 @@ func (h *WebhookHandler) HandleGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.Context().Err(); err != nil {
+		h.observe(r.Context(), "github", 499)
 		return
 	}
 	body, readErr, status := readBody(w, r)
@@ -160,6 +166,7 @@ func (h *WebhookHandler) HandleGitLab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.Context().Err(); err != nil {
+		h.observe(r.Context(), "gitlab", 499)
 		return
 	}
 	body, readErr, status := readBody(w, r)
@@ -179,6 +186,7 @@ func (h *WebhookHandler) HandleTeams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.Context().Err(); err != nil {
+		h.observe(r.Context(), "teams", 499)
 		return
 	}
 	if token := r.URL.Query().Get("validationToken"); token != "" {
@@ -204,6 +212,20 @@ func (h *WebhookHandler) HandleTeams(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WebhookHandler) publishAndAck(w http.ResponseWriter, r *http.Request, source string, body []byte) {
+	if h.validator != nil {
+		if err := h.validator.Validate(source, body); err != nil {
+			h.observe(r.Context(), source, http.StatusBadRequest)
+			appErr := apperr.New("handlers.publishAndAck", apperr.CodeInvalidRequestBody, "schema validation failed", err)
+			h.respondError(w, r.Context(), http.StatusBadRequest, appErr, "")
+			h.logger.Warn("schema validation failed",
+				"request_id", httpx.RequestIDFromContext(r.Context()),
+				"source", source,
+				"error", err,
+			)
+			return
+		}
+	}
+
 	eventID := deriveEventID(source, r, body)
 	if eventID != "" && h.deduper != nil && h.deduper.Seen(source+":"+eventID) {
 		h.observe(r.Context(), source, http.StatusAccepted)
@@ -464,5 +486,5 @@ func extractJSONField(body []byte, field string) string {
 
 func fallbackEventID(source string, body []byte) string {
 	sum := sha256.Sum256(body)
-	return fmt.Sprintf("%s_%s", source, hex.EncodeToString(sum[:8]))
+	return fmt.Sprintf("%s_%s", source, hex.EncodeToString(sum[:16]))
 }

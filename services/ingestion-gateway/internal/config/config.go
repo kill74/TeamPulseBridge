@@ -48,6 +48,14 @@ type Config struct {
 	QueueFailureBudgetWindow          int
 	QueueFailureBudgetMinSamples      int
 	QueueThrottleRetryAfterSec        int
+	SourceRateLimitEnabled            bool
+	SourceRateLimits                  map[string]int
+	SourceRateLimitDefault            int
+	SchemaValidationEnabled           bool
+	SchemaPath                        string
+	RetryEnabled                      bool
+	RetryMaxAttempts                  int
+	RetryIntervalSec                  int
 }
 
 func LoadFromEnv() Config {
@@ -89,6 +97,14 @@ func LoadFromEnv() Config {
 		QueueFailureBudgetWindow:          intOrDefault("QUEUE_FAILURE_BUDGET_WINDOW", 100),
 		QueueFailureBudgetMinSamples:      intOrDefault("QUEUE_FAILURE_BUDGET_MIN_SAMPLES", 20),
 		QueueThrottleRetryAfterSec:        intOrDefault("QUEUE_THROTTLE_RETRY_AFTER_SEC", 5),
+		SourceRateLimitEnabled:            boolOrDefault("SOURCE_RATE_LIMIT_ENABLED", false),
+		SourceRateLimits:                  parseSourceRateLimits(os.Getenv("SOURCE_RATE_LIMITS")),
+		SourceRateLimitDefault:            intOrDefault("SOURCE_RATE_LIMIT_DEFAULT", 100),
+		SchemaValidationEnabled:           boolOrDefault("SCHEMA_VALIDATION_ENABLED", false),
+		SchemaPath:                        envOrDefault("SCHEMA_PATH", "internal/schema/schemas"),
+		RetryEnabled:                      boolOrDefault("RETRY_ENABLED", false),
+		RetryMaxAttempts:                  intOrDefault("RETRY_MAX_ATTEMPTS", 3),
+		RetryIntervalSec:                  intOrDefault("RETRY_INTERVAL_SEC", 10),
 	}
 }
 
@@ -296,6 +312,36 @@ func splitCSVEnv(key string) []string {
 		return nil
 	}
 	return out
+}
+
+func parseSourceRateLimits(raw string) map[string]int {
+	if raw == "" {
+		return nil
+	}
+
+	result := make(map[string]int)
+	pairs := strings.Split(raw, ",")
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		source := strings.TrimSpace(parts[0])
+		limit, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil || limit <= 0 {
+			continue
+		}
+		result[source] = limit
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func isNonProdEnvironment(env string) bool {

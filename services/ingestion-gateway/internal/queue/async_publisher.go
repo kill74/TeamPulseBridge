@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -118,6 +119,22 @@ func (p *AsyncPublisher) Close() error {
 		p.mu.Unlock()
 	})
 	p.wg.Wait()
+	return nil
+}
+
+func (p *AsyncPublisher) HealthCheck(_ context.Context) error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.closed {
+		return errors.New("publisher is closed")
+	}
+	snapshot := p.Snapshot()
+	if snapshot.UsageRatio >= p.options.Backpressure.HardLimitRatio {
+		return fmt.Errorf("queue buffer usage critical: %.2f%%", snapshot.UsageRatio*100)
+	}
+	if snapshot.FailureRatio > p.options.Backpressure.FailureRatioThreshold && snapshot.RecentSamples >= p.options.Backpressure.MinSamples {
+		return fmt.Errorf("queue failure ratio high: %.2f%%", snapshot.FailureRatio*100)
+	}
 	return nil
 }
 

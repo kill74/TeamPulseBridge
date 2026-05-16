@@ -11,17 +11,49 @@ type Memory struct {
 
 	mu   sync.Mutex
 	seen map[string]time.Time
+	stop chan struct{}
 }
 
 func NewMemory(enabled bool, ttl time.Duration) *Memory {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	return &Memory{
+	m := &Memory{
 		enabled: enabled,
 		ttl:     ttl,
 		seen:    make(map[string]time.Time),
+		stop:    make(chan struct{}),
 	}
+	go m.periodicCleanup()
+	return m
+}
+
+func (m *Memory) periodicCleanup() {
+	ticker := time.NewTicker(m.ttl / 2)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			m.cleanupExpired()
+		case <-m.stop:
+			return
+		}
+	}
+}
+
+func (m *Memory) cleanupExpired() {
+	now := time.Now().UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, ts := range m.seen {
+		if !ts.After(now) {
+			delete(m.seen, k)
+		}
+	}
+}
+
+func (m *Memory) Stop() {
+	close(m.stop)
 }
 
 // Seen returns true if key has already been observed within the dedup window.
@@ -40,14 +72,5 @@ func (m *Memory) Seen(key string) bool {
 		return true
 	}
 	m.seen[key] = expiry
-
-	// Opportunistic cleanup to keep memory bounded.
-	if len(m.seen) > 10_000 {
-		for k, ts := range m.seen {
-			if !ts.After(now) {
-				delete(m.seen, k)
-			}
-		}
-	}
 	return false
 }

@@ -1,0 +1,67 @@
+groups:
+  - name: ingestion-gateway-alerts
+    rules:
+      - alert: HighQueueBufferUsage
+        expr: queue_buffer_usage_ratio > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue buffer usage is high"
+          description: "Queue buffer usage is above 80% for more than 5 minutes. Current value: {{ $value | humanizePercentage }}"
+
+      - alert: CriticalQueueBufferUsage
+        expr: queue_buffer_usage_ratio > 0.9
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Queue buffer usage is critical"
+          description: "Queue buffer usage is above 90% for more than 2 minutes. Events may be dropped. Current value: {{ $value | humanizePercentage }}"
+
+      - alert: HighQueueFailureRatio
+        expr: queue_failure_budget_ratio > 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue failure ratio is high"
+          description: "Queue failure ratio is above 15% for more than 5 minutes. Current value: {{ $value | humanizePercentage }}"
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(webhook_requests_total{status=~"5.."}[5m])) / sum(rate(webhook_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is above 5% for more than 5 minutes. Current value: {{ $value | humanizePercentage }}"
+
+      - alert: SecurityRejectionSpike
+        expr: rate(security_rejections_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Security rejection spike detected"
+          description: "Security rejections are above 10 per second for more than 2 minutes. Possible attack or misconfiguration."
+
+      - alert: BackpressureEventsHigh
+        expr: rate(queue_backpressure_events_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High backpressure event rate"
+          description: "Backpressure events are above 5 per second for more than 5 minutes. Queue may be overloaded."
+
+      - alert: HealthCheckFailure
+        expr: |
+          probe_success{job="ingestion-gateway-health"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Health check is failing"
+          description: "Ingestion gateway health check has been failing for more than 1 minute."

@@ -24,6 +24,7 @@ type FailedEvent struct {
 	Reason      string            `json:"reason"`
 	PayloadHash string            `json:"payload_hash"`
 	FailedAt    time.Time         `json:"failed_at"`
+	RetryCount  int               `json:"retry_count"`
 	Headers     map[string]string `json:"headers"`
 	Body        json.RawMessage   `json:"body"`
 }

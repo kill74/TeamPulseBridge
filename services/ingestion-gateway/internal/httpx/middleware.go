@@ -23,10 +23,6 @@ var reqCounter uint64
 
 type Middleware func(http.Handler) http.Handler
 
-type RateLimitOptions struct {
-	CleanupFunc func()
-}
-
 type RateLimitConfig struct {
 	Enabled           bool
 	General           int
@@ -256,6 +252,71 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 					"httpx.RateLimit",
 					apperr.CodeRateLimitExceeded,
 					"rate limit exceeded",
+					nil,
+				), nil)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+type SourceRateLimitConfig struct {
+	Enabled bool
+	Sources map[string]int
+	Default int
+	Limiter *IPRateLimiter
+	OnReject func(r *http.Request, source string, status int)
+}
+
+func SourceRateLimit(cfg SourceRateLimitConfig) Middleware {
+	if !cfg.Enabled || len(cfg.Sources) == 0 {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	limiter := cfg.Limiter
+	if limiter == nil {
+		limiter = NewIPRateLimiter(nil, time.Minute, 1024)
+	}
+	if cfg.Default <= 0 {
+		cfg.Default = 100
+	}
+
+	sourceFromPath := func(path string) string {
+		if strings.HasPrefix(path, "/webhooks/") {
+			source := strings.TrimPrefix(path, "/webhooks/")
+			source = strings.Trim(source, "/")
+			if idx := strings.Index(source, "/"); idx != -1 {
+				source = source[:idx]
+			}
+			return source
+		}
+		return ""
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			source := sourceFromPath(r.URL.Path)
+			if source == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			limit, exists := cfg.Sources[source]
+			if !exists {
+				limit = cfg.Default
+			}
+
+			ip := ClientIP(r, nil)
+			key := "source|" + source + "|" + ip
+			if !limiter.Allow(key, limit) {
+				if cfg.OnReject != nil {
+					cfg.OnReject(r, source, http.StatusTooManyRequests)
+				}
+				w.Header().Set("Retry-After", "60")
+				WriteError(w, r.Context(), http.StatusTooManyRequests, apperr.New(
+					"httpx.SourceRateLimit",
+					apperr.CodeRateLimitExceeded,
+					"rate limit exceeded for source: "+source,
 					nil,
 				), nil)
 				return

@@ -88,6 +88,8 @@ func (s *adminPublisherStub) Publish(_ context.Context, source string, body []by
 
 func (s *adminPublisherStub) Close() error { return nil }
 
+func (s *adminPublisherStub) HealthCheck(_ context.Context) error { return s.err }
+
 type adminAuditStub struct {
 	calls     int
 	saved     []replayaudit.SaveInput

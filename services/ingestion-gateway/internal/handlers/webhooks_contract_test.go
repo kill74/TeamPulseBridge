@@ -47,6 +47,10 @@ func (c *capturePublisher) Close() error {
 	return nil
 }
 
+func (c *capturePublisher) HealthCheck(_ context.Context) error {
+	return nil
+}
+
 func TestWebhookFixtureCatalog_IsVersionedAndComplete(t *testing.T) {
 	catalog, err := fixturecatalog.Load()
 	if err != nil {

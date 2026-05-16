@@ -22,3 +22,7 @@ func (p *LogPublisher) Publish(_ context.Context, source string, body []byte, _ 
 func (p *LogPublisher) Close() error {
 	return nil
 }
+
+func (p *LogPublisher) HealthCheck(_ context.Context) error {
+	return nil
+}

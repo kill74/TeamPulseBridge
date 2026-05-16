@@ -36,6 +36,10 @@ func (s *stubPublisher) Close() error {
 	return s.err
 }
 
+func (s *stubPublisher) HealthCheck(_ context.Context) error {
+	return s.err
+}
+
 type captureFailedStore struct {
 	calls int
 	last  failstore.SaveInput
@@ -189,7 +193,7 @@ func TestHandleGitHubDuplicateIgnored(t *testing.T) {
 	cfg := config.Config{GitHubWebhookSecret: "gh-secret"}
 	pub := &stubPublisher{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), nil, nil)
+	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), nil, nil, nil)
 
 	body := []byte(`{"action":"opened"}`)
 	sig := githubSig("gh-secret", body)
@@ -222,7 +226,7 @@ func TestHandleGitHubQueueFailurePersistsFailedEvent(t *testing.T) {
 	pub := &stubPublisher{err: queue.ErrQueueFull}
 	store := &captureFailedStore{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), store, nil)
+	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), store, nil, nil)
 
 	body := []byte(`{"action":"opened"}`)
 	sig := githubSig("gh-secret", body)
@@ -256,7 +260,7 @@ func TestHandleGitHubQueueThrottledReturnsRetryableResponse(t *testing.T) {
 	pub := &stubPublisher{err: queue.ErrQueueThrottled}
 	store := &captureFailedStore{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), store, nil)
+	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), store, nil, nil)
 
 	body := []byte(`{"action":"opened"}`)
 	sig := githubSig("gh-secret", body)
@@ -287,7 +291,7 @@ func TestHandleGitHubUnauthorizedRecordsSecurityEvent(t *testing.T) {
 	pub := &stubPublisher{}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	securityEvents := &captureSecurityEvents{}
-	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), nil, securityEvents.Record)
+	h := NewWebhookHandlerWithDependencies(cfg, pub, logger, nil, dedup.NewMemory(true, time.Minute), nil, securityEvents.Record, nil)
 
 	body := []byte(`{"action":"opened"}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))

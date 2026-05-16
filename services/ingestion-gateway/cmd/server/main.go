@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +22,8 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/observability"
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
 	"teampulsebridge/services/ingestion-gateway/internal/replayaudit"
+	"teampulsebridge/services/ingestion-gateway/internal/retry"
+	"teampulsebridge/services/ingestion-gateway/internal/schema"
 	"teampulsebridge/services/ingestion-gateway/internal/securityaudit"
 )
 
@@ -31,6 +34,25 @@ func newPublicMux(appHandler http.Handler, smokeHandler http.Handler) *http.Serv
 	}
 	mux.Handle("/", appHandler)
 	return mux
+}
+
+type deferredHandler struct {
+	mu      sync.RWMutex
+	handler http.Handler
+}
+
+func (d *deferredHandler) set(h http.Handler) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.handler = h
+}
+
+func (d *deferredHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.handler != nil {
+		d.handler.ServeHTTP(w, r)
+	}
 }
 
 type HandlerBuilder struct {
@@ -61,6 +83,14 @@ func (b *HandlerBuilder) Build(publicMux http.Handler) http.Handler {
 			TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
 			OnReject:          b.securityFn,
 			Limiter:          b.limiter,
+		}),
+		httpx.SourceRateLimit(httpx.SourceRateLimitConfig{
+			Enabled:  b.cfg.SourceRateLimitEnabled,
+			Sources:  b.cfg.SourceRateLimits,
+			Default:  b.cfg.SourceRateLimitDefault,
+			OnReject: func(r *http.Request, source string, status int) {
+				b.securityFn(r, "source_rate_limit_exceeded:"+source, status)
+			},
 		}),
 		httpx.RequireAdminCIDRAllowlist(httpx.AdminCIDRConfig{
 			Enabled:           b.cfg.AdminAuthEnabled,
@@ -145,6 +175,7 @@ func main() {
 	if dedupTTL <= 0 {
 		dedupTTL = 5 * time.Minute
 	}
+	deduper := dedup.NewMemory(cfg.DedupEnabled, dedupTTL)
 
 	var failedStore failstore.Store
 	if cfg.FailedStoreEnabled {
@@ -245,6 +276,19 @@ func main() {
 		}
 	}
 
+	admin := handlers.NewAdminHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger, failedStore, replayAuditStore, securityAuditStore)
+
+	var schemaValidator *schema.Validator
+	if cfg.SchemaValidationEnabled {
+		var err error
+		schemaValidator, err = schema.NewValidator(cfg.SchemaPath)
+		if err != nil {
+			logger.Error("schema validation disabled due to invalid configuration", "error", err)
+		} else {
+			logger.Info("schema validation enabled", "path", cfg.SchemaPath)
+		}
+	}
+
 	h := handlers.NewWebhookHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger, func(reqCtx context.Context, source string, status int) {
 		telemetry.WebhookCounter.Add(reqCtx, 1,
 			metric.WithAttributes(
@@ -252,11 +296,11 @@ func main() {
 				attribute.Int("status", status),
 			),
 		)
-	}, dedup.NewMemory(cfg.DedupEnabled, dedupTTL), failedStore, func(r *http.Request, event handlers.SecurityEvent) {
+	}, deduper, failedStore, func(r *http.Request, event handlers.SecurityEvent) {
 		record := handlers.SecurityAuditRecord(r, event)
 		record.ClientIP = httpx.ClientIP(r, cfg.TrustedProxyCIDRs)
 		recordSecurityEvent(r, record)
-	})
+	}, schemaValidator)
 	securityRejectFn := func(req *http.Request, reason string, status int) {
 		recordSecurityEvent(req, securityaudit.SaveInput{
 			Category:   "request_rejected",
@@ -267,14 +311,34 @@ func main() {
 			HTTPStatus: status,
 		})
 	}
-	admin := handlers.NewAdminHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger, failedStore, replayAuditStore, securityAuditStore)
+
+	healthChecker := handlers.NewHealthChecker(runtimePublisher.Publisher, failedStore, deduper)
+
+	var retryScheduler *retry.Scheduler
+	if cfg.RetryEnabled && failedStore != nil {
+		retryScheduler = retry.NewScheduler(failedStore, runtimePublisher.Publisher, logger, retry.SchedulerOptions{
+			MaxRetries: cfg.RetryMaxAttempts,
+			Interval:   time.Duration(cfg.RetryIntervalSec) * time.Second,
+			OnRetry: func(ctx context.Context, source string, success bool, attempt int) {
+				telemetry.QueuePublishCounter.Add(ctx, 1,
+					metric.WithAttributes(
+						attribute.String("source", source),
+						attribute.String("result", map[bool]string{true: "retry_success", false: "retry_failed"}[success]),
+						attribute.Int("attempt", attempt),
+					),
+				)
+			},
+		})
+		retryScheduler.Start()
+		defer retryScheduler.Stop()
+	}
 
 	webhookMux := http.NewServeMux()
 	webhookMux.HandleFunc("GET /", handlers.ProductUI)
 	webhookMux.HandleFunc("GET /assets/ui.css", handlers.ProductUIStyles)
 	webhookMux.HandleFunc("GET /assets/ui.js", handlers.ProductUIScript)
-	webhookMux.HandleFunc("GET /healthz", handlers.Healthz)
-	webhookMux.HandleFunc("GET /readyz", handlers.Readyz)
+	webhookMux.HandleFunc("GET /healthz", healthChecker.Healthz)
+	webhookMux.HandleFunc("GET /readyz", healthChecker.Readyz)
 	webhookMux.Handle("GET /metrics", telemetry.MetricsHandler)
 	webhookMux.HandleFunc("GET /admin/configz", admin.Configz)
 	webhookMux.HandleFunc("GET /admin/events/failed", admin.FailedEvents)
@@ -287,16 +351,13 @@ func main() {
 	webhookMux.HandleFunc("POST /webhooks/github", h.HandleGitHub)
 	webhookMux.HandleFunc("POST /webhooks/gitlab", h.HandleGitLab)
 
-	publicMux := newPublicMux(webhookMux, nil)
-
 	handlerBuilder := NewHandlerBuilder(logger, &cfg, securityRejectFn)
-	handler := handlerBuilder.Build(publicMux)
 
-	uiSmokeProxy := handlers.NewUISmokeTestProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handler.ServeHTTP(w, r)
-	}), cfg.TrustedProxyCIDRs)
-	publicMux = newPublicMux(webhookMux, uiSmokeProxy)
-	handler = handlerBuilder.Build(publicMux)
+	handlerWrapper := &deferredHandler{}
+	uiSmokeProxy := handlers.NewUISmokeTestProxy(handlerWrapper, cfg.TrustedProxyCIDRs)
+	publicMux := newPublicMux(webhookMux, uiSmokeProxy)
+	handler := handlerBuilder.Build(publicMux)
+	handlerWrapper.set(handler)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -318,6 +379,7 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
+	signal.Stop(stop)
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
@@ -326,6 +388,7 @@ func main() {
 		logger.Error("graceful shutdown failed", "error", err)
 	}
 
+	deduper.Stop()
 	handlerBuilder.Stop()
 }
 

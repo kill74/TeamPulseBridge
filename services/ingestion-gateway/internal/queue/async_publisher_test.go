@@ -37,6 +37,10 @@ func (p *blockingPublisher) Close() error {
 	return nil
 }
 
+func (p *blockingPublisher) HealthCheck(_ context.Context) error {
+	return nil
+}
+
 type scriptedPublisher struct {
 	started chan struct{}
 	release chan struct{}
@@ -65,6 +69,10 @@ func (p *scriptedPublisher) Publish(_ context.Context, _ string, _ []byte, _ map
 
 func (p *scriptedPublisher) Close() error {
 	return nil
+}
+
+func (p *scriptedPublisher) HealthCheck(_ context.Context) error {
+	return p.err
 }
 
 func TestAsyncPublisherPublishAfterCloseReturnsErrQueueClosed(t *testing.T) {
