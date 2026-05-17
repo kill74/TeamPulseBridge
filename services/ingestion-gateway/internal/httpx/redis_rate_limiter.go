@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"log/slog"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -17,9 +19,10 @@ type RedisRateLimiter struct {
 	window  time.Duration
 	timeout time.Duration
 	now     func() time.Time
+	logger  *slog.Logger
 }
 
-func NewRedisRateLimiter(client *redis.Client, prefix string, window time.Duration) *RedisRateLimiter {
+func NewRedisRateLimiter(client *redis.Client, prefix string, window time.Duration, logger *slog.Logger) *RedisRateLimiter {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
 		prefix = "rate_limit"
@@ -27,12 +30,16 @@ func NewRedisRateLimiter(client *redis.Client, prefix string, window time.Durati
 	if window < time.Second {
 		window = time.Minute
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &RedisRateLimiter{
 		client:  client,
 		prefix:  prefix,
 		window:  window,
 		timeout: 250 * time.Millisecond,
 		now:     time.Now,
+		logger:  logger,
 	}
 }
 
@@ -56,7 +63,9 @@ func (l *RedisRateLimiter) Allow(key string, limit int) bool {
 		return true
 	}
 	if count == 1 {
-		_ = l.client.Expire(ctx, redisKey, 2*l.window).Err()
+		if err := l.client.Expire(ctx, redisKey, 2*l.window).Err(); err != nil {
+			l.logger.Warn("failed to set expiration on rate limit key", "key", redisKey, "error", err)
+		}
 	}
 	return count <= int64(limit)
 }

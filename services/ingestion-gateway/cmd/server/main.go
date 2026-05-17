@@ -506,7 +506,7 @@ func main() {
 	var requestLimiter httpx.RateLimiter
 	var stopRequestLimiter func()
 	if cfg.RateLimitBackend == "redis" {
-		requestLimiter = httpx.NewRedisRateLimiter(redisClient, cfg.RateLimitRedisPrefix, time.Minute)
+		requestLimiter = httpx.NewRedisRateLimiter(redisClient, cfg.RateLimitRedisPrefix, time.Minute, logger)
 		logger.Info("using redis-backed request rate limiting", "addr", cfg.RedisAddr, "prefix", cfg.RateLimitRedisPrefix)
 	} else {
 		memoryLimiter := httpx.NewIPRateLimiter(nil, time.Minute, 1024)
