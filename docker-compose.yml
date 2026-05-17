@@ -24,6 +24,13 @@ services:
       REQUIRE_SECRETS: 'true'
       QUEUE_BACKEND: log
       ADMIN_AUTH_ENABLED: 'true'
+      ADMIN_JWT_ISSUER: teampulse-test
+      ADMIN_JWT_AUDIENCE: teampulse-test
+      ADMIN_JWT_SECRET: super_secret_string_for_testing_purposes_only_32_chars
+      SLACK_SIGNING_SECRET: test_slack_secret
+      GITHUB_WEBHOOK_SECRET: test_github_secret
+      GITLAB_WEBHOOK_TOKEN: test_gitlab_token
+      TEAMS_CLIENT_STATE: test_teams_state
       ENVIRONMENT: local
       REDIS_ADDR: redis:6379
       DATABASE_URL: postgres://teampulse:secret@postgres:5432/teampulse?sslmode=disable
