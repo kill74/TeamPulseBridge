@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -38,6 +39,7 @@ type AdminHandler struct {
 	failed    failstore.Store
 	audit     replayaudit.Store
 	security  securityaudit.Store
+	flags     *config.FeatureFlags
 }
 
 func NewAdminHandler(cfg config.Config, publisher queue.Publisher, logger *slog.Logger) *AdminHandler {
@@ -52,7 +54,7 @@ func NewAdminHandler(cfg config.Config, publisher queue.Publisher, logger *slog.
 			logger.Error("admin failed-event explorer disabled due to invalid configuration",
 				"path", cfg.FailedStorePath,
 				"error", err,
-				"error_code", apperr.CodeReplayConfigInvalid,
+				"error_code", apperr.CodeFailedEventStore,
 			)
 		} else {
 			failedStore = store
@@ -88,10 +90,10 @@ func NewAdminHandler(cfg config.Config, publisher queue.Publisher, logger *slog.
 		}
 	}
 
-	return NewAdminHandlerWithDependencies(cfg, publisher, logger, failedStore, auditStore, securityStore)
+	return NewAdminHandlerWithDependencies(cfg, publisher, logger, failedStore, auditStore, securityStore, nil)
 }
 
-func NewAdminHandlerWithDependencies(cfg config.Config, publisher queue.Publisher, logger *slog.Logger, failed failstore.Store, audit replayaudit.Store, security securityaudit.Store) *AdminHandler {
+func NewAdminHandlerWithDependencies(cfg config.Config, publisher queue.Publisher, logger *slog.Logger, failed failstore.Store, audit replayaudit.Store, security securityaudit.Store, flags *config.FeatureFlags) *AdminHandler {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -102,6 +104,7 @@ func NewAdminHandlerWithDependencies(cfg config.Config, publisher queue.Publishe
 		failed:    failed,
 		audit:     audit,
 		security:  security,
+		flags:     flags,
 	}
 }
 
@@ -112,6 +115,9 @@ func (h *AdminHandler) Configz(w http.ResponseWriter, _ *http.Request) {
 		"admin_auth_enabled":                    h.cfg.AdminAuthEnabled,
 		"request_timeout_sec":                   h.cfg.RequestTimeoutSec,
 		"queue_buffer":                          h.cfg.QueueBuffer,
+		"queue_workers":                         h.cfg.QueueWorkers,
+		"queue_bulkhead_enabled":                h.cfg.QueueBulkheadEnabled,
+		"queue_bulkhead_buffer_per_source":      h.cfg.QueueBulkheadBufferPerSource,
 		"queue_backpressure_enabled":            h.cfg.QueueBackpressureEnabled,
 		"queue_backpressure_soft_limit_percent": h.cfg.QueueBackpressureSoftLimitPercent,
 		"queue_backpressure_hard_limit_percent": h.cfg.QueueBackpressureHardLimitPercent,
@@ -124,6 +130,13 @@ func (h *AdminHandler) Configz(w http.ResponseWriter, _ *http.Request) {
 		"failed_event_store_path":               h.cfg.FailedStorePath,
 		"replay_audit_enabled":                  h.cfg.ReplayAuditEnabled,
 		"replay_audit_path":                     h.cfg.ReplayAuditPath,
+		"source_rate_limit_enabled":             h.cfg.SourceRateLimitEnabled,
+		"source_rate_limit_default":             h.cfg.SourceRateLimitDefault,
+		"rate_limit_backend":                    h.cfg.RateLimitBackend,
+		"pubsub_publish_goroutines":             h.cfg.PubSubPublishGoroutines,
+		"pubsub_max_outstanding_messages":       h.cfg.PubSubMaxOutstandingMessages,
+		"pubsub_max_outstanding_bytes":          h.cfg.PubSubMaxOutstandingBytes,
+		"pubsub_flow_control_behavior":          h.cfg.PubSubFlowControlBehavior,
 		"security_audit_enabled":                h.cfg.SecurityAuditEnabled,
 		"security_audit_path":                   h.cfg.SecurityAuditPath,
 		"security_audit_retention_days":         h.cfg.SecurityAuditRetentionDays,
@@ -222,7 +235,7 @@ type replayBatchSummary struct {
 }
 
 func (h *AdminHandler) ReplayFailedEvent(w http.ResponseWriter, r *http.Request) {
-	actor := replayActorFromRequest(r)
+	actor := replayActorFromRequest(r, h.cfg.AdminJWTSecret)
 	requestID := httpx.RequestIDFromContext(r.Context())
 
 	if status, replayErr := h.replayStoreDependencyError("handlers.admin.replayFailedEvent"); replayErr != nil {
@@ -313,20 +326,26 @@ func (h *AdminHandler) ReplayFailedEventsBatch(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	actor := replayActorFromRequest(r)
+	actor := replayActorFromRequest(r, h.cfg.AdminJWTSecret)
 	requestID := httpx.RequestIDFromContext(r.Context())
 	results := make([]replayExecutionResult, 0, len(eventIDs))
 	summary := replayBatchSummary{
 		Requested: len(req.EventIDs),
 	}
 	for _, eventID := range eventIDs {
-		result, _ := h.executeReplay(r.Context(), replayExecutionInput{
+		result, err := h.executeReplay(r.Context(), replayExecutionInput{
 			EventID:         eventID,
 			DryRun:          req.DryRun,
 			HeaderOverrides: req.HeaderOverrides,
 			Actor:           actor,
 			RequestID:       requestID,
 		})
+		if err != nil {
+			h.logger.Warn("batch replay event failed",
+				"event_id", eventID,
+				"error", err,
+			)
+		}
 		results = append(results, result)
 		summary.Processed++
 		switch result.Status {
@@ -434,6 +453,67 @@ func (h *AdminHandler) SecurityAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": true,
 		"records": records,
+	})
+}
+
+type featureFlagUpdateRequest struct {
+	Flag    string `json:"flag"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (h *AdminHandler) FeatureFlags(w http.ResponseWriter, r *http.Request) {
+	if h.flags == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"flags":   map[string]bool{},
+		})
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		var req featureFlagUpdateRequest
+		if err := decodeAdminJSONRequest(w, r, 1<<10, &req); err != nil {
+			h.respondError(w, r, http.StatusBadRequest, apperr.New(
+				"handlers.admin.featureFlags",
+				apperr.CodeReplayInputInvalid,
+				"invalid feature flag update payload",
+				err,
+			))
+			return
+		}
+
+		req.Flag = strings.TrimSpace(req.Flag)
+		if req.Flag == "" {
+			h.respondError(w, r, http.StatusBadRequest, apperr.New(
+				"handlers.admin.featureFlags",
+				apperr.CodeReplayInputInvalid,
+				"flag name is required",
+				nil,
+			))
+			return
+		}
+
+		if !h.flags.Set(req.Flag, req.Enabled) {
+			h.respondError(w, r, http.StatusNotFound, apperr.New(
+				"handlers.admin.featureFlags",
+				apperr.CodeReplayInputInvalid,
+				fmt.Sprintf("feature flag %q not found", req.Flag),
+				nil,
+			))
+			return
+		}
+
+		h.logger.Info("feature flag updated", "flag", req.Flag, "enabled", req.Enabled)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"flag":    req.Flag,
+			"enabled": req.Enabled,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": true,
+		"flags":   h.flags.List(),
 	})
 }
 
@@ -570,10 +650,38 @@ func bodyPreview(body []byte, limit int) string {
 		return ""
 	}
 	clean := strings.TrimSpace(string(body))
+	clean = redactSecrets(clean)
 	if len(clean) <= limit {
 		return clean
 	}
-	return clean[:limit] + "...truncated"
+	truncated := clean[:limit]
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated + "...truncated"
+}
+
+func redactSecrets(s string) string {
+	patterns := []string{`"token"`, `"secret"`, `"password"`, `"key"`, `"authorization"`}
+	for _, pattern := range patterns {
+		idx := strings.Index(strings.ToLower(s), pattern)
+		if idx == -1 {
+			continue
+		}
+		colonIdx := strings.Index(s[idx:], ":")
+		if colonIdx == -1 {
+			continue
+		}
+		start := idx + colonIdx + 1
+		end := start
+		for end < len(s) && s[end] != ',' && s[end] != '}' && s[end] != '\n' {
+			end++
+		}
+		if end > start {
+			s = s[:start] + "[REDACTED]" + s[end:]
+		}
+	}
+	return s
 }
 
 func decodeAdminJSONRequest(w http.ResponseWriter, r *http.Request, maxBytes int64, out any) error {
@@ -796,7 +904,7 @@ func replayMode(dryRun bool) string {
 	return "publish"
 }
 
-func replayActorFromRequest(r *http.Request) string {
+func replayActorFromRequest(r *http.Request, jwtSecret string) string {
 	if v := strings.TrimSpace(r.Header.Get("X-Operator")); v != "" {
 		return v
 	}
@@ -807,10 +915,15 @@ func replayActorFromRequest(r *http.Request) string {
 	authz := strings.TrimSpace(r.Header.Get("Authorization"))
 	if strings.HasPrefix(strings.ToLower(authz), "bearer ") {
 		token := strings.TrimSpace(authz[len("Bearer "):])
-		if token != "" {
+		if token != "" && jwtSecret != "" {
 			claims := jwt.MapClaims{}
-			parser := jwt.NewParser()
-			if _, _, err := parser.ParseUnverified(token, claims); err == nil {
+			parsedToken, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
+				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+				}
+				return []byte(jwtSecret), nil
+			})
+			if err == nil && parsedToken.Valid {
 				for _, key := range []string{"email", "sub", "preferred_username", "name"} {
 					if value := claimString(claims[key]); value != "" {
 						return value

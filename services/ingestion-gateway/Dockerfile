@@ -12,6 +12,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=builder /out/ingestion-gateway /app/ingestion-gateway
+COPY --from=builder /src/internal/schema/schemas /app/internal/schema/schemas
 
 EXPOSE 8080
 USER nonroot:nonroot

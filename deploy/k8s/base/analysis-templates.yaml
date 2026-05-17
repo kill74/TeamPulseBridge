@@ -53,3 +53,23 @@ spec:
           query: |
             sum(rate(queue_publish_outcomes_total{result="failed"}[5m])) /
             clamp_min(sum(rate(queue_publish_outcomes_total[5m])), 0.001)
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: ingestion-gateway-security-rejection
+spec:
+  args:
+    - name: prometheus-address
+  metrics:
+    - name: security-rejection-burn-rate
+      interval: 1m
+      count: 3
+      failureLimit: 1
+      consecutiveErrorLimit: 1
+      successCondition: result[0] < 14.4
+      provider:
+        prometheus:
+          address: "{{args.prometheus-address}}"
+          query: |
+            teampulse:security_rejection_budget_burn:5m

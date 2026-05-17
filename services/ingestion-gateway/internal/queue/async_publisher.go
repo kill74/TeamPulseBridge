@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"sync"
+	"time"
 )
 
 var ErrQueueFull = errors.New("publish queue is full")
@@ -15,7 +16,6 @@ var ErrQueueClosed = errors.New("publish queue is closed")
 var ErrQueueThrottled = errors.New("publish queue is throttled")
 
 type queuedEvent struct {
-	ctx     context.Context
 	source  string
 	body    []byte
 	headers map[string]string
@@ -24,6 +24,7 @@ type queuedEvent struct {
 type AsyncPublisherOptions struct {
 	Backpressure BackpressureConfig
 	Hooks        AsyncPublisherHooks
+	WorkerCount  int
 }
 
 type BackpressureConfig struct {
@@ -36,8 +37,10 @@ type BackpressureConfig struct {
 }
 
 type AsyncPublisherHooks struct {
-	OnBackpressure func(ctx context.Context, source, action string, snapshot PublisherSnapshot)
-	OnPublish      func(ctx context.Context, source, result string, snapshot PublisherSnapshot)
+	OnBackpressure   func(ctx context.Context, source, action string, snapshot PublisherSnapshot)
+	OnPublish        func(ctx context.Context, source, result string, snapshot PublisherSnapshot)
+	OnDLQ            func(ctx context.Context, source string, body []byte, headers map[string]string, err error)
+	OnPublishLatency func(ctx context.Context, source string, latencySec float64, failed bool)
 }
 
 type publishWindow struct {
@@ -76,14 +79,15 @@ func NewAsyncPublisherWithOptions(inner Publisher, buffer int, logger *slog.Logg
 		options:      options,
 		publishStats: newPublishWindow(options.Backpressure.FailureWindow),
 	}
-	p.wg.Add(1)
-	go p.run()
+	p.wg.Add(options.WorkerCount)
+	for workerID := 1; workerID <= options.WorkerCount; workerID++ {
+		go p.run(workerID)
+	}
 	return p
 }
 
 func (p *AsyncPublisher) Publish(ctx context.Context, source string, body []byte, headers map[string]string) error {
 	e := queuedEvent{
-		ctx:     ctx,
 		source:  source,
 		body:    append([]byte(nil), body...),
 		headers: cloneHeaders(headers),
@@ -138,27 +142,52 @@ func (p *AsyncPublisher) HealthCheck(_ context.Context) error {
 	return nil
 }
 
-func (p *AsyncPublisher) run() {
+func (p *AsyncPublisher) run(workerID int) {
 	defer p.wg.Done()
+	for e := range p.ch {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					p.logger.Error("async publisher recovered from event panic", "worker_id", workerID, "source", e.source, "panic", r)
+				}
+			}()
+			p.processQueuedEvent(workerID, e)
+		}()
+	}
+}
+
+func (p *AsyncPublisher) processQueuedEvent(workerID int, e queuedEvent) {
+	publishCtx := context.Background()
+	start := time.Now()
+	err := p.safePublish(publishCtx, workerID, e)
+	latency := time.Since(start).Seconds()
+	if p.options.Hooks.OnPublishLatency != nil {
+		p.options.Hooks.OnPublishLatency(publishCtx, e.source, latency, err != nil)
+	}
+	snapshot := p.recordPublishResult(err == nil)
+	if err != nil {
+		p.logger.Error(
+			"failed to publish queued event",
+			"worker_id", workerID,
+			"source", e.source,
+			"error", err,
+			"queue_usage_ratio", snapshot.UsageRatio,
+			"failure_ratio", snapshot.FailureRatio,
+		)
+		if p.options.Hooks.OnDLQ != nil {
+			p.options.Hooks.OnDLQ(publishCtx, e.source, e.body, e.headers, err)
+		}
+	}
+	p.emitPublish(publishCtx, e.source, resultLabel(err), snapshot)
+}
+
+func (p *AsyncPublisher) safePublish(ctx context.Context, workerID int, e queuedEvent) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			p.logger.Error("async publisher recovered from panic", "panic", r)
+			err = fmt.Errorf("publish panic on worker %d: %v", workerID, r)
 		}
 	}()
-	for e := range p.ch {
-		err := p.inner.Publish(e.ctx, e.source, e.body, e.headers)
-		snapshot := p.recordPublishResult(err == nil)
-		if err != nil {
-			p.logger.Error(
-				"failed to publish queued event",
-				"source", e.source,
-				"error", err,
-				"queue_usage_ratio", snapshot.UsageRatio,
-				"failure_ratio", snapshot.FailureRatio,
-			)
-		}
-		p.emitPublish(e.ctx, e.source, resultLabel(err), snapshot)
-	}
+	return p.inner.Publish(ctx, e.source, e.body, e.headers)
 }
 
 func (p *AsyncPublisher) Snapshot() PublisherSnapshot {
@@ -226,6 +255,9 @@ func (p *AsyncPublisher) emitPublish(ctx context.Context, source, result string,
 }
 
 func (o AsyncPublisherOptions) withDefaults() AsyncPublisherOptions {
+	if o.WorkerCount <= 0 {
+		o.WorkerCount = 1
+	}
 	if o.Backpressure.SoftLimitRatio <= 0 {
 		o.Backpressure.SoftLimitRatio = 0.70
 	}

@@ -18,6 +18,9 @@ type Config struct {
 	GitLabWebhookToken                string
 	TeamsClientState                  string
 	QueueBuffer                       int
+	QueueWorkers                      int
+	QueueBulkheadEnabled              bool
+	QueueBulkheadBufferPerSource      int
 	RequestTimeoutSec                 int
 	RequireSecrets                    bool
 	QueueBackend                      string
@@ -34,8 +37,13 @@ type Config struct {
 	AdminRateLimitRPM                 int
 	DedupEnabled                      bool
 	DedupTTLSeconds                   int
+	RedisAddr                         string
+	RedisPassword                     string
+	RedisDB                           int
+	DedupRedisPrefix                  string
 	FailedStoreEnabled                bool
 	FailedStorePath                   string
+	DatabaseURL                       string
 	ReplayAuditEnabled                bool
 	ReplayAuditPath                   string
 	SecurityAuditEnabled              bool
@@ -56,6 +64,13 @@ type Config struct {
 	RetryEnabled                      bool
 	RetryMaxAttempts                  int
 	RetryIntervalSec                  int
+	PubSubPublishTimeoutSec           int
+	PubSubPublishGoroutines           int
+	PubSubMaxOutstandingMessages      int
+	PubSubMaxOutstandingBytes         int
+	PubSubFlowControlBehavior         string
+	RateLimitBackend                  string
+	RateLimitRedisPrefix              string
 }
 
 func LoadFromEnv() Config {
@@ -67,12 +82,15 @@ func LoadFromEnv() Config {
 		GitLabWebhookToken:                os.Getenv("GITLAB_WEBHOOK_TOKEN"),
 		TeamsClientState:                  os.Getenv("TEAMS_CLIENT_STATE"),
 		QueueBuffer:                       intOrDefault("QUEUE_BUFFER", 4096),
+		QueueWorkers:                      intOrDefault("QUEUE_WORKERS", 1),
+		QueueBulkheadEnabled:              boolOrDefault("QUEUE_BULKHEAD_ENABLED", false),
+		QueueBulkheadBufferPerSource:      intOrDefault("QUEUE_BULKHEAD_BUFFER_PER_SOURCE", 1024),
 		RequestTimeoutSec:                 intOrDefault("REQUEST_TIMEOUT_SEC", 15),
 		RequireSecrets:                    boolOrDefault("REQUIRE_SECRETS", true),
 		QueueBackend:                      envOrDefault("QUEUE_BACKEND", "log"),
 		PubSubProjectID:                   os.Getenv("PUBSUB_PROJECT_ID"),
 		PubSubTopicID:                     os.Getenv("PUBSUB_TOPIC_ID"),
-		AdminAuthEnabled:                  boolOrDefault("ADMIN_AUTH_ENABLED", false),
+		AdminAuthEnabled:                  boolOrDefault("ADMIN_AUTH_ENABLED", true),
 		AdminJWTIssuer:                    os.Getenv("ADMIN_JWT_ISSUER"),
 		AdminJWTAudience:                  os.Getenv("ADMIN_JWT_AUDIENCE"),
 		AdminJWTSecret:                    os.Getenv("ADMIN_JWT_SECRET"),
@@ -83,8 +101,13 @@ func LoadFromEnv() Config {
 		AdminRateLimitRPM:                 intOrDefault("ADMIN_RATE_LIMIT_RPM", 60),
 		DedupEnabled:                      boolOrDefault("DEDUP_ENABLED", true),
 		DedupTTLSeconds:                   intOrDefault("DEDUP_TTL_SEC", 300),
+		RedisAddr:                         os.Getenv("REDIS_ADDR"),
+		RedisPassword:                     os.Getenv("REDIS_PASSWORD"),
+		RedisDB:                           intOrDefault("REDIS_DB", 0),
+		DedupRedisPrefix:                  envOrDefault("DEDUP_REDIS_PREFIX", "webhook_dedup"),
 		FailedStoreEnabled:                boolOrDefault("FAILED_EVENT_STORE_ENABLED", true),
 		FailedStorePath:                   envOrDefault("FAILED_EVENT_STORE_PATH", "data/failed-events.jsonl"),
+		DatabaseURL:                       os.Getenv("DATABASE_URL"),
 		ReplayAuditEnabled:                boolOrDefault("REPLAY_AUDIT_ENABLED", true),
 		ReplayAuditPath:                   envOrDefault("REPLAY_AUDIT_PATH", "data/replay-audit.jsonl"),
 		SecurityAuditEnabled:              boolOrDefault("SECURITY_AUDIT_ENABLED", true),
@@ -97,14 +120,21 @@ func LoadFromEnv() Config {
 		QueueFailureBudgetWindow:          intOrDefault("QUEUE_FAILURE_BUDGET_WINDOW", 100),
 		QueueFailureBudgetMinSamples:      intOrDefault("QUEUE_FAILURE_BUDGET_MIN_SAMPLES", 20),
 		QueueThrottleRetryAfterSec:        intOrDefault("QUEUE_THROTTLE_RETRY_AFTER_SEC", 5),
-		SourceRateLimitEnabled:            boolOrDefault("SOURCE_RATE_LIMIT_ENABLED", false),
+		SourceRateLimitEnabled:            boolOrDefault("SOURCE_RATE_LIMIT_ENABLED", true),
 		SourceRateLimits:                  parseSourceRateLimits(os.Getenv("SOURCE_RATE_LIMITS")),
 		SourceRateLimitDefault:            intOrDefault("SOURCE_RATE_LIMIT_DEFAULT", 100),
-		SchemaValidationEnabled:           boolOrDefault("SCHEMA_VALIDATION_ENABLED", false),
+		SchemaValidationEnabled:           boolOrDefault("SCHEMA_VALIDATION_ENABLED", true),
 		SchemaPath:                        envOrDefault("SCHEMA_PATH", "internal/schema/schemas"),
 		RetryEnabled:                      boolOrDefault("RETRY_ENABLED", false),
 		RetryMaxAttempts:                  intOrDefault("RETRY_MAX_ATTEMPTS", 3),
 		RetryIntervalSec:                  intOrDefault("RETRY_INTERVAL_SEC", 10),
+		PubSubPublishTimeoutSec:           intOrDefault("PUBSUB_PUBLISH_TIMEOUT_SEC", 5),
+		PubSubPublishGoroutines:           intOrDefault("PUBSUB_PUBLISH_GOROUTINES", 0),
+		PubSubMaxOutstandingMessages:      intOrDefault("PUBSUB_MAX_OUTSTANDING_MESSAGES", 0),
+		PubSubMaxOutstandingBytes:         intOrDefault("PUBSUB_MAX_OUTSTANDING_BYTES", 0),
+		PubSubFlowControlBehavior:         envOrDefault("PUBSUB_FLOW_CONTROL_BEHAVIOR", "ignore"),
+		RateLimitBackend:                  envOrDefault("RATE_LIMIT_BACKEND", "memory"),
+		RateLimitRedisPrefix:              envOrDefault("RATE_LIMIT_REDIS_PREFIX", "rate_limit"),
 	}
 }
 
@@ -121,6 +151,20 @@ func (c Config) Validate() error {
 	}
 	if c.QueueBuffer > 1_000_000 {
 		return fmt.Errorf("QUEUE_BUFFER is too high (%d); expected <= 1000000", c.QueueBuffer)
+	}
+	queueWorkers := c.QueueWorkers
+	if queueWorkers == 0 {
+		queueWorkers = 1
+	}
+	if queueWorkers < 1 || queueWorkers > 1024 {
+		return fmt.Errorf("QUEUE_WORKERS must be between 1 and 1024, got %d", c.QueueWorkers)
+	}
+	bulkheadBufferPerSource := c.QueueBulkheadBufferPerSource
+	if bulkheadBufferPerSource == 0 {
+		bulkheadBufferPerSource = 1024
+	}
+	if bulkheadBufferPerSource < 1 || bulkheadBufferPerSource > 1_000_000 {
+		return fmt.Errorf("QUEUE_BULKHEAD_BUFFER_PER_SOURCE must be between 1 and 1000000, got %d", c.QueueBulkheadBufferPerSource)
 	}
 	if c.RequestTimeoutSec <= 0 {
 		return fmt.Errorf("REQUEST_TIMEOUT_SEC must be > 0, got %d", c.RequestTimeoutSec)
@@ -195,6 +239,42 @@ func (c Config) Validate() error {
 	}
 	if c.QueueBackend != "log" && c.QueueBackend != "pubsub" {
 		return fmt.Errorf("QUEUE_BACKEND must be one of log|pubsub, got %q", c.QueueBackend)
+	}
+	rateLimitBackend := strings.TrimSpace(c.RateLimitBackend)
+	if rateLimitBackend == "" {
+		rateLimitBackend = "memory"
+	}
+	if rateLimitBackend != "memory" && rateLimitBackend != "redis" {
+		return fmt.Errorf("RATE_LIMIT_BACKEND must be one of memory|redis, got %q", c.RateLimitBackend)
+	}
+	if rateLimitBackend == "redis" && strings.TrimSpace(c.RedisAddr) == "" {
+		return errors.New("REDIS_ADDR is required when RATE_LIMIT_BACKEND=redis")
+	}
+	if c.RateLimitRedisPrefix != "" && strings.TrimSpace(c.RateLimitRedisPrefix) == "" {
+		return errors.New("RATE_LIMIT_REDIS_PREFIX must not be blank")
+	}
+	pubsubPublishTimeoutSec := c.PubSubPublishTimeoutSec
+	if pubsubPublishTimeoutSec == 0 {
+		pubsubPublishTimeoutSec = 5
+	}
+	if pubsubPublishTimeoutSec < 1 || pubsubPublishTimeoutSec > 300 {
+		return fmt.Errorf("PUBSUB_PUBLISH_TIMEOUT_SEC must be between 1 and 300, got %d", c.PubSubPublishTimeoutSec)
+	}
+	if c.PubSubPublishGoroutines < 0 || c.PubSubPublishGoroutines > 1024 {
+		return fmt.Errorf("PUBSUB_PUBLISH_GOROUTINES must be between 0 and 1024, got %d", c.PubSubPublishGoroutines)
+	}
+	if c.PubSubMaxOutstandingMessages < 0 || c.PubSubMaxOutstandingMessages > 10_000_000 {
+		return fmt.Errorf("PUBSUB_MAX_OUTSTANDING_MESSAGES must be between 0 and 10000000, got %d", c.PubSubMaxOutstandingMessages)
+	}
+	if c.PubSubMaxOutstandingBytes < 0 {
+		return fmt.Errorf("PUBSUB_MAX_OUTSTANDING_BYTES must be >= 0, got %d", c.PubSubMaxOutstandingBytes)
+	}
+	pubsubFlowControlBehavior := strings.TrimSpace(c.PubSubFlowControlBehavior)
+	if pubsubFlowControlBehavior == "" {
+		pubsubFlowControlBehavior = "ignore"
+	}
+	if pubsubFlowControlBehavior != "ignore" && pubsubFlowControlBehavior != "block" && pubsubFlowControlBehavior != "signal_error" {
+		return fmt.Errorf("PUBSUB_FLOW_CONTROL_BEHAVIOR must be one of ignore|block|signal_error, got %q", c.PubSubFlowControlBehavior)
 	}
 	if c.QueueBackend == "pubsub" {
 		if c.PubSubProjectID == "" {
@@ -275,7 +355,8 @@ func intOrDefault(key string, fallback int) int {
 		return fallback
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n < 0 {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: invalid integer config %s=%q, using default %d\n", key, v, fallback)
 		return fallback
 	}
 	return n

@@ -12,7 +12,18 @@ The format is inspired by Keep a Changelog and this project uses Semantic Versio
 
 ## Unreleased
 
-- Next release roadmap defined for v1.1.0 (resilience, policy-as-code, and security operations)
+- feat(queue): add configurable async publish workers, optional per-source bulkheads, aggregate/source queue snapshots, and Pub/Sub flow-control tuning
+- feat(rate-limit): add shared `RateLimiter` abstraction, Redis-backed distributed counters, trusted-proxy-aware source limits, and default source limiting without explicit overrides
+- feat(observability): expose per-source queue usage, depth, and failure-budget gauges when queue bulkheads are enabled
+- feat(config): add runtime validation and `/admin/configz` visibility for queue worker, bulkhead, Pub/Sub flow-control, source limit, and rate-limit backend settings
+- perf(schema): validate provider payload contracts using streaming top-level JSON field extraction instead of full object unmarshalling
+- docs: document production scalability controls for queue workers, bulkheads, Pub/Sub flow control, Redis rate limits, and durable multi-replica stores
+- feat(deploy): add `ingestion-gateway-security-rejection` AnalysisTemplate gating canary promotions on security rejection burn rate
+- feat(deploy): include security-rejection analysis gate in staging (2-step) and prod (3-step) rollout overlays
+- feat(policy): enforce `ingestion-gateway-security-rejection` AnalysisTemplate presence in production manifests via `check_iac.py`
+- test(policy): update `test_check_iac.py` fixtures to cover security-rejection template requirements for prod
+- ci: add `contracts` job to `ci.yml` — runs fixture lint and contract/schema-drift tests on every push and PR
+- ci: add `policy.yml` workflow — runs Checkov (Terraform + Kubernetes) and `check_iac.py` on IaC path changes
 
 ## v1.0.0 - 2026-03-26
 

@@ -14,7 +14,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version: "1.25.x"
 
       - name: Download modules
         working-directory: services/ingestion-gateway
@@ -28,7 +28,7 @@ jobs:
 
       - name: Run tests
         working-directory: services/ingestion-gateway
-        run: go test ./...
+        run: go test -race -count=1 ./...
 
       - name: Run linter
         uses: golangci/golangci-lint-action@v6
@@ -37,3 +37,21 @@ jobs:
           install-mode: goinstall
           working-directory: services/ingestion-gateway
           args: --timeout=5m
+
+  contracts:
+    runs-on: ubuntu-latest
+    needs: ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Run fixture linter
+        run: cd services/ingestion-gateway && go run ./cmd/fixturelint
+
+      - name: Run contract and schema drift tests
+        run: cd services/ingestion-gateway && go test -count=1 ./internal/handlers ./internal/queue -run 'TestWebhookFixtureCatalog|TestWebhookPayloadContracts|TestWebhookCompatibilityMatrix|TestRawWebhookEnvelopeSchema'

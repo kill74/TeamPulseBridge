@@ -11,3 +11,7 @@ type PublisherSnapshot struct {
 type SnapshotProvider interface {
 	Snapshot() PublisherSnapshot
 }
+
+type SourceSnapshotProvider interface {
+	SourceSnapshots() map[string]PublisherSnapshot
+}

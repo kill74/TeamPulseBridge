@@ -5,19 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
 	"cloud.google.com/go/pubsub/v2/apiv1/pubsubpb"
+	"google.golang.org/api/option"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type PubSubPublisher struct {
-	client    *pubsub.Client
-	topic     *pubsub.Publisher
-	topicName string
-	logger    *slog.Logger
+	client         *pubsub.Client
+	topic          *pubsub.Publisher
+	topicName      string
+	logger         *slog.Logger
+	publishTimeout time.Duration
 }
 
 type pubSubEnvelope struct {
@@ -29,8 +33,46 @@ type pubSubEnvelope struct {
 	SchemaValue int               `json:"schema_value"`
 }
 
-func NewPubSubPublisher(ctx context.Context, projectID, topicID string, logger *slog.Logger) (*PubSubPublisher, error) {
-	client, err := pubsub.NewClient(ctx, projectID)
+type PubSubOption func(*PubSubPublisher)
+
+func WithPublishTimeout(d time.Duration) PubSubOption {
+	return func(p *PubSubPublisher) {
+		if d > 0 {
+			p.publishTimeout = d
+		}
+	}
+}
+
+func WithPublishGoroutines(n int) PubSubOption {
+	return func(p *PubSubPublisher) {
+		if n > 0 {
+			p.topic.PublishSettings.NumGoroutines = n
+		}
+	}
+}
+
+func WithPublishFlowControl(maxOutstandingMessages, maxOutstandingBytes int, behavior string) PubSubOption {
+	return func(p *PubSubPublisher) {
+		if maxOutstandingMessages > 0 {
+			p.topic.PublishSettings.FlowControlSettings.MaxOutstandingMessages = maxOutstandingMessages
+		}
+		if maxOutstandingBytes > 0 {
+			p.topic.PublishSettings.FlowControlSettings.MaxOutstandingBytes = maxOutstandingBytes
+		}
+		p.topic.PublishSettings.FlowControlSettings.LimitExceededBehavior = pubsubLimitExceededBehavior(behavior)
+	}
+}
+
+func NewPubSubPublisher(ctx context.Context, projectID, topicID string, logger *slog.Logger, opts ...PubSubOption) (*PubSubPublisher, error) {
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 50,
+			IdleConnTimeout:     90 * time.Second,
+		},
+		Timeout: 30 * time.Second,
+	}
+	client, err := pubsub.NewClient(ctx, projectID, option.WithHTTPClient(httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("create pubsub client: %w", err)
 	}
@@ -38,7 +80,7 @@ func NewPubSubPublisher(ctx context.Context, projectID, topicID string, logger *
 	topicName := fmt.Sprintf("projects/%s/topics/%s", projectID, topicID)
 	if _, err := client.TopicAdminClient.GetTopic(ctx, &pubsubpb.GetTopicRequest{Topic: topicName}); err != nil {
 		if closeErr := client.Close(); closeErr != nil {
-			return nil, fmt.Errorf("check topic existence: %w (client close failed: %v)", err, closeErr)
+			return nil, fmt.Errorf("check topic existence: %w; client close error: %w", err, closeErr)
 		}
 		if status.Code(err) == codes.NotFound {
 			return nil, fmt.Errorf("pubsub topic %q does not exist", topicID)
@@ -47,7 +89,17 @@ func NewPubSubPublisher(ctx context.Context, projectID, topicID string, logger *
 	}
 
 	topic := client.Publisher(topicID)
-	return &PubSubPublisher{client: client, topic: topic, topicName: topicName, logger: logger}, nil
+	p := &PubSubPublisher{
+		client:         client,
+		topic:          topic,
+		topicName:      topicName,
+		logger:         logger,
+		publishTimeout: 5 * time.Second,
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p, nil
 }
 
 func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byte, headers map[string]string) error {
@@ -64,16 +116,34 @@ func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byt
 		return fmt.Errorf("marshal pubsub payload: %w", err)
 	}
 
-	msg := &pubsub.Message{
-		Data: payload,
-		Attributes: map[string]string{
-			"source":         source,
-			"schema":         envelope.Schema,
-			"schema_version": "1",
-		},
+	msgAttrs := map[string]string{
+		"source":         source,
+		"schema":         envelope.Schema,
+		"schema_version": "1",
+	}
+	if traceparent := headers["Traceparent"]; traceparent != "" {
+		msgAttrs["traceparent"] = traceparent
+	}
+	if requestID := headers["X-Request-Id"]; requestID != "" {
+		msgAttrs["x-request-id"] = requestID
 	}
 
-	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	msg := &pubsub.Message{
+		Data:       payload,
+		Attributes: msgAttrs,
+	}
+
+	timeout := p.publishTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining < timeout {
+			timeout = remaining
+		}
+	}
+	publishCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	res := p.topic.Publish(publishCtx, msg)
 	msgID, err := res.Get(publishCtx)
@@ -87,6 +157,17 @@ func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byt
 func (p *PubSubPublisher) Close() error {
 	p.topic.Stop()
 	return p.client.Close()
+}
+
+func pubsubLimitExceededBehavior(behavior string) pubsub.LimitExceededBehavior {
+	switch strings.TrimSpace(strings.ToLower(behavior)) {
+	case "block":
+		return pubsub.FlowControlBlock
+	case "signal_error", "signal-error", "error":
+		return pubsub.FlowControlSignalError
+	default:
+		return pubsub.FlowControlIgnore
+	}
 }
 
 func (p *PubSubPublisher) HealthCheck(ctx context.Context) error {

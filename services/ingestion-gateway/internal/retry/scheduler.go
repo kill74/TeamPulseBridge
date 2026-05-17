@@ -2,10 +2,10 @@ package retry
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"math"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -21,11 +21,12 @@ type Scheduler struct {
 	interval   time.Duration
 	ticker     *time.Ticker
 	stop       chan struct{}
-	stopOnce   sync.Once
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 	mu         sync.Mutex
 	running    bool
+	stopped    bool
 	onRetry    func(ctx context.Context, source string, success bool, attempt int)
-	rng        *rand.Rand
 	retries    sync.Map
 }
 
@@ -51,7 +52,6 @@ func NewScheduler(store failstore.Store, publisher queue.Publisher, logger *slog
 		interval:   opts.Interval,
 		stop:       make(chan struct{}),
 		onRetry:    opts.OnRetry,
-		rng:        rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -59,46 +59,56 @@ func (s *Scheduler) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.running {
+	if s.running || s.stopped {
 		return
 	}
 
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
 	s.running = true
 	s.ticker = time.NewTicker(s.interval)
-
-	go s.run()
+	s.wg.Add(1)
+	go s.run(runCtx)
 }
 
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
 	if !s.running {
 		s.mu.Unlock()
+		s.wg.Wait()
 		return
 	}
 	s.running = false
+	s.stopped = true
+	if s.ticker != nil {
+		s.ticker.Stop()
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
+	close(s.stop)
 	s.mu.Unlock()
 
-	s.stopOnce.Do(func() {
-		if s.ticker != nil {
-			s.ticker.Stop()
-		}
-		close(s.stop)
-	})
+	s.wg.Wait()
 }
 
-func (s *Scheduler) run() {
+func (s *Scheduler) run(ctx context.Context) {
+	defer s.wg.Done()
 	for {
 		select {
 		case <-s.ticker.C:
-			s.processRetries()
+			s.processRetries(ctx)
 		case <-s.stop:
+			return
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (s *Scheduler) processRetries() {
-	ctx := context.Background()
+func (s *Scheduler) processRetries(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
 
 	events, err := s.store.ListRecent(ctx, 50)
 	if err != nil {
@@ -106,10 +116,19 @@ func (s *Scheduler) processRetries() {
 		return
 	}
 
+	seenEventIDs := make(map[string]struct{}, len(events))
 	for _, event := range events {
+		seenEventIDs[event.EventID] = struct{}{}
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		currentRetries := 0
 		if val, ok := s.retries.Load(event.EventID); ok {
-			currentRetries = val.(int)
+			if n, ok := val.(int); ok {
+				currentRetries = n
+			}
 		}
 
 		if currentRetries >= s.maxRetries {
@@ -123,12 +142,29 @@ func (s *Scheduler) processRetries() {
 
 		s.retryEvent(ctx, event)
 	}
+	s.pruneRetryState(seenEventIDs)
+}
+
+func (s *Scheduler) pruneRetryState(active map[string]struct{}) {
+	s.retries.Range(func(key, _ any) bool {
+		eventID, ok := key.(string)
+		if !ok {
+			s.retries.Delete(key)
+			return true
+		}
+		if _, exists := active[eventID]; !exists {
+			s.retries.Delete(key)
+		}
+		return true
+	})
 }
 
 func (s *Scheduler) retryEvent(ctx context.Context, event failstore.FailedEvent) {
 	currentRetries := 0
 	if val, ok := s.retries.Load(event.EventID); ok {
-		currentRetries = val.(int)
+		if n, ok := val.(int); ok {
+			currentRetries = n
+		}
 	}
 	nextRetries := currentRetries + 1
 
@@ -180,10 +216,15 @@ func (s *Scheduler) calculateBackoff(retryCount int, baseInterval time.Duration)
 	exp := math.Pow(2, float64(retryCount))
 	backoff := time.Duration(float64(baseInterval) * exp)
 
-	s.mu.Lock()
-	jitter := time.Duration(s.rng.Float64() * float64(baseInterval))
-	s.mu.Unlock()
-	backoff += jitter
+	jitterBytes := make([]byte, 8)
+	if _, err := rand.Read(jitterBytes); err == nil {
+		var jitterVal uint64
+		for i := 0; i < 8; i++ {
+			jitterVal = (jitterVal << 8) | uint64(jitterBytes[i])
+		}
+		jitter := time.Duration(float64(jitterVal) / float64(^uint64(0)) * float64(baseInterval))
+		backoff += jitter
+	}
 
 	maxBackoff := 5 * time.Minute
 	if backoff > maxBackoff {

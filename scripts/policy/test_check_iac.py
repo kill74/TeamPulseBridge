@@ -90,6 +90,7 @@ class ManifestPolicyTests(unittest.TestCase):
                         "templates": [
                             {"templateName": check_iac.ERROR_BUDGET_TEMPLATE},
                             {"templateName": check_iac.QUEUE_RESILIENCE_TEMPLATE},
+                            {"templateName": check_iac.SECURITY_REJECTION_TEMPLATE},
                         ],
                         "args": [
                             {
@@ -144,6 +145,10 @@ class ManifestPolicyTests(unittest.TestCase):
                 "kind": "AnalysisTemplate",
                 "metadata": {"name": check_iac.QUEUE_RESILIENCE_TEMPLATE},
             },
+            {
+                "kind": "AnalysisTemplate",
+                "metadata": {"name": check_iac.SECURITY_REJECTION_TEMPLATE},
+            },
         ]
 
     def _rollout_hpa(self, kind: str = "Rollout") -> dict:
@@ -178,7 +183,10 @@ class ManifestPolicyTests(unittest.TestCase):
         violations = check_iac.validate_manifest_env("prod", documents)
 
         self.assertTrue(
-            any("at least 3 canary analysis steps" in violation for violation in violations)
+            any(
+                "at least 3 canary analysis steps" in violation
+                for violation in violations
+            )
         )
 
     def test_manifest_rejects_hpa_targeting_deployment(self) -> None:
@@ -190,7 +198,10 @@ class ManifestPolicyTests(unittest.TestCase):
         violations = check_iac.validate_manifest_env("prod", documents)
 
         self.assertTrue(
-            any("scaleTargetRef.kind must be Rollout" in violation for violation in violations)
+            any(
+                "scaleTargetRef.kind must be Rollout" in violation
+                for violation in violations
+            )
         )
 
     def test_manifest_rejects_missing_container_hardening(self) -> None:

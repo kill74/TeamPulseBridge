@@ -175,7 +175,7 @@ func TestAdminFailedEventsReturnsRecent(t *testing.T) {
 			{EventID: "evt_1", Source: "github", Reason: "ERR_PUBLISH_FAILED", Body: json.RawMessage(`{"n":1}`)},
 		},
 	}
-	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{}, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{}, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/events/failed?limit=1", nil)
 	rr := httptest.NewRecorder()
@@ -214,7 +214,7 @@ func TestAdminReplayFailedEventDryRun(t *testing.T) {
 		},
 	}
 	pub := &adminPublisherStub{}
-	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{}, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{}, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay", bytes.NewBufferString(`{"event_id":"evt_1","dry_run":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -240,7 +240,7 @@ func TestAdminReplayFailedEventDryRunDoesNotRequirePublisher(t *testing.T) {
 			},
 		},
 	}
-	h := NewAdminHandlerWithDependencies(config.Config{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{}, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{}, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay", bytes.NewBufferString(`{"event_id":"evt_1","dry_run":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -265,7 +265,7 @@ func TestAdminReplayFailedEventPublishes(t *testing.T) {
 	}
 	pub := &adminPublisherStub{}
 	audit := &adminAuditStub{}
-	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay", bytes.NewBufferString(`{"event_id":"evt_1","header_overrides":{"X-Replay":"true"}}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -290,7 +290,7 @@ func TestAdminReplayFailedEventPublishes(t *testing.T) {
 }
 
 func TestAdminReplayFailedEventNotFound(t *testing.T) {
-	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{}, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{}, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay", bytes.NewBufferString(`{"event_id":"missing"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -315,7 +315,7 @@ func TestAdminReplayFailedEventQueueFull(t *testing.T) {
 	}
 	pub := &adminPublisherStub{err: queue.ErrQueueFull}
 	audit := &adminAuditStub{}
-	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay", bytes.NewBufferString(`{"event_id":"evt_1"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -346,7 +346,7 @@ func TestAdminReplayFailedEventQueueThrottled(t *testing.T) {
 	}
 	pub := &adminPublisherStub{err: queue.ErrQueueThrottled}
 	audit := &adminAuditStub{}
-	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay", bytes.NewBufferString(`{"event_id":"evt_1"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -384,7 +384,7 @@ func TestAdminReplayFailedEventsBatchDryRun(t *testing.T) {
 	}
 	pub := &adminPublisherStub{}
 	audit := &adminAuditStub{}
-	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay/batch", bytes.NewBufferString(`{"event_ids":["evt_1","evt_2"],"dry_run":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -438,7 +438,7 @@ func TestAdminReplayFailedEventsBatchDryRunDoesNotRequirePublisher(t *testing.T)
 			},
 		},
 	}
-	h := NewAdminHandlerWithDependencies(config.Config{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{}, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{}, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay/batch", bytes.NewBufferString(`{"event_ids":["evt_1"],"dry_run":true}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -469,7 +469,7 @@ func TestAdminReplayFailedEventsBatchPartialFailure(t *testing.T) {
 	}
 	pub := &adminPublisherStub{}
 	audit := &adminAuditStub{}
-	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), store, audit, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay/batch", bytes.NewBufferString(`{"event_ids":["evt_1","missing","evt_2","evt_1"]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -517,7 +517,7 @@ func TestAdminReplayFailedEventsBatchPartialFailure(t *testing.T) {
 }
 
 func TestAdminReplayFailedEventsBatchRejectsInvalidInput(t *testing.T) {
-	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{}, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{}, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/events/replay/batch", bytes.NewBufferString(`{"event_ids":["   "]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -537,7 +537,7 @@ func TestAdminReplayAuditReturnsRecent(t *testing.T) {
 			{EventID: "evt_1", Actor: "dev1@example.com", Result: "validated"},
 		},
 	}
-	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, audit, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, audit, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/events/replay-audit?limit=2", nil)
 	rr := httptest.NewRecorder()
@@ -576,7 +576,7 @@ func TestAdminReplayAuditParsesFiltersAndSort(t *testing.T) {
 			{EventID: "evt_2", Actor: "dev2@example.com", Result: "accepted"},
 		},
 	}
-	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, audit, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, audit, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/events/replay-audit?limit=5&cursor=ra_cursor&actor=dev2@example.com&result=FAILED&event_id=evt_2&sort=asc", nil)
 	rr := httptest.NewRecorder()
@@ -606,7 +606,7 @@ func TestAdminReplayAuditParsesFiltersAndSort(t *testing.T) {
 }
 
 func TestAdminReplayAuditInvalidResultFilter(t *testing.T) {
-	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{}, &adminSecurityAuditStub{})
+	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{}, &adminSecurityAuditStub{}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/events/replay-audit?result=unknown", nil)
 	rr := httptest.NewRecorder()
@@ -621,7 +621,7 @@ func TestAdminReplayAuditInvalidResultFilter(t *testing.T) {
 func TestAdminReplayAuditInvalidCursorReturnsBadRequest(t *testing.T) {
 	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{
 		listErr: replayaudit.ErrCursorNotFound,
-	}, &adminSecurityAuditStub{})
+	}, &adminSecurityAuditStub{}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/admin/events/replay-audit?cursor=missing_cursor", nil)
 	rr := httptest.NewRecorder()
 	h.ReplayAudit(rr, req)
@@ -639,7 +639,7 @@ func TestAdminSecurityAuditReturnsRecent(t *testing.T) {
 			{Source: "github", Reason: "webhook_auth_failed", Path: "/webhooks/github", HTTPStatus: 401},
 		},
 	}
-	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{}, securityStore)
+	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), &adminStoreStub{}, &adminAuditStub{}, securityStore, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/events/security-audit?limit=1", nil)
 	rr := httptest.NewRecorder()

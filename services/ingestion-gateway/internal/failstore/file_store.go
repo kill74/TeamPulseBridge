@@ -101,7 +101,7 @@ func (s *FileStore) Save(_ context.Context, in SaveInput) (FailedEvent, error) {
 		return FailedEvent{}, fmt.Errorf("create failed event store dir: %w", err)
 	}
 
-	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return FailedEvent{}, fmt.Errorf("open failed event store: %w", err)
 	}
@@ -111,6 +111,9 @@ func (s *FileStore) Save(_ context.Context, in SaveInput) (FailedEvent, error) {
 
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		return FailedEvent{}, fmt.Errorf("write failed event: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return FailedEvent{}, fmt.Errorf("sync failed event store: %w", err)
 	}
 
 	return record, nil
@@ -137,6 +140,7 @@ func (s *FileStore) GetByID(ctx context.Context, eventID string) (FailedEvent, e
 	}()
 
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():

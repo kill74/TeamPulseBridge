@@ -12,6 +12,7 @@ import yaml
 
 ERROR_BUDGET_TEMPLATE = "ingestion-gateway-error-budget"
 QUEUE_RESILIENCE_TEMPLATE = "ingestion-gateway-queue-resilience"
+SECURITY_REJECTION_TEMPLATE = "ingestion-gateway-security-rejection"
 ROLLOUT_NAME = "ingestion-gateway"
 HPA_NAME = "ingestion-gateway"
 UNSAFE_IAM_ROLES = {
@@ -245,7 +246,9 @@ def validate_rollout(environment: str, rollout: dict[str, Any]) -> list[str]:
 
     def require(condition: bool, message: str) -> None:
         if not condition:
-            violations.append(f"[kubernetes:{environment}] rollout/{rollout_name}: {message}")
+            violations.append(
+                f"[kubernetes:{environment}] rollout/{rollout_name}: {message}"
+            )
 
     require(bool(steps), "must define canary steps")
     require(
@@ -260,6 +263,8 @@ def validate_rollout(environment: str, rollout: dict[str, Any]) -> list[str]:
             if isinstance(template, dict)
         }
         required_templates = {ERROR_BUDGET_TEMPLATE, QUEUE_RESILIENCE_TEMPLATE}
+        if environment == "prod":
+            required_templates.add(SECURITY_REJECTION_TEMPLATE)
         missing_templates = sorted(required_templates - templates)
         if missing_templates:
             require(
@@ -277,7 +282,7 @@ def validate_rollout(environment: str, rollout: dict[str, Any]) -> list[str]:
             f"analysis step {index} must define a non-empty prometheus-address arg",
         )
 
-    template_spec = ((spec.get("template") or {}).get("spec") or {})
+    template_spec = (spec.get("template") or {}).get("spec") or {}
     pod_security_context = template_spec.get("securityContext") or {}
     seccomp_profile = pod_security_context.get("seccompProfile") or {}
     require(
@@ -288,7 +293,9 @@ def validate_rollout(environment: str, rollout: dict[str, Any]) -> list[str]:
     containers = template_spec.get("containers") or []
     require(bool(containers), "must define at least one application container")
     for container in containers:
-        violations.extend(validate_container_security(environment, rollout_name, container))
+        violations.extend(
+            validate_container_security(environment, rollout_name, container)
+        )
 
     return violations
 
@@ -332,7 +339,10 @@ def validate_manifest_env(
             f"[kubernetes:{environment}] expected exactly one hpa/{HPA_NAME}, found {len(hpa_matches)}"
         )
 
-    for template_name in (ERROR_BUDGET_TEMPLATE, QUEUE_RESILIENCE_TEMPLATE):
+    required_template_names = [ERROR_BUDGET_TEMPLATE, QUEUE_RESILIENCE_TEMPLATE]
+    if environment == "prod":
+        required_template_names.append(SECURITY_REJECTION_TEMPLATE)
+    for template_name in required_template_names:
         if template_name not in analysis_template_names:
             violations.append(
                 f"[kubernetes:{environment}] missing analysis template {template_name}"

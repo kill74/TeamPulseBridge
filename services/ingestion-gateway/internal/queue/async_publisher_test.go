@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,6 +41,46 @@ func (p *blockingPublisher) Close() error {
 func (p *blockingPublisher) HealthCheck(_ context.Context) error {
 	return nil
 }
+
+type contextCapturePublisher struct {
+	started chan struct{}
+	release chan struct{}
+	ctxErr  error
+}
+
+func (p *contextCapturePublisher) Publish(ctx context.Context, _ string, _ []byte, _ map[string]string) error {
+	close(p.started)
+	<-p.release
+	p.ctxErr = ctx.Err()
+	return nil
+}
+
+func (p *contextCapturePublisher) Close() error { return nil }
+
+func (p *contextCapturePublisher) HealthCheck(_ context.Context) error { return nil }
+
+type concurrentTrackingPublisher struct {
+	release chan struct{}
+	active  atomic.Int64
+	maxSeen atomic.Int64
+}
+
+func (p *concurrentTrackingPublisher) Publish(_ context.Context, _ string, _ []byte, _ map[string]string) error {
+	active := p.active.Add(1)
+	for {
+		maxSeen := p.maxSeen.Load()
+		if active <= maxSeen || p.maxSeen.CompareAndSwap(maxSeen, active) {
+			break
+		}
+	}
+	<-p.release
+	p.active.Add(-1)
+	return nil
+}
+
+func (p *concurrentTrackingPublisher) Close() error { return nil }
+
+func (p *concurrentTrackingPublisher) HealthCheck(_ context.Context) error { return nil }
 
 type scriptedPublisher struct {
 	started chan struct{}
@@ -117,6 +158,38 @@ func TestAsyncPublisherClonesQueuedPayloads(t *testing.T) {
 	assert.Equal(t, "github", inner.source)
 	assert.Equal(t, `{"status":"ok"}`, string(inner.body))
 	assert.Equal(t, map[string]string{"X-Test": "original"}, inner.headers)
+}
+
+func TestAsyncPublisherUsesPublishContextIndependentFromCanceledRequest(t *testing.T) {
+	inner := &contextCapturePublisher{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	p := NewAsyncPublisherWithOptions(inner, 1, nil, AsyncPublisherOptions{WorkerCount: 1})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, p.Publish(ctx, "github", []byte(`{}`), nil))
+	<-inner.started
+	cancel()
+	close(inner.release)
+	require.NoError(t, p.Close())
+	require.NoError(t, inner.ctxErr)
+}
+
+func TestAsyncPublisherProcessesEventsWithMultipleWorkers(t *testing.T) {
+	inner := &concurrentTrackingPublisher{release: make(chan struct{})}
+	p := NewAsyncPublisherWithOptions(inner, 3, nil, AsyncPublisherOptions{WorkerCount: 3})
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, p.Publish(context.Background(), "github", []byte(`{}`), nil))
+	}
+
+	require.Eventually(t, func() bool {
+		return inner.maxSeen.Load() == 3
+	}, time.Second, 10*time.Millisecond)
+
+	close(inner.release)
+	require.NoError(t, p.Close())
 }
 
 func TestAsyncPublisherAdaptiveBackpressureThrottlesUnderFailureBudgetBurn(t *testing.T) {

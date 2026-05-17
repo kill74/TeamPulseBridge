@@ -1,0 +1,55 @@
+name: Policy
+
+on:
+  pull_request:
+    paths:
+      - 'infrastructure/terraform/**'
+      - 'deploy/k8s/**'
+      - 'deploy/gitops/**'
+      - 'scripts/policy/**'
+      - '.checkov.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'infrastructure/terraform/**'
+      - 'deploy/k8s/**'
+      - 'deploy/gitops/**'
+      - 'scripts/policy/**'
+      - '.checkov.yaml'
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install policy tools
+        run: pip install checkov==3.2.469 python-hcl2==8.1.2 pyyaml
+
+      - name: Run Checkov on Terraform
+        run: checkov --config-file .checkov.yaml --framework terraform --directory infrastructure/terraform
+
+      - name: Render Kubernetes overlays
+        run: |
+          mkdir -p .ci/rendered
+          kubectl kustomize deploy/k8s/overlays/staging > .ci/rendered/staging.yaml
+          kubectl kustomize deploy/k8s/overlays/prod > .ci/rendered/prod.yaml
+
+      - name: Run Checkov on Kubernetes manifests
+        run: |
+          checkov --config-file .checkov.yaml --framework kubernetes --directory .ci/rendered
+          checkov --config-file .checkov.yaml --framework kubernetes --directory deploy/gitops/argocd
+
+      - name: Run repo-specific IaC policy checks
+        run: |
+          python3 scripts/policy/check_iac.py \
+            --terraform-env staging=infrastructure/terraform/environments/staging/terraform.tfvars \
+            --terraform-env prod=infrastructure/terraform/environments/prod/terraform.tfvars \
+            --manifest-env staging=.ci/rendered/staging.yaml \
+            --manifest-env prod=.ci/rendered/prod.yaml

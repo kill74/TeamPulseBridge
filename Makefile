@@ -284,6 +284,9 @@ integration-clean:
 	@docker stop pubsub-emulator-make pubsub-emulator-queue pubsub-emulator-handlers pubsub-emulator-bench 2>/dev/null || true
 	@docker rm pubsub-emulator-make pubsub-emulator-queue pubsub-emulator-handlers pubsub-emulator-bench 2>/dev/null || true
 
+load-test:
+	cd services/ingestion-gateway && go run ../../scripts/load-test/main.go -target=http://localhost:8080 -rate=500 -duration=60s
+
 # Infrastructure Targets
 
 infra-help:

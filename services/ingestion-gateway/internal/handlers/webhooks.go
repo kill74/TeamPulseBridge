@@ -32,7 +32,7 @@ type WebhookHandler struct {
 	publisher       queue.Publisher
 	logger          *slog.Logger
 	record          func(ctx context.Context, source string, status int)
-	deduper         dedupStore
+	deduper         dedup.Store
 	failed          failstore.Store
 	onSecurityEvent func(r *http.Request, event SecurityEvent)
 	validator       *schema.Validator
@@ -84,7 +84,7 @@ func NewWebhookHandlerWithDependencies(
 	publisher queue.Publisher,
 	logger *slog.Logger,
 	record func(ctx context.Context, source string, status int),
-	deduper dedupStore,
+	deduper dedup.Store,
 	failed failstore.Store,
 	onSecurityEvent func(r *http.Request, event SecurityEvent),
 	validator *schema.Validator,
@@ -192,10 +192,11 @@ func (h *WebhookHandler) HandleTeams(w http.ResponseWriter, r *http.Request) {
 	if token := r.URL.Query().Get("validationToken"); token != "" {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte(token)); err != nil {
+		_, writeErr := w.Write([]byte(token))
+		h.observe(r.Context(), "teams", http.StatusOK)
+		if writeErr != nil {
 			return
 		}
-		h.observe(r.Context(), "teams", http.StatusOK)
 		return
 	}
 
@@ -249,7 +250,14 @@ func (h *WebhookHandler) publishAndAck(w http.ResponseWriter, r *http.Request, s
 	if eventID != "" {
 		headers["X-Event-ID"] = eventID
 	}
+	if requestID := httpx.RequestIDFromContext(r.Context()); requestID != "" {
+		headers["X-Request-Id"] = requestID
+	}
+	if traceparent := strings.TrimSpace(r.Header.Get("Traceparent")); traceparent != "" {
+		headers["Traceparent"] = traceparent
+	}
 	if err := h.publisher.Publish(r.Context(), source, body, headers); err != nil {
+		h.forgetDedupKey(source, eventID)
 		status := http.StatusInternalServerError
 		errCode := apperr.CodePublishFailed
 		if errors.Is(err, queue.ErrQueueThrottled) {
@@ -373,6 +381,13 @@ func (h *WebhookHandler) respondError(w http.ResponseWriter, ctx context.Context
 	httpx.WriteError(w, ctx, status, err, extras)
 }
 
+func (h *WebhookHandler) forgetDedupKey(source, eventID string) {
+	if h.deduper == nil || eventID == "" {
+		return
+	}
+	h.deduper.Forget(source + ":" + eventID)
+}
+
 func (h *WebhookHandler) persistFailedEvent(ctx context.Context, eventID, source, reason string, headers map[string]string, body []byte) {
 	if h.failed == nil {
 		return
@@ -440,10 +455,6 @@ func securityActorFromRequest(r *http.Request) string {
 	return ""
 }
 
-type dedupStore interface {
-	Seen(key string) bool
-}
-
 func deriveEventID(source string, r *http.Request, body []byte) string {
 	switch source {
 	case "github":
@@ -486,5 +497,5 @@ func extractJSONField(body []byte, field string) string {
 
 func fallbackEventID(source string, body []byte) string {
 	sum := sha256.Sum256(body)
-	return fmt.Sprintf("%s_%s", source, hex.EncodeToString(sum[:16]))
+	return fmt.Sprintf("%s_%s", source, hex.EncodeToString(sum[:]))
 }

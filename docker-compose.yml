@@ -21,9 +21,9 @@ services:
     container_name: teampulse-ingestion-gateway
     environment:
       PORT: 8080
-      REQUIRE_SECRETS: 'false'
+      REQUIRE_SECRETS: 'true'
       QUEUE_BACKEND: log
-      ADMIN_AUTH_ENABLED: 'false'
+      ADMIN_AUTH_ENABLED: 'true'
       ENVIRONMENT: local
       # Uncomment below to enable Pub/Sub emulator backend
       # QUEUE_BACKEND: pubsub
@@ -53,8 +53,8 @@ services:
     image: grafana/grafana:11.2.0
     container_name: teampulse-grafana
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
     ports:
       - '3000:3000'
     volumes:

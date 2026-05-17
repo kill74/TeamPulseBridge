@@ -2,6 +2,8 @@ package httpx
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +13,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"teampulsebridge/services/ingestion-gateway/internal/apperr"
 )
@@ -23,6 +28,10 @@ var reqCounter uint64
 
 type Middleware func(http.Handler) http.Handler
 
+type RateLimiter interface {
+	Allow(key string, limit int) bool
+}
+
 type RateLimitConfig struct {
 	Enabled           bool
 	General           int
@@ -32,7 +41,7 @@ type RateLimitConfig struct {
 	Now               func() time.Time
 	Window            time.Duration
 	CleanupN          int
-	Limiter           *IPRateLimiter
+	Limiter           RateLimiter
 }
 
 type rateWindow struct {
@@ -41,21 +50,22 @@ type rateWindow struct {
 }
 
 type IPRateLimiter struct {
-	mu      sync.Mutex
-	entries map[string]rateWindow
-	now     func() time.Time
-	window  time.Duration
-	windowS int64
-	hits    uint64
-	cleanup int
-	stop    chan struct{}
+	mu       sync.Mutex
+	entries  map[string]rateWindow
+	now      func() time.Time
+	window   time.Duration
+	windowS  int64
+	hits     uint64
+	cleanup  int
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 func NewIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN int) *IPRateLimiter {
 	if now == nil {
 		now = time.Now
 	}
-	if window <= 0 {
+	if window < time.Second {
 		window = time.Minute
 	}
 	if cleanupEveryN <= 0 {
@@ -74,7 +84,9 @@ func NewIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN 
 }
 
 func (l *IPRateLimiter) Stop() {
-	close(l.stop)
+	l.stopOnce.Do(func() {
+		close(l.stop)
+	})
 }
 
 func (l *IPRateLimiter) periodicCleanup() {
@@ -175,6 +187,42 @@ func RequestID() Middleware {
 			}
 			ctx := context.WithValue(r.Context(), requestIDKey, requestID)
 			w.Header().Set("X-Request-Id", requestID)
+
+			traceparent := strings.TrimSpace(r.Header.Get("Traceparent"))
+			if traceparent == "" {
+				traceID := generateTraceID()
+				spanID := generateSpanID()
+				traceparent = fmt.Sprintf("00-%s-%s-01", traceID, spanID)
+			}
+			w.Header().Set("Traceparent", traceparent)
+			ctx = context.WithValue(ctx, contextKey("traceparent"), traceparent)
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+func generateTraceID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return strings.Repeat("0", 32)
+	}
+	return hex.EncodeToString(b)
+}
+
+func generateSpanID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return strings.Repeat("0", 16)
+	}
+	return hex.EncodeToString(b)
+}
+
+func RequestTimeout(timeout time.Duration) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -203,20 +251,30 @@ func Recoverer(logger *slog.Logger) Middleware {
 	}
 }
 
-func AccessLog(logger *slog.Logger) Middleware {
+func AccessLog(logger *slog.Logger, durationHistogram metric.Float64Histogram) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
+			duration := time.Since(start).Seconds()
+			if durationHistogram != nil {
+				durationHistogram.Record(r.Context(), duration,
+					metric.WithAttributes(
+						attribute.String("method", r.Method),
+						attribute.String("path", sanitizeLogValue(r.URL.Path)),
+						attribute.Int("status", rec.status),
+					),
+				)
+			}
 			logger.Info("http_request",
 				"request_id", RequestIDFromContext(r.Context()),
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", sanitizeLogValue(r.URL.Path),
 				"status", rec.status,
 				"duration_ms", time.Since(start).Milliseconds(),
 				"bytes", rec.size,
-				"remote_addr", r.RemoteAddr,
+				"remote_addr", sanitizeLogValue(r.RemoteAddr),
 			)
 		})
 	}
@@ -226,10 +284,10 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 	if !cfg.Enabled {
 		return func(next http.Handler) http.Handler { return next }
 	}
-	limiter := cfg.Limiter
-	if limiter == nil {
-		limiter = NewIPRateLimiter(cfg.Now, cfg.Window, cfg.CleanupN)
+	if cfg.Limiter == nil {
+		panic("httpx.RateLimit: cfg.Limiter is required to prevent goroutine leaks")
 	}
+	limiter := cfg.Limiter
 	trusted := parseCIDRs(cfg.TrustedProxyCIDRs)
 	general := cfg.General
 	admin := cfg.Admin
@@ -262,33 +320,37 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 }
 
 type SourceRateLimitConfig struct {
-	Enabled bool
-	Sources map[string]int
-	Default int
-	Limiter *IPRateLimiter
-	OnReject func(r *http.Request, source string, status int)
+	Enabled           bool
+	Sources           map[string]int
+	Default           int
+	TrustedProxyCIDRs []string
+	Limiter           RateLimiter
+	OnReject          func(r *http.Request, source string, status int)
 }
 
 func SourceRateLimit(cfg SourceRateLimitConfig) Middleware {
-	if !cfg.Enabled || len(cfg.Sources) == 0 {
+	if !cfg.Enabled {
 		return func(next http.Handler) http.Handler { return next }
 	}
-	limiter := cfg.Limiter
-	if limiter == nil {
-		limiter = NewIPRateLimiter(nil, time.Minute, 1024)
+	if cfg.Limiter == nil {
+		panic("httpx.SourceRateLimit: cfg.Limiter is required to prevent goroutine leaks")
 	}
+	limiter := cfg.Limiter
+	trusted := parseCIDRs(cfg.TrustedProxyCIDRs)
 	if cfg.Default <= 0 {
 		cfg.Default = 100
 	}
 
 	sourceFromPath := func(path string) string {
-		if strings.HasPrefix(path, "/webhooks/") {
-			source := strings.TrimPrefix(path, "/webhooks/")
-			source = strings.Trim(source, "/")
-			if idx := strings.Index(source, "/"); idx != -1 {
-				source = source[:idx]
+		for _, prefix := range []string{"/webhooks/", "/api/v1/webhooks/"} {
+			if strings.HasPrefix(path, prefix) {
+				source := strings.TrimPrefix(path, prefix)
+				source = strings.Trim(source, "/")
+				if idx := strings.Index(source, "/"); idx != -1 {
+					source = source[:idx]
+				}
+				return source
 			}
-			return source
 		}
 		return ""
 	}
@@ -306,7 +368,7 @@ func SourceRateLimit(cfg SourceRateLimitConfig) Middleware {
 				limit = cfg.Default
 			}
 
-			ip := ClientIP(r, nil)
+			ip := ClientIPFromRequest(r, trusted)
 			key := "source|" + source + "|" + ip
 			if !limiter.Allow(key, limit) {
 				if cfg.OnReject != nil {
@@ -399,4 +461,13 @@ func RequestIDFromContext(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+func sanitizeLogValue(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7F {
+			return -1
+		}
+		return r
+	}, s)
 }

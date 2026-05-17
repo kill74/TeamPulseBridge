@@ -128,7 +128,7 @@ func (s *FileStore) Save(_ context.Context, in SaveInput) (Record, error) {
 		return Record{}, fmt.Errorf("create replay audit dir: %w", err)
 	}
 
-	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return Record{}, fmt.Errorf("open replay audit store: %w", err)
 	}
@@ -138,6 +138,9 @@ func (s *FileStore) Save(_ context.Context, in SaveInput) (Record, error) {
 
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		return Record{}, fmt.Errorf("write replay audit record: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return Record{}, fmt.Errorf("sync replay audit store: %w", err)
 	}
 	return record, nil
 }

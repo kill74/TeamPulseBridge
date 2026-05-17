@@ -14,11 +14,11 @@ import (
 type HealthChecker struct {
 	publisher queue.Publisher
 	failStore failstore.Store
-	deduper   *dedup.Memory
+	deduper   dedup.Store
 	startTime time.Time
 }
 
-func NewHealthChecker(publisher queue.Publisher, failStore failstore.Store, deduper *dedup.Memory) *HealthChecker {
+func NewHealthChecker(publisher queue.Publisher, failStore failstore.Store, deduper dedup.Store) *HealthChecker {
 	return &HealthChecker{
 		publisher: publisher,
 		failStore: failStore,
@@ -28,16 +28,16 @@ func NewHealthChecker(publisher queue.Publisher, failStore failstore.Store, dedu
 }
 
 type healthResponse struct {
-	Status     string                    `json:"status"`
-	UptimeSec  float64                   `json:"uptime_sec"`
+	Status     string                     `json:"status"`
+	UptimeSec  float64                    `json:"uptime_sec"`
 	Components map[string]componentHealth `json:"components"`
 }
 
 type componentHealth struct {
-	Status     string  `json:"status"`
-	LatencyMs  float64 `json:"latency_ms,omitempty"`
-	Entries    int     `json:"entries,omitempty"`
-	Error      string  `json:"error,omitempty"`
+	Status    string  `json:"status"`
+	LatencyMs float64 `json:"latency_ms,omitempty"`
+	Entries   int     `json:"entries,omitempty"`
+	Error     string  `json:"error,omitempty"`
 }
 
 func (h *HealthChecker) Healthz(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +113,13 @@ func (h *HealthChecker) checkQueue(ctx context.Context) componentHealth {
 	start := time.Now()
 	checkCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
+
+	if h.publisher == nil {
+		return componentHealth{
+			Status: "disabled",
+			Error:  "publisher not configured",
+		}
+	}
 
 	err := h.publisher.HealthCheck(checkCtx)
 	latency := time.Since(start).Seconds() * 1000

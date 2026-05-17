@@ -230,6 +230,9 @@ Runtime behavior:
 - `REQUEST_TIMEOUT_SEC` default `15`
 - `QUEUE_BACKEND` default `log`
 - `QUEUE_BUFFER` default `4096`
+- `QUEUE_WORKERS` default `1`
+- `QUEUE_BULKHEAD_ENABLED` default `false`
+- `QUEUE_BULKHEAD_BUFFER_PER_SOURCE` default `1024`
 - `QUEUE_BACKPRESSURE_ENABLED` default `true`
 - `QUEUE_BACKPRESSURE_SOFT_LIMIT_PERCENT` default `70`
 - `QUEUE_BACKPRESSURE_HARD_LIMIT_PERCENT` default `90`
@@ -244,6 +247,11 @@ Safety and traffic controls:
 - `RATE_LIMIT_ENABLED` default `true`
 - `RATE_LIMIT_RPM` default `300`
 - `ADMIN_RATE_LIMIT_RPM` default `60`
+- `RATE_LIMIT_BACKEND` default `memory`; use `redis` for distributed rate limiting across gateway replicas
+- `RATE_LIMIT_REDIS_PREFIX` default `rate_limit`
+- `SOURCE_RATE_LIMIT_ENABLED` default `true`
+- `SOURCE_RATE_LIMIT_DEFAULT` default `100`
+- `SOURCE_RATE_LIMITS` optional comma-separated overrides such as `github:300,slack:120`
 - `DEDUP_ENABLED` default `true`
 - `DEDUP_TTL_SEC` default `300`
 
@@ -279,6 +287,14 @@ These are required when `QUEUE_BACKEND=pubsub`:
 - `PUBSUB_TOPIC_ID`
 - `PUBSUB_EMULATOR_HOST` for local emulator-based testing
 
+Publisher scaling controls:
+
+- `PUBSUB_PUBLISH_TIMEOUT_SEC` default `5`
+- `PUBSUB_PUBLISH_GOROUTINES` default `0`, which lets the Google client choose its default
+- `PUBSUB_MAX_OUTSTANDING_MESSAGES` default `0`, which leaves the client default unchanged
+- `PUBSUB_MAX_OUTSTANDING_BYTES` default `0`, which leaves the client default unchanged
+- `PUBSUB_FLOW_CONTROL_BEHAVIOR` default `ignore`; supported values are `ignore`, `block`, and `signal_error`
+
 ### Admin protection
 
 These matter when `ADMIN_AUTH_ENABLED=true`:
@@ -292,9 +308,13 @@ These matter when `ADMIN_AUTH_ENABLED=true`:
 ### Important validation rules
 
 - `QUEUE_BACKEND` must be `log` or `pubsub`
+- `QUEUE_WORKERS` must be between `1` and `1024` when explicitly set
+- `QUEUE_BULKHEAD_BUFFER_PER_SOURCE` must be between `1` and `1000000` when explicitly set
 - queue backpressure limits must be ordered so hard limit is greater than soft limit
 - queue failure budget sample size must not exceed the configured rolling window
 - `DEDUP_TTL_SEC` must be between `1` and `86400`
+- `RATE_LIMIT_BACKEND=redis` requires `REDIS_ADDR`
+- `PUBSUB_FLOW_CONTROL_BEHAVIOR` must be `ignore`, `block`, or `signal_error`
 - `FAILED_EVENT_STORE_PATH` must be set when failed-event storage is enabled
 - `REPLAY_AUDIT_PATH` must be set when replay audit is enabled
 - `SECURITY_AUDIT_PATH` must be set when security audit is enabled
@@ -353,6 +373,10 @@ If you are running this somewhere shared or production-like, these defaults are 
 - keep `REQUIRE_SECRETS=true`
 - keep `ADMIN_AUTH_ENABLED=true`
 - prefer `QUEUE_BACKEND=pubsub` for durability
+- increase `QUEUE_WORKERS` and `PUBSUB_PUBLISH_GOROUTINES` together when a pod needs higher publish throughput
+- enable `QUEUE_BULKHEAD_ENABLED=true` to isolate noisy providers behind per-source queue buffers
+- use `RATE_LIMIT_BACKEND=redis` when multiple gateway replicas need shared rate-limit counters
+- prefer Postgres-backed failed-event, replay-audit, and security-audit stores in multi-replica production by setting `DATABASE_URL`
 - monitor `5xx` responses and publish failures
 - treat the failed-event store and replay audit log as operational data, not temporary debug output
 - treat the security audit stream as retained incident-response evidence, not debug-only logs

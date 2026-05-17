@@ -1,0 +1,64 @@
+package dedup
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+type Redis struct {
+	enabled bool
+	client  *redis.Client
+	prefix  string
+	ttl     time.Duration
+}
+
+func NewRedis(enabled bool, client *redis.Client, prefix string, ttl time.Duration) *Redis {
+	if ttl <= 0 {
+		ttl = 5 * time.Minute
+	}
+	return &Redis{
+		enabled: enabled,
+		client:  client,
+		prefix:  prefix,
+		ttl:     ttl,
+	}
+}
+
+// Seen returns true if key has already been observed within the dedup window.
+func (r *Redis) Seen(key string) bool {
+	if !r.enabled || key == "" || r.client == nil {
+		return false
+	}
+
+	fullKey := fmt.Sprintf("%s:%s", r.prefix, key)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// SETNX + EXPIRE atomically
+	wasSet, err := r.client.SetNX(ctx, fullKey, "1", r.ttl).Result()
+	if err != nil {
+		// Fallback: allow event if Redis is down (fail-open)
+		return false
+	}
+	return !wasSet // true = already seen (duplicate)
+}
+
+func (r *Redis) Forget(key string) {
+	if !r.enabled || key == "" || r.client == nil {
+		return
+	}
+	fullKey := fmt.Sprintf("%s:%s", r.prefix, key)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = r.client.Del(ctx, fullKey).Err()
+}
+
+// Stop closes the Redis client connections.
+func (r *Redis) Stop() {
+	if r.client != nil {
+		_ = r.client.Close()
+	}
+}

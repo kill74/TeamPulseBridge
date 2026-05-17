@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -91,6 +92,19 @@ func main() {
 }
 
 func loadEventFromFile(path, sourceOverride string, headerOverrides map[string]string) (replay.Event, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return replay.Event{}, apperr.New("cmd.replay.loadFile", apperr.CodeReplayReadFailed, "invalid replay file path", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return replay.Event{}, apperr.New("cmd.replay.loadFile", apperr.CodeReplayReadFailed, "cannot determine working directory", err)
+	}
+	if !strings.HasPrefix(absPath, cwd) {
+		return replay.Event{}, apperr.New("cmd.replay.loadFile", apperr.CodeReplayReadFailed,
+			"file path must be within current directory",
+			fmt.Errorf("path %q not under %q", path, cwd))
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return replay.Event{}, apperr.New("cmd.replay.loadFile", apperr.CodeReplayReadFailed, "read replay file failed", err)

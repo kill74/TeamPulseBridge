@@ -6,12 +6,12 @@ import (
 )
 
 type Memory struct {
-	enabled bool
-	ttl     time.Duration
-
-	mu   sync.Mutex
-	seen map[string]time.Time
-	stop chan struct{}
+	enabled  bool
+	ttl      time.Duration
+	mu       sync.Mutex
+	seen     map[string]time.Time
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 func NewMemory(enabled bool, ttl time.Duration) *Memory {
@@ -53,7 +53,18 @@ func (m *Memory) cleanupExpired() {
 }
 
 func (m *Memory) Stop() {
-	close(m.stop)
+	m.stopOnce.Do(func() {
+		close(m.stop)
+	})
+}
+
+func (m *Memory) Forget(key string) {
+	if !m.enabled || key == "" {
+		return
+	}
+	m.mu.Lock()
+	delete(m.seen, key)
+	m.mu.Unlock()
 }
 
 // Seen returns true if key has already been observed within the dedup window.

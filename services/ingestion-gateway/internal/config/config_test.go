@@ -203,6 +203,82 @@ func TestValidateRejectsInvalidSecurityAuditRetentionDays(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsInvalidQueueWorkers(t *testing.T) {
+	cfg := Config{
+		Environment:       "local",
+		Port:              "8080",
+		QueueBuffer:       100,
+		QueueWorkers:      2048,
+		RequestTimeoutSec: 15,
+		QueueBackend:      "log",
+		RequireSecrets:    false,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected QUEUE_WORKERS validation error")
+	}
+}
+
+func TestValidateRejectsInvalidQueueBulkheadBuffer(t *testing.T) {
+	cfg := Config{
+		Environment:                  "local",
+		Port:                         "8080",
+		QueueBuffer:                  100,
+		QueueBulkheadBufferPerSource: -1,
+		RequestTimeoutSec:            15,
+		QueueBackend:                 "log",
+		RequireSecrets:               false,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected QUEUE_BULKHEAD_BUFFER_PER_SOURCE validation error")
+	}
+}
+
+func TestValidateRejectsInvalidPubSubPublishTimeout(t *testing.T) {
+	cfg := Config{
+		Environment:             "local",
+		Port:                    "8080",
+		QueueBuffer:             100,
+		RequestTimeoutSec:       15,
+		QueueBackend:            "log",
+		RequireSecrets:          false,
+		PubSubPublishTimeoutSec: -1,
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected PUBSUB_PUBLISH_TIMEOUT_SEC validation error")
+	}
+}
+
+func TestValidateRequiresRedisAddrForRedisRateLimitBackend(t *testing.T) {
+	cfg := Config{
+		Environment:       "local",
+		Port:              "8080",
+		QueueBuffer:       100,
+		RequestTimeoutSec: 15,
+		QueueBackend:      "log",
+		RequireSecrets:    false,
+		RateLimitBackend:  "redis",
+		RedisAddr:         "   ",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected REDIS_ADDR validation error for redis rate limiting")
+	}
+}
+
+func TestValidateRejectsInvalidPubSubFlowControlBehavior(t *testing.T) {
+	cfg := Config{
+		Environment:               "local",
+		Port:                      "8080",
+		QueueBuffer:               100,
+		RequestTimeoutSec:         15,
+		QueueBackend:              "log",
+		RequireSecrets:            false,
+		PubSubFlowControlBehavior: "drop",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected PUBSUB_FLOW_CONTROL_BEHAVIOR validation error")
+	}
+}
+
 func TestValidateRejectsInvalidQueueBackpressureLimits(t *testing.T) {
 	cfg := Config{
 		Environment:                       "local",

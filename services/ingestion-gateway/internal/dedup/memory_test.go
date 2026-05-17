@@ -15,6 +15,17 @@ func TestMemorySeen_DeduplicatesWithinTTL(t *testing.T) {
 	}
 }
 
+func TestMemoryForget_AllowsRetryAfterFailedPublish(t *testing.T) {
+	d := NewMemory(true, time.Minute)
+	if d.Seen("github:abc") {
+		t.Fatal("first event should not be marked duplicate")
+	}
+	d.Forget("github:abc")
+	if d.Seen("github:abc") {
+		t.Fatal("forgotten event should be accepted again")
+	}
+}
+
 func TestMemorySeen_Disabled(t *testing.T) {
 	d := NewMemory(false, time.Minute)
 	if d.Seen("github:abc") {

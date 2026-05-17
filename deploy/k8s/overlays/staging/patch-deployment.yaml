@@ -14,6 +14,7 @@ spec:
             templates:
               - templateName: ingestion-gateway-error-budget
               - templateName: ingestion-gateway-queue-resilience
+              - templateName: ingestion-gateway-security-rejection
             args:
               - name: prometheus-address
                 value: http://prometheus.monitoring.svc.cluster.local:9090
@@ -24,6 +25,7 @@ spec:
             templates:
               - templateName: ingestion-gateway-error-budget
               - templateName: ingestion-gateway-queue-resilience
+              - templateName: ingestion-gateway-security-rejection
             args:
               - name: prometheus-address
                 value: http://prometheus.monitoring.svc.cluster.local:9090

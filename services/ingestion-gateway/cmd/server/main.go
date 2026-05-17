@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
@@ -26,6 +29,8 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/schema"
 	"teampulsebridge/services/ingestion-gateway/internal/securityaudit"
 )
+
+var buildVersion = "dev"
 
 func newPublicMux(appHandler http.Handler, smokeHandler http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -56,25 +61,52 @@ func (d *deferredHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type HandlerBuilder struct {
-	logger     *slog.Logger
-	cfg       *config.Config
-	securityFn func(req *http.Request, reason string, status int)
-	limiter   *httpx.IPRateLimiter
+	logger      *slog.Logger
+	cfg         *config.Config
+	securityFn  func(req *http.Request, reason string, status int)
+	limiter     httpx.RateLimiter
+	stopLimiter func()
 }
 
 func NewHandlerBuilder(logger *slog.Logger, cfg *config.Config, securityFn func(req *http.Request, reason string, status int)) *HandlerBuilder {
 	limiter := httpx.NewIPRateLimiter(nil, time.Minute, 1024)
+	return NewHandlerBuilderWithLimiter(logger, cfg, securityFn, limiter, limiter.Stop)
+}
+
+func NewHandlerBuilderWithLimiter(
+	logger *slog.Logger,
+	cfg *config.Config,
+	securityFn func(req *http.Request, reason string, status int),
+	limiter httpx.RateLimiter,
+	stopLimiter func(),
+) *HandlerBuilder {
+	if limiter == nil {
+		memoryLimiter := httpx.NewIPRateLimiter(nil, time.Minute, 1024)
+		limiter = memoryLimiter
+		stopLimiter = memoryLimiter.Stop
+	}
 	return &HandlerBuilder{
-		logger:     logger,
-		cfg:       cfg,
-		securityFn: securityFn,
-		limiter:   limiter,
+		logger:      logger,
+		cfg:         cfg,
+		securityFn:  securityFn,
+		limiter:     limiter,
+		stopLimiter: stopLimiter,
 	}
 }
 
-func (b *HandlerBuilder) Build(publicMux http.Handler) http.Handler {
+func (b *HandlerBuilder) Build(publicMux http.Handler, durationHistogram metric.Float64Histogram) http.Handler {
+	timeoutSec := time.Duration(b.cfg.RequestTimeoutSec) * time.Second
 	return httpx.Chain(
 		publicMux,
+		httpx.APIVersionMiddleware(httpx.APIVersionConfig{
+			Enabled:    true,
+			Version:    httpx.CurrentAPIVersion,
+			SunsetDate: httpx.DefaultSunsetDate,
+			OnVersionMismatch: func(w http.ResponseWriter, r *http.Request, requested string) {
+				http.Error(w, fmt.Sprintf("unsupported API version: %s (current: %s)", requested, httpx.CurrentAPIVersion), http.StatusNotAcceptable)
+			},
+		}),
+		httpx.RequestTimeout(timeoutSec),
 		httpx.RequestID(),
 		httpx.RateLimit(httpx.RateLimitConfig{
 			Enabled:           b.cfg.RateLimitEnabled,
@@ -82,12 +114,14 @@ func (b *HandlerBuilder) Build(publicMux http.Handler) http.Handler {
 			Admin:             b.cfg.AdminRateLimitRPM,
 			TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
 			OnReject:          b.securityFn,
-			Limiter:          b.limiter,
+			Limiter:           b.limiter,
 		}),
 		httpx.SourceRateLimit(httpx.SourceRateLimitConfig{
-			Enabled:  b.cfg.SourceRateLimitEnabled,
-			Sources:  b.cfg.SourceRateLimits,
-			Default:  b.cfg.SourceRateLimitDefault,
+			Enabled:           b.cfg.SourceRateLimitEnabled,
+			Sources:           b.cfg.SourceRateLimits,
+			Default:           b.cfg.SourceRateLimitDefault,
+			TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
+			Limiter:           b.limiter,
 			OnReject: func(r *http.Request, source string, status int) {
 				b.securityFn(r, "source_rate_limit_exceeded:"+source, status)
 			},
@@ -106,22 +140,26 @@ func (b *HandlerBuilder) Build(publicMux http.Handler) http.Handler {
 			OnReject: b.securityFn,
 		}),
 		httpx.Recoverer(b.logger),
-		httpx.AccessLog(b.logger),
+		httpx.AccessLog(b.logger, durationHistogram),
 		observability.HTTPMiddleware("ingestion-gateway"),
 	)
 }
 
 func (b *HandlerBuilder) Stop() {
-	b.limiter.Stop()
+	if b.stopLimiter != nil {
+		b.stopLimiter()
+	}
 }
 
 func main() {
-	logger := observability.NewLogger()
 	cfg := config.LoadFromEnv()
 	if err := cfg.Validate(); err != nil {
+		logger := observability.NewLogger("ingestion-gateway", "unknown", buildVersion)
 		logger.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
+
+	logger := observability.NewLogger("ingestion-gateway", cfg.Environment, buildVersion)
 
 	ctx := context.Background()
 	telemetry, err := observability.Setup(ctx, logger, "ingestion-gateway")
@@ -136,6 +174,9 @@ func main() {
 			logger.Error("telemetry shutdown failed", "error", shutdownErr)
 		}
 	}()
+
+	var failedStore failstore.Store
+	var deduper dedup.Store
 
 	runtimePublisher, err := queue.BuildRuntimePublisher(ctx, cfg, logger, queue.AsyncPublisherOptions{
 		Hooks: queue.AsyncPublisherHooks{
@@ -154,6 +195,45 @@ func main() {
 						attribute.String("result", result),
 					),
 				)
+			},
+			OnDLQ: func(dlqCtx context.Context, source string, body []byte, headers map[string]string, err error) {
+				eventID := strings.TrimSpace(headers["X-Event-ID"])
+				if deduper != nil && eventID != "" {
+					deduper.Forget(source + ":" + eventID)
+				}
+				logger.Error("event sent to dead letter queue",
+					"source", source,
+					"event_id", eventID,
+					"error", err,
+				)
+				if failedStore == nil {
+					return
+				}
+				persistCtx, cancel := context.WithTimeout(dlqCtx, 5*time.Second)
+				defer cancel()
+				if _, saveErr := failedStore.Save(persistCtx, failstore.SaveInput{
+					EventID: eventID,
+					Source:  source,
+					Reason:  "async_publish_failed",
+					Headers: headers,
+					Body:    body,
+				}); saveErr != nil {
+					logger.Error("failed to persist async publish failure",
+						"source", source,
+						"event_id", eventID,
+						"error", saveErr,
+					)
+				}
+			},
+			OnPublishLatency: func(latencyCtx context.Context, source string, latencySec float64, failed bool) {
+				if telemetry.QueuePublishLatency != nil {
+					telemetry.QueuePublishLatency.Record(latencyCtx, latencySec,
+						metric.WithAttributes(
+							attribute.String("source", source),
+							attribute.Bool("failed", failed),
+						),
+					)
+				}
 			},
 		},
 	})
@@ -175,46 +255,91 @@ func main() {
 	if dedupTTL <= 0 {
 		dedupTTL = 5 * time.Minute
 	}
-	deduper := dedup.NewMemory(cfg.DedupEnabled, dedupTTL)
 
-	var failedStore failstore.Store
-	if cfg.FailedStoreEnabled {
-		store, err := failstore.NewFileStore(cfg.FailedStorePath)
+	var redisClient *redis.Client
+	if cfg.RedisAddr != "" {
+		redisClient = redis.NewClient(&redis.Options{
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
+			DB:       cfg.RedisDB,
+		})
+		deduper = dedup.NewRedis(cfg.DedupEnabled, redisClient, cfg.DedupRedisPrefix, dedupTTL)
+		logger.Info("using redis for deduplication", "addr", cfg.RedisAddr)
+	} else {
+		deduper = dedup.NewMemory(cfg.DedupEnabled, dedupTTL)
+		logger.Info("using in-memory deduplication (single-instance only)")
+	}
+
+	var pgPool *pgxpool.Pool
+	if cfg.DatabaseURL != "" {
+		pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 		if err != nil {
-			logger.Error("failed event store disabled due to invalid configuration",
-				"path", cfg.FailedStorePath,
-				"error", err,
-			)
+			logger.Error("failed to connect to postgres database", "error", err)
+			os.Exit(1)
+		}
+		defer pool.Close()
+		pgPool = pool
+		logger.Info("connected to postgres database")
+	}
+
+	if cfg.FailedStoreEnabled {
+		if pgPool != nil {
+			failedStore = failstore.NewPostgresStore(pgPool)
 		} else {
-			failedStore = store
+			store, err := failstore.NewFileStore(cfg.FailedStorePath)
+			if err != nil {
+				logger.Error("failed event store disabled due to invalid configuration",
+					"path", cfg.FailedStorePath,
+					"error", err,
+				)
+			} else {
+				failedStore = store
+			}
 		}
 	}
 
 	var replayAuditStore replayaudit.Store
 	if cfg.ReplayAuditEnabled {
-		store, err := replayaudit.NewFileStore(cfg.ReplayAuditPath)
-		if err != nil {
-			logger.Error("replay audit history disabled due to invalid configuration",
-				"path", cfg.ReplayAuditPath,
-				"error", err,
-			)
+		if pgPool != nil {
+			replayAuditStore = replayaudit.NewPostgresStore(pgPool)
 		} else {
-			replayAuditStore = store
+			store, err := replayaudit.NewFileStore(cfg.ReplayAuditPath)
+			if err != nil {
+				logger.Error("replay audit history disabled due to invalid configuration",
+					"path", cfg.ReplayAuditPath,
+					"error", err,
+				)
+			} else {
+				replayAuditStore = store
+			}
 		}
 	}
 
 	var securityAuditStore securityaudit.Store
 	if cfg.SecurityAuditEnabled {
-		store, err := securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)
-		if err != nil {
-			logger.Error("security audit stream disabled due to invalid configuration",
-				"path", cfg.SecurityAuditPath,
-				"retention_days", cfg.SecurityAuditRetentionDays,
-				"error", err,
-			)
+		if pgPool != nil {
+			securityAuditStore = securityaudit.NewPostgresStore(pgPool)
 		} else {
-			securityAuditStore = store
+			store, err := securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)
+			if err != nil {
+				logger.Error("security audit stream disabled due to invalid configuration",
+					"path", cfg.SecurityAuditPath,
+					"retention_days", cfg.SecurityAuditRetentionDays,
+					"error", err,
+				)
+			} else {
+				securityAuditStore = store
+			}
 		}
+	}
+
+	if isProductionLike(cfg.Environment) && pgPool == nil && (cfg.FailedStoreEnabled || cfg.ReplayAuditEnabled || cfg.SecurityAuditEnabled) {
+		logger.Warn("production-like environment is using file-backed operational stores; set DATABASE_URL for durable multi-replica failed-event, replay-audit, and security-audit storage",
+			"environment", cfg.Environment,
+			"failed_event_store_enabled", cfg.FailedStoreEnabled,
+			"replay_audit_enabled", cfg.ReplayAuditEnabled,
+			"security_audit_enabled", cfg.SecurityAuditEnabled,
+		)
 	}
 
 	recordSecurityEvent := func(req *http.Request, in securityaudit.SaveInput) {
@@ -235,9 +360,7 @@ func main() {
 		if strings.TrimSpace(in.ClientIP) == "" {
 			in.ClientIP = httpx.ClientIP(req, cfg.TrustedProxyCIDRs)
 		}
-		if strings.TrimSpace(in.Source) == "" {
-			in.Source = source
-		}
+		in.Source = source
 
 		telemetry.SecurityRejectCounter.Add(reqCtx, 1,
 			metric.WithAttributes(
@@ -276,7 +399,15 @@ func main() {
 		}
 	}
 
-	admin := handlers.NewAdminHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger, failedStore, replayAuditStore, securityAuditStore)
+	flags := config.NewFeatureFlags()
+	flags.Register("dedup.enabled", cfg.DedupEnabled)
+	flags.Register("rate_limit.enabled", cfg.RateLimitEnabled)
+	flags.Register("schema_validation.enabled", cfg.SchemaValidationEnabled)
+	flags.Register("retry.enabled", cfg.RetryEnabled)
+	flags.Register("source_rate_limit.enabled", cfg.SourceRateLimitEnabled)
+	flags.Register("queue_bulkhead.enabled", cfg.QueueBulkheadEnabled)
+
+	admin := handlers.NewAdminHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger, failedStore, replayAuditStore, securityAuditStore, flags)
 
 	var schemaValidator *schema.Validator
 	if cfg.SchemaValidationEnabled {
@@ -344,19 +475,57 @@ func main() {
 	webhookMux.HandleFunc("GET /admin/events/failed", admin.FailedEvents)
 	webhookMux.HandleFunc("GET /admin/events/replay-audit", admin.ReplayAudit)
 	webhookMux.HandleFunc("GET /admin/events/security-audit", admin.SecurityAudit)
+	webhookMux.HandleFunc("GET /admin/flags", admin.FeatureFlags)
+	webhookMux.HandleFunc("POST /admin/flags", admin.FeatureFlags)
 	webhookMux.HandleFunc("POST /admin/events/replay/batch", admin.ReplayFailedEventsBatch)
 	webhookMux.HandleFunc("POST /admin/events/replay", admin.ReplayFailedEvent)
-	webhookMux.HandleFunc("POST /webhooks/slack", h.HandleSlack)
-	webhookMux.HandleFunc("POST /webhooks/teams", h.HandleTeams)
-	webhookMux.HandleFunc("POST /webhooks/github", h.HandleGitHub)
-	webhookMux.HandleFunc("POST /webhooks/gitlab", h.HandleGitLab)
+	webhookHandlers := map[string]http.HandlerFunc{
+		"slack":  h.HandleSlack,
+		"teams":  h.HandleTeams,
+		"github": h.HandleGitHub,
+		"gitlab": h.HandleGitLab,
+	}
 
-	handlerBuilder := NewHandlerBuilder(logger, &cfg, securityRejectFn)
+	httpx.RegisterVersionedRoutes(webhookMux, webhookHandlers, "/api/v1/webhooks/")
+	httpx.RegisterVersionedRoutes(webhookMux, webhookHandlers, "/webhooks/")
+
+	var requestLimiter httpx.RateLimiter
+	var stopRequestLimiter func()
+	if cfg.RateLimitBackend == "redis" {
+		requestLimiter = httpx.NewRedisRateLimiter(redisClient, cfg.RateLimitRedisPrefix, time.Minute)
+		logger.Info("using redis-backed request rate limiting", "addr", cfg.RedisAddr, "prefix", cfg.RateLimitRedisPrefix)
+	} else {
+		memoryLimiter := httpx.NewIPRateLimiter(nil, time.Minute, 1024)
+		requestLimiter = memoryLimiter
+		stopRequestLimiter = memoryLimiter.Stop
+		logger.Info("using in-memory request rate limiting")
+	}
+
+	handlerBuilder := NewHandlerBuilderWithLimiter(logger, &cfg, securityRejectFn, requestLimiter, stopRequestLimiter)
+
+	if configFile := os.Getenv("CONFIG_FILE"); configFile != "" {
+		watcher, err := config.NewWatcher(cfg, logger, func(newCfg config.Config) {
+			logger.Info("configuration updated", "path", configFile)
+		})
+		if err != nil {
+			logger.Warn("config watcher initialization failed", "path", configFile, "error", err)
+		} else {
+			if err := watcher.Start(configFile); err != nil {
+				logger.Warn("config watcher start failed", "path", configFile, "error", err)
+			} else {
+				defer func() {
+					if stopErr := watcher.Stop(); stopErr != nil {
+						logger.Error("config watcher stop failed", "error", stopErr)
+					}
+				}()
+			}
+		}
+	}
 
 	handlerWrapper := &deferredHandler{}
 	uiSmokeProxy := handlers.NewUISmokeTestProxy(handlerWrapper, cfg.TrustedProxyCIDRs)
 	publicMux := newPublicMux(webhookMux, uiSmokeProxy)
-	handler := handlerBuilder.Build(publicMux)
+	handler := handlerBuilder.Build(publicMux, telemetry.HTTPDurationHistogram)
 	handlerWrapper.set(handler)
 
 	srv := &http.Server{
@@ -368,18 +537,34 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	serverErr := make(chan error, 1)
 	go func() {
-		logger.Info("ingestion-gateway listening", "port", cfg.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server failed", "error", err)
-			os.Exit(1)
+		certFile := envOrTLS("TLS_CERT_FILE")
+		keyFile := envOrTLS("TLS_KEY_FILE")
+		if certFile != "" && keyFile != "" {
+			logger.Info("ingestion-gateway listening (TLS)", "port", cfg.Port)
+			if err := srv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+				logger.Error("server failed", "error", err)
+				serverErr <- err
+			}
+		} else {
+			logger.Info("ingestion-gateway listening", "port", cfg.Port)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("server failed", "error", err)
+				serverErr <- err
+			}
 		}
 	}()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
-	signal.Stop(stop)
+
+	select {
+	case <-stop:
+		signal.Stop(stop)
+	case err := <-serverErr:
+		logger.Error("server error triggered shutdown", "error", err)
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
@@ -392,10 +577,27 @@ func main() {
 	handlerBuilder.Stop()
 }
 
+func isProductionLike(environment string) bool {
+	env := strings.ToLower(strings.TrimSpace(environment))
+	if env == "" {
+		return false
+	}
+	if strings.Contains(env, "dev") || strings.Contains(env, "test") || strings.Contains(env, "local") || strings.Contains(env, "ci") {
+		return false
+	}
+	return env == "prod" || env == "production" || strings.Contains(env, "prod")
+}
+
 func securitySourceFromPath(path string) string {
 	switch {
 	case strings.HasPrefix(path, "/admin"):
 		return "admin"
+	case strings.HasPrefix(path, "/api/v1/webhooks/"):
+		source := strings.TrimPrefix(path, "/api/v1/webhooks/")
+		source = strings.Trim(source, "/")
+		if source != "" {
+			return source
+		}
 	case strings.HasPrefix(path, "/webhooks/"):
 		source := strings.TrimPrefix(path, "/webhooks/")
 		source = strings.Trim(source, "/")
@@ -404,4 +606,15 @@ func securitySourceFromPath(path string) string {
 		}
 	}
 	return "http"
+}
+
+func envOrTLS(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		return ""
+	}
+	if _, err := os.Stat(v); err != nil {
+		return ""
+	}
+	return v
 }
