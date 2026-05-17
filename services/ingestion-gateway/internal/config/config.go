@@ -71,6 +71,7 @@ type Config struct {
 	PubSubFlowControlBehavior         string
 	RateLimitBackend                  string
 	RateLimitRedisPrefix              string
+	PIIScrubbingEnabled               bool
 }
 
 func LoadFromEnv() Config {
@@ -135,6 +136,7 @@ func LoadFromEnv() Config {
 		PubSubFlowControlBehavior:         envOrDefault("PUBSUB_FLOW_CONTROL_BEHAVIOR", "ignore"),
 		RateLimitBackend:                  envOrDefault("RATE_LIMIT_BACKEND", "memory"),
 		RateLimitRedisPrefix:              envOrDefault("RATE_LIMIT_REDIS_PREFIX", "rate_limit"),
+		PIIScrubbingEnabled:               boolOrDefault("PII_SCRUBBING_ENABLED", false),
 	}
 }
 

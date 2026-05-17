@@ -81,12 +81,17 @@ func BuildRuntimePublisher(ctx context.Context, cfg config.Config, logger *slog.
 		r.Publisher = bulkhead
 		r.statsProvider = bulkhead
 		r.sourceStatsProvider = bulkhead
-		return r, nil
+	} else {
+		async := NewAsyncPublisherWithOptions(base, cfg.QueueBuffer, logger, options)
+		r.closers = append(r.closers, async.Close)
+		r.Publisher = async
+		r.statsProvider = async
 	}
 
-	async := NewAsyncPublisherWithOptions(base, cfg.QueueBuffer, logger, options)
-	r.closers = append(r.closers, async.Close)
-	r.Publisher = async
-	r.statsProvider = async
+	if cfg.PIIScrubbingEnabled {
+		r.Publisher = NewTransformingPublisher(r.Publisher, ScrubEmails, ScrubTokens)
+		logger.Info("PII scrubbing enabled for outbound queue publishes")
+	}
+
 	return r, nil
 }
