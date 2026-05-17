@@ -68,7 +68,12 @@ func ValidateGitLab(token, provided string) error {
 	if provided == "" {
 		return fmt.Errorf("missing gitlab webhook token")
 	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(provided)) != 1 {
+
+	// Hash both strings to prevent length leakage in ConstantTimeCompare
+	tokenHash := sha256.Sum256([]byte(token))
+	providedHash := sha256.Sum256([]byte(provided))
+
+	if subtle.ConstantTimeCompare(tokenHash[:], providedHash[:]) != 1 {
 		return fmt.Errorf("invalid gitlab token")
 	}
 	return nil
@@ -81,7 +86,12 @@ func ValidateTeamsClientState(expected, provided string) error {
 	if provided == "" {
 		return fmt.Errorf("missing teams client state")
 	}
-	if subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
+
+	// Hash both strings to prevent length leakage in ConstantTimeCompare
+	expectedHash := sha256.Sum256([]byte(expected))
+	providedHash := sha256.Sum256([]byte(provided))
+
+	if subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) != 1 {
 		return fmt.Errorf("invalid teams client state")
 	}
 	return nil
