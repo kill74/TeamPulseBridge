@@ -160,3 +160,4 @@ func TestTopLevelObjectFields(t *testing.T) {
 		})
 	}
 }
+// Test suite for validator.go
