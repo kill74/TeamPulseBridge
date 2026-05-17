@@ -263,7 +263,7 @@ func main() {
 			Password: cfg.RedisPassword,
 			DB:       cfg.RedisDB,
 		})
-		deduper = dedup.NewRedis(cfg.DedupEnabled, redisClient, cfg.DedupRedisPrefix, dedupTTL)
+		deduper = dedup.NewRedis(cfg.DedupEnabled, redisClient, cfg.DedupRedisPrefix, dedupTTL, logger)
 		logger.Info("using redis for deduplication", "addr", cfg.RedisAddr)
 	} else {
 		deduper = dedup.NewMemory(cfg.DedupEnabled, dedupTTL)

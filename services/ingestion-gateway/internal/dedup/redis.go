@@ -3,6 +3,7 @@ package dedup
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -13,9 +14,10 @@ type Redis struct {
 	client  *redis.Client
 	prefix  string
 	ttl     time.Duration
+	logger  *slog.Logger
 }
 
-func NewRedis(enabled bool, client *redis.Client, prefix string, ttl time.Duration) *Redis {
+func NewRedis(enabled bool, client *redis.Client, prefix string, ttl time.Duration, logger *slog.Logger) *Redis {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
@@ -24,6 +26,7 @@ func NewRedis(enabled bool, client *redis.Client, prefix string, ttl time.Durati
 		client:  client,
 		prefix:  prefix,
 		ttl:     ttl,
+		logger:  logger,
 	}
 }
 
@@ -53,7 +56,11 @@ func (r *Redis) Forget(key string) {
 	fullKey := fmt.Sprintf("%s:%s", r.prefix, key)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_ = r.client.Del(ctx, fullKey).Err()
+	if err := r.client.Del(ctx, fullKey).Err(); err != nil {
+		if r.logger != nil {
+			r.logger.Error("failed to forget dedup key in redis", "key", fullKey, "error", err)
+		}
+	}
 }
 
 // Stop closes the Redis client connections.
