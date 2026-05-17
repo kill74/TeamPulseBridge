@@ -33,7 +33,7 @@ jobs:
       - name: Run linter
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v1.64.8
+          version: v1.60.3
           install-mode: goinstall
           working-directory: services/ingestion-gateway
           args: --timeout=5m
