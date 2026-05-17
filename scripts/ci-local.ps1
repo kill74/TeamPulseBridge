@@ -105,7 +105,7 @@ function Invoke-TerraformCheck([string[]]$Arguments, [hashtable]$Environment = @
     }
 }
 
-$golangciLintExe = Resolve-CommandPath @("golangci-lint") "golangci-lint was not found. Run 'make dev-setup' or 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8'."
+$golangciLintExe = Resolve-CommandPath @("golangci-lint") "golangci-lint was not found. Run 'make dev-setup' or 'go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.5'."
 $govulncheckExe = Resolve-CommandPath @("govulncheck") "govulncheck was not found. Run 'make dev-setup' or 'go install golang.org/x/vuln/cmd/govulncheck@latest'."
 $terraformExe = if (-not $SkipTerraform) { Resolve-CommandPath @("terraform") "terraform was not found. Install Terraform to run local CI parity." } else { $null }
 $checkovExe = if (-not $SkipPolicy) { Resolve-CommandPath @("checkov", "checkov.cmd") "checkov was not found. Run 'make dev-setup' or install checkov==3.2.469." } else { $null }

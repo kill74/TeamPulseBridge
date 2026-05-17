@@ -92,7 +92,7 @@ dev-setup:
 	@command -v go >/dev/null 2>&1 || (echo "Go is required" && exit 1)
 	@command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1)
 	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469 python-hcl2==8.1.2
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.5
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@python3 -m pre_commit install --install-hooks
 	@python3 -m pre_commit install -t pre-push
