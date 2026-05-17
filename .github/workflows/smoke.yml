@@ -22,7 +22,16 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Build and start stack
-        run: docker compose up -d --build
+        run: |
+          # Configure secrets for the ingestion-gateway if authentication is enabled in compose
+          export ADMIN_JWT_ISSUER="ci"
+          export ADMIN_JWT_AUDIENCE="ci"
+          export ADMIN_JWT_SECRET="smoke-test-secret-key-123456789"
+          export SLACK_SIGNING_SECRET="smoke-slack-secret"
+          export GITHUB_WEBHOOK_SECRET="smoke-github-secret"
+          export GITLAB_WEBHOOK_TOKEN="smoke-gitlab-secret"
+          export TEAMS_CLIENT_STATE="smoke-teams-state"
+          docker compose up -d --build
 
       - name: Wait for health endpoint
         shell: bash

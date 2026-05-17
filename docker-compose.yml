@@ -28,6 +28,13 @@ services:
       REDIS_ADDR: redis:6379
       DATABASE_URL: postgres://teampulse:secret@postgres:5432/teampulse?sslmode=disable
       RATE_LIMIT_BACKEND: redis
+      ADMIN_JWT_ISSUER: ${ADMIN_JWT_ISSUER:-}
+      ADMIN_JWT_AUDIENCE: ${ADMIN_JWT_AUDIENCE:-}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      GITLAB_WEBHOOK_TOKEN: ${GITLAB_WEBHOOK_TOKEN:-}
+      TEAMS_CLIENT_STATE: ${TEAMS_CLIENT_STATE:-}
       # Uncomment below to enable Pub/Sub emulator backend
       # QUEUE_BACKEND: pubsub
       # PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
