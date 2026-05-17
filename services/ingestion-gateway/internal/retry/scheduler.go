@@ -28,12 +28,14 @@ type Scheduler struct {
 	stopped    bool
 	onRetry    func(ctx context.Context, source string, success bool, attempt int)
 	retries    sync.Map
+	leader     *LeaderElection
 }
 
 type SchedulerOptions struct {
-	MaxRetries int
-	Interval   time.Duration
-	OnRetry    func(ctx context.Context, source string, success bool, attempt int)
+	MaxRetries     int
+	Interval       time.Duration
+	OnRetry        func(ctx context.Context, source string, success bool, attempt int)
+	LeaderElection *LeaderElection
 }
 
 func NewScheduler(store failstore.Store, publisher queue.Publisher, logger *slog.Logger, opts SchedulerOptions) *Scheduler {
@@ -52,6 +54,7 @@ func NewScheduler(store failstore.Store, publisher queue.Publisher, logger *slog
 		interval:   opts.Interval,
 		stop:       make(chan struct{}),
 		onRetry:    opts.OnRetry,
+		leader:     opts.LeaderElection,
 	}
 }
 
@@ -97,6 +100,11 @@ func (s *Scheduler) run(ctx context.Context) {
 	for {
 		select {
 		case <-s.ticker.C:
+			if s.leader != nil {
+				if !s.leader.IsLeader(ctx) && !s.leader.Renew(ctx) {
+					continue // Not the leader, skip this tick
+				}
+			}
 			s.processRetries(ctx)
 		case <-s.stop:
 			return

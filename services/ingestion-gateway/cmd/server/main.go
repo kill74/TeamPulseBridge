@@ -447,9 +447,20 @@ func main() {
 
 	var retryScheduler *retry.Scheduler
 	if cfg.RetryEnabled && failedStore != nil {
+		var leaderElection *retry.LeaderElection
+		if redisClient != nil {
+			hostname, _ := os.Hostname()
+			if hostname == "" {
+				hostname = fmt.Sprintf("instance-%d", time.Now().UnixNano())
+			}
+			leaderElection = retry.NewLeaderElection(redisClient, "teampulse:retry_leader", hostname, 2*time.Minute)
+			logger.Info("retry scheduler leader election enabled via redis", "instance_id", hostname)
+		}
+
 		retryScheduler = retry.NewScheduler(failedStore, runtimePublisher.Publisher, logger, retry.SchedulerOptions{
-			MaxRetries: cfg.RetryMaxAttempts,
-			Interval:   time.Duration(cfg.RetryIntervalSec) * time.Second,
+			MaxRetries:     cfg.RetryMaxAttempts,
+			Interval:       time.Duration(cfg.RetryIntervalSec) * time.Second,
+			LeaderElection: leaderElection,
 			OnRetry: func(ctx context.Context, source string, success bool, attempt int) {
 				telemetry.QueuePublishCounter.Add(ctx, 1,
 					metric.WithAttributes(

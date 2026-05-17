@@ -16,3 +16,10 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
+    - type: Pods
+      pods:
+        metric:
+          name: queue_buffer_depth
+        target:
+          type: AverageValue
+          averageValue: "2000"
