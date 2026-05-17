@@ -8,6 +8,7 @@ terraform {
 }
 
 resource "google_redis_instance" "cache" {
+  # checkov:skip=CKV_GCP_75:CMEK is not required for the current implementation baseline
   name           = var.instance_name
   tier           = var.tier
   memory_size_gb = var.memory_size_gb
@@ -20,6 +21,8 @@ resource "google_redis_instance" "cache" {
   display_name      = "TeamPulse Redis Cache"
   auth_enabled      = true
   
+  transit_encryption_mode = "SERVER_AUTHENTICATION"
+
   labels = {
     environment = var.environment
   }
