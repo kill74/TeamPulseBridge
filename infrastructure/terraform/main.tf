@@ -145,6 +145,22 @@ module "database" {
   ]
 }
 
+# Redis module
+module "redis" {
+  source = "./modules/redis"
+
+  instance_name  = "${var.project_name}-${var.environment}-cache"
+  region         = var.region
+  environment    = var.environment
+  network_id     = module.networking.vpc_network_id
+  tier           = var.environment == "prod" ? "STANDARD_HA" : "BASIC"
+  memory_size_gb = var.environment == "prod" ? 4 : 1
+
+  depends_on = [
+    module.networking
+  ]
+}
+
 # Monitoring module
 module "monitoring" {
   source = "./modules/monitoring"

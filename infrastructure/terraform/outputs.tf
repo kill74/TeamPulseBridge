@@ -53,6 +53,17 @@ output "app_database_user" {
   value       = module.database.app_username
 }
 
+# Redis Outputs
+output "redis_host" {
+  description = "Redis Cache host"
+  value       = module.redis.host
+}
+
+output "redis_port" {
+  description = "Redis Cache port"
+  value       = module.redis.port
+}
+
 # Security Outputs
 output "app_service_account_email" {
   description = "Application service account email"
