@@ -2,3 +2,7 @@
 **Vulnerability:** `crypto/subtle.ConstantTimeCompare` returns immediately if the lengths of the two inputs are not equal, leaking the length of the expected token.
 **Learning:** `subtle.ConstantTimeCompare` is only safe to use when the two inputs are guaranteed to have the same length, or if the expected length is public knowledge. For secrets like Gitlab and Teams tokens where the length is a secret, this leaks information about the secret.
 **Prevention:** To safely compare two strings of unknown lengths in constant time without leaking the length, first compute a cryptographic hash (like SHA256) of both the user-provided token and the actual token, then compare the hashes using `subtle.ConstantTimeCompare`. This guarantees both inputs to `ConstantTimeCompare` have the same length (e.g. 32 bytes) and prevents length leakage.
+## 2025-05-17 - Insecure Randomness Fallback in Failstore
+**Vulnerability:** The `generateID` function in `failstore` used an insecure fallback based on the current time (UnixNano) if the cryptographically secure pseudorandom number generator (CSPRNG) failed. This led to potentially predictable IDs being generated.
+**Learning:** Security-critical functions like ID generation should not fall back to insecure or predictable methods. If secure randomness cannot be guaranteed, the operation should fail rather than silently introducing a vulnerability.
+**Prevention:** Remove insecure fallbacks in ID generation. Always return errors or panic when CSPRNG fails, and handle these errors securely up the call stack.

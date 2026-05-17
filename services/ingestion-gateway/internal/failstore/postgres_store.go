@@ -24,12 +24,12 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 	}
 }
 
-func generateID() string {
+func generateID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+		return "", fmt.Errorf("failed to generate random ID: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 func (s *PostgresStore) Save(ctx context.Context, in SaveInput) (FailedEvent, error) {
@@ -44,7 +44,11 @@ func (s *PostgresStore) Save(ctx context.Context, in SaveInput) (FailedEvent, er
 	}
 
 	if evt.EventID == "" {
-		evt.EventID = generateID()
+		id, err := generateID()
+		if err != nil {
+			return FailedEvent{}, fmt.Errorf("generate event id: %w", err)
+		}
+		evt.EventID = id
 	}
 	if evt.Headers == nil {
 		evt.Headers = make(map[string]string)
