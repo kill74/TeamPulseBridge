@@ -663,8 +663,9 @@ func bodyPreview(body []byte, limit int) string {
 
 func redactSecrets(s string) string {
 	patterns := []string{`"token"`, `"secret"`, `"password"`, `"key"`, `"authorization"`}
+	lowerS := strings.ToLower(s)
 	for _, pattern := range patterns {
-		idx := strings.Index(strings.ToLower(s), pattern)
+		idx := strings.Index(lowerS, pattern)
 		if idx == -1 {
 			continue
 		}
@@ -679,6 +680,7 @@ func redactSecrets(s string) string {
 		}
 		if end > start {
 			s = s[:start] + "[REDACTED]" + s[end:]
+			lowerS = lowerS[:start] + "[redacted]" + lowerS[end:]
 		}
 	}
 	return s
