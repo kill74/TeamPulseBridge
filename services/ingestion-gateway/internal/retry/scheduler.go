@@ -100,10 +100,8 @@ func (s *Scheduler) run(ctx context.Context) {
 	for {
 		select {
 		case <-s.ticker.C:
-			if s.leader != nil {
-				if !s.leader.IsLeader(ctx) && !s.leader.Renew(ctx) {
-					continue // Not the leader, skip this tick
-				}
+			if s.leader != nil && !s.leader.IsLeader(ctx) && !s.leader.Renew(ctx) {
+				continue // Not the leader, skip this tick
 			}
 			s.processRetries(ctx)
 		case <-s.stop:
