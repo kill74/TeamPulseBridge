@@ -302,16 +302,7 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 				scope = "admin"
 			}
 			if !limiter.Allow(scope+"|"+ip, limit) {
-				if cfg.OnReject != nil {
-					cfg.OnReject(r, "rate_limit_exceeded", http.StatusTooManyRequests)
-				}
-				w.Header().Set("Retry-After", "60")
-				WriteError(w, r.Context(), http.StatusTooManyRequests, apperr.New(
-					"httpx.RateLimit",
-					apperr.CodeRateLimitExceeded,
-					"rate limit exceeded",
-					nil,
-				), nil)
+				rejectRateLimit(w, r, cfg.OnReject, "rate_limit_exceeded", "httpx.RateLimit", "rate limit exceeded")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -371,21 +362,25 @@ func SourceRateLimit(cfg SourceRateLimitConfig) Middleware {
 			ip := ClientIPFromRequest(r, trusted)
 			key := "source|" + source + "|" + ip
 			if !limiter.Allow(key, limit) {
-				if cfg.OnReject != nil {
-					cfg.OnReject(r, source, http.StatusTooManyRequests)
-				}
-				w.Header().Set("Retry-After", "60")
-				WriteError(w, r.Context(), http.StatusTooManyRequests, apperr.New(
-					"httpx.SourceRateLimit",
-					apperr.CodeRateLimitExceeded,
-					"rate limit exceeded for source: "+source,
-					nil,
-				), nil)
+				rejectRateLimit(w, r, cfg.OnReject, source, "httpx.SourceRateLimit", "rate limit exceeded for source: "+source)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func rejectRateLimit(w http.ResponseWriter, r *http.Request, onReject func(*http.Request, string, int), source, op, msg string) {
+	if onReject != nil {
+		onReject(r, source, http.StatusTooManyRequests)
+	}
+	w.Header().Set("Retry-After", "60")
+	WriteError(w, r.Context(), http.StatusTooManyRequests, apperr.New(
+		op,
+		apperr.CodeRateLimitExceeded,
+		msg,
+		nil,
+	), nil)
 }
 
 func ClientIPFromRequest(r *http.Request, trustedProxyNets []*net.IPNet) string {
