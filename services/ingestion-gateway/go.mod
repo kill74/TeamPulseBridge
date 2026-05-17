@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	cloud.google.com/go/pubsub/v2 v2.6.0
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/prometheus/client_golang v1.23.2
@@ -34,7 +35,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-redis/redismock/v9 v9.2.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.15 // indirect
