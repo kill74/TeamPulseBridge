@@ -39,7 +39,7 @@ spec:
         prometheus:
           address: "{{args.prometheus-address}}"
           query: |
-            sum(rate(queue_backpressure_events_total{action=~"throttled|full"}[5m])) /
+            sum(rate(queue_backpressure_events_total{action=~"throttled|full|hard_limit|soft_limit"}[5m])) /
             clamp_min(sum(rate(webhook_requests_total[5m])), 0.001)
     - name: queue-publish-failure-ratio
       interval: 1m
@@ -51,7 +51,7 @@ spec:
         prometheus:
           address: "{{args.prometheus-address}}"
           query: |
-            sum(rate(queue_publish_outcomes_total{result="failed"}[5m])) /
+            sum(rate(queue_publish_outcomes_total{result=~"failed|circuit_breaker_open"}[5m])) /
             clamp_min(sum(rate(queue_publish_outcomes_total[5m])), 0.001)
 ---
 apiVersion: argoproj.io/v1alpha1

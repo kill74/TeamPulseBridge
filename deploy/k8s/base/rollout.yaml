@@ -12,6 +12,28 @@ spec:
     canary:
       maxSurge: 25%
       maxUnavailable: 0
+      steps:
+        - setWeight: 10
+        - pause: {duration: 2m}
+        - analysis:
+            templates:
+              - templateName: ingestion-gateway-error-budget
+              - templateName: ingestion-gateway-queue-resilience
+              - templateName: ingestion-gateway-security-rejection
+            args:
+              - name: prometheus-address
+                value: http://teampulse-prometheus.monitoring.svc.cluster.local:9090
+        - setWeight: 50
+        - pause: {duration: 5m}
+        - analysis:
+            templates:
+              - templateName: ingestion-gateway-error-budget
+              - templateName: ingestion-gateway-queue-resilience
+              - templateName: ingestion-gateway-security-rejection
+            args:
+              - name: prometheus-address
+                value: http://teampulse-prometheus.monitoring.svc.cluster.local:9090
+        - setWeight: 100
   template:
     metadata:
       labels:
