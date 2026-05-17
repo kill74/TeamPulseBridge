@@ -27,6 +27,10 @@ services:
       ADMIN_JWT_ISSUER: 'teampulse-local'
       ADMIN_JWT_AUDIENCE: 'teampulse-admin'
       ADMIN_JWT_SECRET: 'local-dev-secret-that-is-at-least-32-bytes-long'
+      SLACK_SIGNING_SECRET: 'dummy-slack-secret'
+      GITHUB_WEBHOOK_SECRET: 'dummy-github-secret'
+      GITLAB_WEBHOOK_TOKEN: 'dummy-gitlab-token'
+      TEAMS_CLIENT_STATE: 'dummy-teams-state'
       ENVIRONMENT: local
       REDIS_ADDR: redis:6379
       DATABASE_URL: postgres://teampulse:secret@postgres:5432/teampulse?sslmode=disable
