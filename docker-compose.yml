@@ -25,16 +25,49 @@ services:
       QUEUE_BACKEND: log
       ADMIN_AUTH_ENABLED: 'true'
       ENVIRONMENT: local
+      REDIS_ADDR: redis:6379
+      DATABASE_URL: postgres://teampulse:secret@postgres:5432/teampulse?sslmode=disable
+      RATE_LIMIT_BACKEND: redis
       # Uncomment below to enable Pub/Sub emulator backend
       # QUEUE_BACKEND: pubsub
       # PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
       # PUBSUB_PROJECT_ID: test-project
     ports:
       - '8080:8080'
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     # Uncomment the depends_on below to enable Pub/Sub integration
-    # depends_on:
     #   pubsub-emulator:
     #     condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: teampulse-redis
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: teampulse-postgres
+    environment:
+      POSTGRES_USER: teampulse
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: teampulse
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teampulse"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   prometheus:
     image: prom/prometheus:v2.54.1

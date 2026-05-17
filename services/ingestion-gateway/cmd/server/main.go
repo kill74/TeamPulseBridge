@@ -465,7 +465,7 @@ func main() {
 	}
 
 	webhookMux := http.NewServeMux()
-	webhookMux.HandleFunc("GET /", handlers.ProductUI)
+	webhookMux.HandleFunc("GET /{$}", handlers.ProductUI)
 	webhookMux.HandleFunc("GET /assets/ui.css", handlers.ProductUIStyles)
 	webhookMux.HandleFunc("GET /assets/ui.js", handlers.ProductUIScript)
 	webhookMux.HandleFunc("GET /healthz", healthChecker.Healthz)
