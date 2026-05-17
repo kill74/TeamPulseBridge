@@ -31,9 +31,9 @@ jobs:
         run: go test -race -count=1 ./...
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.64.8
+          version: v1.61.0
           install-mode: goinstall
           working-directory: services/ingestion-gateway
           args: --timeout=5m
