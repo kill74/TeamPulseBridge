@@ -2091,20 +2091,22 @@ func clientIPFromRequestSmoke(remoteAddr string, header http.Header, trustedProx
 		remoteHost = strings.TrimSpace(remoteAddr)
 	}
 	remoteIP := net.ParseIP(remoteHost)
-	if remoteIP != nil && ipInNetsSmoke(remoteIP, trustedProxyNets) {
-		xff := strings.TrimSpace(header.Get("X-Forwarded-For"))
-		if xff != "" {
-			parts := strings.Split(xff, ",")
-			if len(parts) > 0 {
-				if ip := strings.TrimSpace(parts[0]); net.ParseIP(ip) != nil {
-					return ip
-				}
-			}
-		}
-		if xr := strings.TrimSpace(header.Get("X-Real-IP")); net.ParseIP(xr) != nil {
-			return xr
+	if remoteIP == nil || !ipInNetsSmoke(remoteIP, trustedProxyNets) {
+		return clientIP(remoteAddr)
+	}
+
+	xff := strings.TrimSpace(header.Get("X-Forwarded-For"))
+	if xff != "" {
+		parts := strings.Split(xff, ",")
+		if ip := strings.TrimSpace(parts[0]); net.ParseIP(ip) != nil {
+			return ip
 		}
 	}
+
+	if xr := strings.TrimSpace(header.Get("X-Real-IP")); net.ParseIP(xr) != nil {
+		return xr
+	}
+
 	return clientIP(remoteAddr)
 }
 
