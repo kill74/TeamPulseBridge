@@ -36,6 +36,8 @@ jobs:
             build
             revert
           requireScope: false
+          ignore: |
+            ^🧹
 
       - name: Validate labels and PR template sections
         uses: actions/github-script@v7
