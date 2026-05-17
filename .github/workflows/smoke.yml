@@ -21,8 +21,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Docker login
+        run: |
+          # Just attempt build to cache layers, then run it. Sometimes docker pull fails due to rate limits.
+          docker compose pull || sleep 10 && docker compose pull || true
+
       - name: Build and start stack
-        run: docker compose up -d --build
+        run: |
+          for i in {1..3}; do
+            docker compose up -d --build && break
+            echo "Failed to start stack, retrying in 10s..."
+            sleep 10
+          done
+        env:
+          DOCKER_CLIENT_TIMEOUT: 120
 
       - name: Wait for health endpoint
         shell: bash
