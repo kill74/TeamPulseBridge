@@ -337,6 +337,9 @@ func clampRatio(value float64) float64 {
 
 func resultLabel(err error) string {
 	if err != nil {
+		if errors.Is(err, ErrCircuitOpen) {
+			return "circuit_breaker_open"
+		}
 		return "failed"
 	}
 	return "success"

@@ -87,6 +87,16 @@ groups:
           summary: "Ingestion Gateway queue publish failures are elevated"
           description: "More than 5% of queue publish attempts are failing over the last 5 minutes."
 
+      - alert: IngestionGatewayCircuitBreakerOpen
+        expr: teampulse:circuit_breaker_open:rate5m > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: ingestion-gateway
+        annotations:
+          summary: "Ingestion Gateway Circuit Breaker is OPEN"
+          description: "The circuit breaker to the queue backend has tripped and is rejecting publishes."
+
   - name: ingestion-gateway-security-recording
     interval: 30s
     rules:
