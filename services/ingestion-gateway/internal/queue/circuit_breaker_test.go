@@ -78,3 +78,45 @@ func TestCircuitBreakerPublisher(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "closed", cb.State())
 }
+
+func TestCircuitBreaker_StateTransitions(t *testing.T) {
+	cb := queue.NewCircuitBreaker(2, 50*time.Millisecond)
+
+	// Closed -> Open
+	cb.RecordFailure()
+	cb.RecordFailure()
+	assert.Equal(t, "open", cb.State())
+	assert.False(t, cb.Allow()) // Ensure Allow returns false when open
+
+	// Open -> Half-Open
+	time.Sleep(100 * time.Millisecond)
+	assert.True(t, cb.Allow()) // Transition to half-open
+	assert.Equal(t, "half-open", cb.State())
+	assert.True(t, cb.Allow()) // Ensure subsequent Allow returns true while half-open
+
+	// Half-Open -> Open (Failure during half-open)
+	cb.RecordFailure()
+	assert.Equal(t, "open", cb.State())
+	assert.False(t, cb.Allow())
+
+	// Open -> Half-Open -> Closed
+	time.Sleep(100 * time.Millisecond)
+	assert.True(t, cb.Allow()) // Transition to half-open again
+
+	cb.RecordSuccess()
+	assert.Equal(t, "closed", cb.State())
+	assert.True(t, cb.Allow())
+}
+
+func TestCircuitBreakerPublisher_CloseAndHealthCheck(t *testing.T) {
+	logger := slog.Default()
+	mp := &mockPublisher{}
+	cb := queue.NewCircuitBreaker(2, 50*time.Millisecond)
+	p := queue.NewCircuitBreakerPublisher(mp, cb, logger)
+
+	err := p.Close()
+	require.NoError(t, err)
+
+	err = p.HealthCheck(context.Background())
+	require.NoError(t, err)
+}
