@@ -10,7 +10,9 @@ All notable changes to this project will be documented in this file.
 
 The format is inspired by Keep a Changelog and this project uses Semantic Versioning.
 
-## Unreleased
+## [Unreleased]
+
+## v1.1.0 - 2026-05-17
 
 - feat(queue): add configurable async publish workers, optional per-source bulkheads, aggregate/source queue snapshots, and Pub/Sub flow-control tuning
 - feat(rate-limit): add shared `RateLimiter` abstraction, Redis-backed distributed counters, trusted-proxy-aware source limits, and default source limiting without explicit overrides
