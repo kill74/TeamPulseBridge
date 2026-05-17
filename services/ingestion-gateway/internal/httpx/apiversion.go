@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"fmt"
+	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -59,7 +60,9 @@ func APIVersionMiddleware(cfg APIVersionConfig) func(http.Handler) http.Handler 
 					cfg.OnVersionMismatch(w, r, requestedVersion)
 					return
 				}
-				http.Error(w, fmt.Sprintf("unsupported API version: %s (current: %s)", requestedVersion, version), http.StatusNotAcceptable)
+
+				escapedVersion := html.EscapeString(requestedVersion)
+				http.Error(w, fmt.Sprintf("unsupported API version: %s (current: %s)", escapedVersion, version), http.StatusNotAcceptable)
 				return
 			}
 

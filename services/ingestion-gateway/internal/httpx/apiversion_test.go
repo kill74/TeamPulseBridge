@@ -98,6 +98,33 @@ func TestAPIVersionMiddleware_VersionMismatch(t *testing.T) {
 	}
 }
 
+func TestAPIVersionMiddleware_VersionMismatchXSS(t *testing.T) {
+	cfg := APIVersionConfig{
+		Enabled:    true,
+		Version:    "v1",
+		SunsetDate: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+	middleware := APIVersionMiddleware(cfg)
+
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/api/v1/webhooks/github", nil)
+	req.Header.Set(HeaderAPIVersion, "<script>alert('xss')</script>")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotAcceptable {
+		t.Errorf("expected status 406, got %d", rr.Code)
+	}
+
+	body := rr.Body.String()
+	if body != "unsupported API version: &lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt; (current: v1)\n" {
+		t.Errorf("expected escaped HTML output, got %q", body)
+	}
+}
+
 func TestAPIVersionMiddleware_VersionMatch(t *testing.T) {
 	cfg := APIVersionConfig{
 		Enabled:    true,
