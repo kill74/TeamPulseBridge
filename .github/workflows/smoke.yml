@@ -22,11 +22,12 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Build and start stack
-        run: docker compose up -d --build
+        run: docker compose -f services/ingestion-gateway/docker-compose.integration.yml up -d --build
 
       - name: Wait for health endpoint
         shell: bash
         run: |
+          set -e
           # Wait up to 180s for the service to become healthy
           for i in {1..60}; do
             if curl -fsS http://localhost:8080/healthz >/dev/null; then
@@ -40,16 +41,17 @@ jobs:
 
       - name: Validate metrics endpoint
         run: |
-          curl -fsS http://localhost:8080/metrics | grep -q "go_" || exit 1
+          set -e
+          curl -fsS http://localhost:8080/metrics | grep -q "go_"
 
       - name: Show compose status
         if: always()
-        run: docker compose ps
+        run: docker compose -f services/ingestion-gateway/docker-compose.integration.yml ps
 
       - name: Show service logs on failure
         if: failure()
-        run: docker compose logs --no-color --tail=200
+        run: docker compose -f services/ingestion-gateway/docker-compose.integration.yml logs --no-color --tail=200
 
       - name: Shutdown stack
         if: always()
-        run: docker compose down -v
+        run: docker compose -f services/ingestion-gateway/docker-compose.integration.yml down -v
