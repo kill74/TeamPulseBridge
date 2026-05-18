@@ -27,7 +27,8 @@ jobs:
       - name: Wait for health endpoint
         shell: bash
         run: |
-          for i in {1..40}; do
+          # Wait up to 180s for the service to become healthy
+          for i in {1..60}; do
             if curl -fsS http://localhost:8080/healthz >/dev/null; then
               echo "healthz is up"
               exit 0

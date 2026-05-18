@@ -37,13 +37,14 @@ jobs:
           git diff --exit-code go.mod go.sum
 
       - name: Run tests with coverage
-        working-directory: services/ingestion-gateway
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
+        shell: bash
+        run: |
+          go test -race -count=1 -coverprofile=services/ingestion-gateway/coverage.out ./services/ingestion-gateway/...
 
       - name: Check coverage threshold
-        working-directory: services/ingestion-gateway
+        shell: bash
         run: |
-          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          COVERAGE=$(go tool cover -func=services/ingestion-gateway/coverage.out | grep total | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
           THRESHOLD=65
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
@@ -53,7 +54,7 @@ jobs:
           echo "Coverage meets threshold"
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v3
         with:
           version: v1.61.0
           working-directory: services/ingestion-gateway
