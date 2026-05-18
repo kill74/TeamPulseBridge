@@ -18,7 +18,7 @@ services:
   # Optional: Service for testing against emulator
   integration-test:
     build:
-      context: ../../services/ingestion-gateway
+      context: .
       dockerfile: Dockerfile
     container_name: teampulse-integration-test
     environment:

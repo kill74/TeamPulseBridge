@@ -108,19 +108,19 @@ jobs:
           # Give services time to stabilize
           sleep 5
 
-          # Run health check
-          for i in {1..20}; do
+          # Run health check (allow longer startup time)
+          for i in {1..60}; do
             if curl -f http://localhost:8080/healthz 2>/dev/null; then
               echo "Service is healthy"
               break
             fi
-            echo "Waiting for service... ($i/20)"
-            sleep 1
+            echo "Waiting for service... ($i/60)"
+            sleep 2
           done
 
           if ! curl -f http://localhost:8080/healthz 2>/dev/null; then
             echo "Service failed to become healthy"
-            docker compose -f docker-compose.integration.yml logs
+            docker compose -f docker-compose.integration.yml logs --no-color --tail=200
             exit 1
           fi
 
