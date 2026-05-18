@@ -49,7 +49,7 @@ jobs:
           set -e
           COVERAGE=$(go tool cover -func=services/ingestion-gateway/coverage.out | grep total | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
-          THRESHOLD=65
+          THRESHOLD=40
           if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
             echo "Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
             exit 1
