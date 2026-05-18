@@ -71,7 +71,7 @@ jobs:
           go test -v -race -coverpkg=./... -coverprofile=coverage.out -timeout 120s ./...
 
       - name: Upload Coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: ./services/ingestion-gateway/coverage.out
           flags: integration-tests
