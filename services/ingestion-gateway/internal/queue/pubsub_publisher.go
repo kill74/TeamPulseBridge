@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,15 +25,6 @@ type PubSubPublisher struct {
 	logger         *slog.Logger
 	publishTimeout time.Duration
 	closeOnce      sync.Once
-}
-
-type pubSubEnvelope struct {
-	Source      string            `json:"source"`
-	Headers     map[string]string `json:"headers"`
-	Body        json.RawMessage   `json:"body"`
-	ReceivedAt  time.Time         `json:"received_at"`
-	Schema      string            `json:"schema"`
-	SchemaValue int               `json:"schema_value"`
 }
 
 type PubSubOption func(*PubSubPublisher)
@@ -105,14 +97,7 @@ func NewPubSubPublisher(ctx context.Context, projectID, topicID string, logger *
 }
 
 func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byte, headers map[string]string) error {
-	envelope := pubSubEnvelope{
-		Source:      source,
-		Headers:     headers,
-		Body:        body,
-		ReceivedAt:  time.Now().UTC(),
-		Schema:      "raw-webhook-envelope",
-		SchemaValue: 1,
-	}
+	envelope := NewRawWebhookEnvelope(source, body, headers, time.Now())
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		return fmt.Errorf("marshal pubsub payload: %w", err)
@@ -121,7 +106,7 @@ func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byt
 	msgAttrs := map[string]string{
 		"source":         source,
 		"schema":         envelope.Schema,
-		"schema_version": "1",
+		"schema_version": strconv.Itoa(envelope.SchemaValue),
 	}
 	if traceparent := headers["Traceparent"]; traceparent != "" {
 		msgAttrs["traceparent"] = traceparent

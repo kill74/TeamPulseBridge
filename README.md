@@ -25,6 +25,8 @@ TeamPulse Bridge gives you that place.
 
 Today, the main runnable service in this repo is the ingestion gateway. Around that service, the repo also includes local developer tooling, infrastructure, GitOps deployment config, and documentation so the project can be run like a real production system instead of just a demo app.
 
+The repo also includes a downstream event-store consumer. When the gateway publishes raw webhook envelopes to Pub/Sub, the event-store service consumes those envelopes and persists them into Postgres for analytics, replay investigation, and future downstream APIs.
+
 ## What It Does
 
 The ingestion gateway currently handles:
@@ -36,6 +38,7 @@ The ingestion gateway currently handles:
 - failed-event capture so replay is possible
 - replay audit history for operational visibility
 - a built-in operator UI for health checks, config visibility, smoke tests, and replay workflows
+- optional Pub/Sub-to-Postgres event storage through `cmd/eventstore`
 
 ## How It Works
 
@@ -45,6 +48,8 @@ flowchart LR
   B --> C["Security checks and validation"]
   C --> D["Normalized event envelope"]
   D --> E["Queue backend (log or Pub/Sub)"]
+  E --> I["Event Store Consumer"]
+  I --> J["Postgres webhook_events"]
   B --> F["Operator UI and admin endpoints"]
   B --> G["Logs, metrics, traces"]
   G --> H["Prometheus / Grafana / OTEL"]
@@ -169,6 +174,14 @@ To stop the stack:
 make down
 ```
 
+To run the full Pub/Sub-backed local pipeline, start the compose profile and point the gateway at the emulator:
+
+```bash
+QUEUE_BACKEND=pubsub PUBSUB_EMULATOR_HOST=pubsub-emulator:8085 docker compose --profile pubsub-local up --build
+```
+
+That profile creates the `webhook-events` topic, creates the `webhook-events-store` subscription, and runs the event-store consumer against the local Postgres container.
+
 ### Verify the project
 
 ```bash
@@ -199,7 +212,8 @@ Its job is to:
 2. verify that they came from a trusted source
 3. preserve the payload and key headers
 4. publish a normalized event to a queue
-5. expose operational tools for replay, auditing, and debugging
+5. optionally persist queued events to Postgres through the event-store consumer
+6. expose operational tools for replay, auditing, and debugging
 
 Important runtime endpoints include:
 

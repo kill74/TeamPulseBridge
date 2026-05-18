@@ -14,6 +14,22 @@ services:
       retries: 10
       start_period: 10s
 
+  pubsub-init:
+    image: google/cloud-sdk:emulators
+    container_name: teampulse-pubsub-init
+    profiles:
+      - pubsub-local
+    environment:
+      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+    command: >
+      bash -lc "
+      gcloud pubsub topics create webhook-events --project=test-project || true;
+      gcloud pubsub subscriptions create webhook-events-store --topic=webhook-events --project=test-project || true
+      "
+    depends_on:
+      pubsub-emulator:
+        condition: service_healthy
+
   ingestion-gateway:
     build:
       context: ./services/ingestion-gateway
@@ -22,7 +38,7 @@ services:
     environment:
       PORT: 8080
       REQUIRE_SECRETS: 'true'
-      QUEUE_BACKEND: log
+      QUEUE_BACKEND: ${QUEUE_BACKEND:-log}
       ADMIN_AUTH_ENABLED: 'true'
       ENVIRONMENT: local
       REDIS_ADDR: redis:6379
@@ -31,20 +47,38 @@ services:
       ADMIN_JWT_ISSUER: local
       ADMIN_JWT_AUDIENCE: local
       ADMIN_JWT_SECRET: local-dev-must-be-32-chars-long-or-more
-      # Uncomment below to enable Pub/Sub emulator backend
-      # QUEUE_BACKEND: pubsub
-      # PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
-      # PUBSUB_PROJECT_ID: test-project
+      PUBSUB_EMULATOR_HOST: ${PUBSUB_EMULATOR_HOST:-}
+      PUBSUB_PROJECT_ID: ${PUBSUB_PROJECT_ID:-test-project}
+      PUBSUB_TOPIC_ID: ${PUBSUB_TOPIC_ID:-webhook-events}
     ports:
       - '8080:8080'
+    restart: on-failure
     depends_on:
       redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    # Uncomment the depends_on below to enable Pub/Sub integration
-    #   pubsub-emulator:
-    #     condition: service_healthy
+
+  event-store:
+    build:
+      context: ./services/ingestion-gateway
+      dockerfile: Dockerfile
+    container_name: teampulse-event-store
+    entrypoint: ["/app/eventstore"]
+    profiles:
+      - pubsub-local
+    environment:
+      DATABASE_URL: postgres://teampulse:secret@postgres:5432/teampulse?sslmode=disable
+      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+      PUBSUB_PROJECT_ID: test-project
+      EVENTSTORE_PUBSUB_SUBSCRIPTION_ID: webhook-events-store
+      EVENTSTORE_MAX_OUTSTANDING_MESSAGES: 100
+      EVENTSTORE_RECEIVE_GOROUTINES: 1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pubsub-init:
+        condition: service_completed_successfully
 
   redis:
     image: redis:7-alpine

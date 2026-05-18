@@ -11,7 +11,7 @@ else
 INSTALL_LOCAL_CMD := bash ./scripts/install.sh
 endif
 
-.PHONY: help doctor env-init install-local replay dev-setup dev-check precommit-install precommit-run verify ci-go ci-contract ci-terraform ci-policy ci-smoke ci-local lint test contract-lint contract-test race run up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod infra-chaos-drill-failover gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
+.PHONY: help doctor env-init install-local replay dev-setup dev-check precommit-install precommit-run verify ci-go ci-contract ci-terraform ci-policy ci-smoke ci-local lint test contract-lint contract-test race run eventstore up down logs tidy fmt docs-build docs-serve integration-test integration-test-queue integration-test-handlers integration-bench integration-docker integration-clean infra-help infra-init-backend-staging infra-init-backend-prod infra-plan-staging infra-plan-prod infra-deploy-staging infra-deploy-prod infra-destroy-staging infra-destroy-prod infra-chaos-drill-failover gitops-help gitops-render-staging gitops-render-prod gitops-render-argocd gitops-validate gitops-bootstrap
 
 help:
 	@echo "Application Targets:"
@@ -36,6 +36,7 @@ help:
 	@echo "  make fuzz-ci       - Run fuzz tests for 5m (CI)"
 	@echo "  make verify        - fmt + lint + vet + test + race"
 	@echo "  make run           - Run ingestion gateway locally"
+	@echo "  make eventstore    - Run the Pub/Sub-to-Postgres event store consumer"
 	@echo "  make up            - Start local docker stack"
 	@echo "  make down          - Stop local docker stack"
 	@echo "  make logs          - Tail docker compose logs"
@@ -205,6 +206,9 @@ ci-local: ci-go race ci-contract ci-terraform ci-policy ci-smoke
 
 run:
 	cd services/ingestion-gateway && go run ./cmd/server
+
+eventstore:
+	cd services/ingestion-gateway && go run ./cmd/eventstore
 
 up:
 	docker compose up -d --build

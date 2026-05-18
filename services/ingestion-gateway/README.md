@@ -27,6 +27,8 @@ It currently supports:
 - GitHub
 - GitLab
 
+The module also includes `cmd/eventstore`, a downstream Pub/Sub consumer that stores accepted webhook envelopes in Postgres. It is intentionally separate from the gateway process so ingestion can stay fast while durable event storage scales independently.
+
 ## What Happens to a Request
 
 ```mermaid
@@ -49,7 +51,8 @@ In practice, that means:
 3. middleware applies request IDs, rate limiting, logging, and recovery
 4. the payload is wrapped in a consistent queue envelope
 5. the event is published to either the log backend or Google Pub/Sub
-6. if publishing fails, the event can be stored and replayed later
+6. if `cmd/eventstore` is running, Pub/Sub events are stored in Postgres
+7. if publishing fails, the event can be stored and replayed later
 
 ## Main Features
 
@@ -126,6 +129,29 @@ Public and operator-facing routes:
 - `POST /webhooks/github`
 - `POST /webhooks/gitlab`
 - `POST /ui/smoke-test`
+
+## Event Store Consumer
+
+`cmd/eventstore` consumes `raw-webhook-envelope` messages from a Pub/Sub subscription and writes them to the `webhook_events` table in Postgres.
+
+Required configuration:
+
+- `DATABASE_URL`
+- `PUBSUB_PROJECT_ID`
+- `EVENTSTORE_PUBSUB_SUBSCRIPTION_ID` default `webhook-events-store`
+
+Optional controls:
+
+- `EVENTSTORE_MAX_OUTSTANDING_MESSAGES` default `100`
+- `EVENTSTORE_RECEIVE_GOROUTINES` default `1`
+
+Local Pub/Sub-backed pipeline:
+
+```bash
+QUEUE_BACKEND=pubsub PUBSUB_EMULATOR_HOST=pubsub-emulator:8085 docker compose --profile pubsub-local up --build
+```
+
+The compose profile starts the Pub/Sub emulator, creates the `webhook-events` topic and `webhook-events-store` subscription, and runs the event-store consumer against the local Postgres container.
 
 ## Operator UI
 
