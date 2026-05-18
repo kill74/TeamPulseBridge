@@ -32,7 +32,7 @@ import (
 
 var buildVersion = "dev"
 
-func newPublicMux(appHandler http.Handler, smokeHandler http.Handler) *http.ServeMux {
+func newPublicMux(appHandler, smokeHandler http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	if smokeHandler != nil {
 		mux.Handle("/ui/smoke-test", smokeHandler)
@@ -102,7 +102,7 @@ func (b *HandlerBuilder) Build(publicMux http.Handler, durationHistogram metric.
 			Enabled:    true,
 			Version:    httpx.CurrentAPIVersion,
 			SunsetDate: httpx.DefaultSunsetDate,
-			OnVersionMismatch: func(w http.ResponseWriter, r *http.Request, requested string) {
+			OnVersionMismatch: func(w http.ResponseWriter, _ *http.Request, requested string) {
 				http.Error(w, fmt.Sprintf("unsupported API version: %s (current: %s)", requested, httpx.CurrentAPIVersion), http.StatusNotAcceptable)
 			},
 		}),
@@ -265,6 +265,9 @@ func main() {
 		})
 		deduper = dedup.NewRedis(cfg.DedupEnabled, redisClient, cfg.DedupRedisPrefix, dedupTTL)
 		logger.Info("using redis for deduplication", "addr", cfg.RedisAddr)
+		if err := telemetry.BindRedisPoolMetrics("ingestion-gateway", redisClient); err != nil {
+			logger.Error("redis pool metrics binding failed", "error", err)
+		}
 	} else {
 		deduper = dedup.NewMemory(cfg.DedupEnabled, dedupTTL)
 		logger.Info("using in-memory deduplication (single-instance only)")
@@ -443,7 +446,16 @@ func main() {
 		})
 	}
 
-	healthChecker := handlers.NewHealthChecker(runtimePublisher.Publisher, failedStore, deduper)
+	var healthChecker *handlers.HealthChecker
+	if redisClient != nil {
+		redisHealth := handlers.NewRedisPingWrapper(func(ctx context.Context) error {
+			return redisClient.Ping(ctx).Err()
+		})
+		healthChecker = handlers.NewHealthCheckerWithRedis(runtimePublisher.Publisher, failedStore, deduper, redisHealth)
+		logger.Info("health check includes Redis connectivity monitoring")
+	} else {
+		healthChecker = handlers.NewHealthChecker(runtimePublisher.Publisher, failedStore, deduper)
+	}
 
 	var retryScheduler *retry.Scheduler
 	if cfg.RetryEnabled && failedStore != nil {
@@ -518,8 +530,8 @@ func main() {
 	handlerBuilder := NewHandlerBuilderWithLimiter(logger, &cfg, securityRejectFn, requestLimiter, stopRequestLimiter)
 
 	if configFile := os.Getenv("CONFIG_FILE"); configFile != "" {
-		watcher, err := config.NewWatcher(cfg, logger, func(newCfg config.Config) {
-			logger.Info("configuration updated", "path", configFile)
+		watcher, err := config.NewWatcher(cfg, logger, func(_ config.Config) {
+			logger.Warn("configuration file changed but hot-reload is not implemented; restart required for changes to take effect", "path", configFile)
 		})
 		if err != nil {
 			logger.Warn("config watcher initialization failed", "path", configFile, "error", err)
@@ -589,6 +601,9 @@ func main() {
 
 	deduper.Stop()
 	handlerBuilder.Stop()
+	if redisClient != nil {
+		_ = redisClient.Close()
+	}
 }
 
 func isProductionLike(environment string) bool {

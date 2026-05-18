@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -39,7 +40,7 @@ func NewWatcher(cfg Config, logger *slog.Logger, onChange func(Config)) (*Watche
 
 func (w *Watcher) Start(path string) error {
 	if path == "" {
-		return fmt.Errorf("config path is required")
+		return errors.New("config path is required")
 	}
 
 	absPath, err := filepath.Abs(path)
@@ -90,7 +91,13 @@ func (w *Watcher) reload(path string) {
 	}
 
 	if err := newCfg.Validate(); err != nil {
-		w.logger.Error("reloaded config validation failed", "path", path, "error", err)
+		w.logger.Error("reloaded config validation failed — keeping current config", "path", path, "error", err)
+		return
+	}
+
+	current := w.Get()
+	if configsEqual(current, newCfg) {
+		w.logger.Debug("config unchanged, skipping reload", "path", path)
 		return
 	}
 
@@ -100,6 +107,27 @@ func (w *Watcher) reload(path string) {
 	if w.onChange != nil {
 		w.onChange(newCfg)
 	}
+}
+
+func configsEqual(a, b Config) bool {
+	return a.Environment == b.Environment &&
+		a.Port == b.Port &&
+		a.QueueBackend == b.QueueBackend &&
+		a.QueueBuffer == b.QueueBuffer &&
+		a.QueueWorkers == b.QueueWorkers &&
+		a.RateLimitEnabled == b.RateLimitEnabled &&
+		a.RateLimitRPM == b.RateLimitRPM &&
+		a.DedupEnabled == b.DedupEnabled &&
+		a.DedupTTLSeconds == b.DedupTTLSeconds &&
+		a.SchemaValidationEnabled == b.SchemaValidationEnabled &&
+		a.RetryEnabled == b.RetryEnabled &&
+		a.RetryMaxAttempts == b.RetryMaxAttempts &&
+		a.QueueBulkheadEnabled == b.QueueBulkheadEnabled &&
+		a.QueueBackpressureEnabled == b.QueueBackpressureEnabled &&
+		a.SourceRateLimitEnabled == b.SourceRateLimitEnabled &&
+		a.PIIScrubbingEnabled == b.PIIScrubbingEnabled &&
+		a.AdminAuthEnabled == b.AdminAuthEnabled &&
+		a.RequestTimeoutSec == b.RequestTimeoutSec
 }
 
 func (w *Watcher) Get() Config {

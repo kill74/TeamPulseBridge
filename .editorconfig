@@ -9,9 +9,13 @@ trim_trailing_whitespace = true
 [*.md]
 trim_trailing_whitespace = false
 
-[*.{go,tf,yml,yaml,sh}]
+[*.{tf,yml,yaml,sh,json,md}]
 indent_style = space
 indent_size = 2
+
+[*.go]
+indent_style = tab
+indent_size = 4
 
 [Makefile]
 indent_style = tab

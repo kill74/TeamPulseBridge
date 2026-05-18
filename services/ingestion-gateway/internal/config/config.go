@@ -252,8 +252,8 @@ func (c Config) Validate() error {
 	if rateLimitBackend == "redis" && strings.TrimSpace(c.RedisAddr) == "" {
 		return errors.New("REDIS_ADDR is required when RATE_LIMIT_BACKEND=redis")
 	}
-	if c.RateLimitRedisPrefix != "" && strings.TrimSpace(c.RateLimitRedisPrefix) == "" {
-		return errors.New("RATE_LIMIT_REDIS_PREFIX must not be blank")
+	if strings.TrimSpace(c.RateLimitRedisPrefix) == "" && c.RateLimitRedisPrefix != "" {
+		return errors.New("RATE_LIMIT_REDIS_PREFIX must not be whitespace-only")
 	}
 	pubsubPublishTimeoutSec := c.PubSubPublishTimeoutSec
 	if pubsubPublishTimeoutSec == 0 {

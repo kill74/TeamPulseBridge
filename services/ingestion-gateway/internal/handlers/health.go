@@ -11,11 +11,28 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
 )
 
+type RedisHealthChecker interface {
+	Ping(ctx context.Context) error
+}
+
+type redisPingWrapper struct {
+	pingFunc func(ctx context.Context) error
+}
+
+func (w *redisPingWrapper) Ping(ctx context.Context) error {
+	return w.pingFunc(ctx)
+}
+
+func NewRedisPingWrapper(pingFunc func(ctx context.Context) error) RedisHealthChecker {
+	return &redisPingWrapper{pingFunc: pingFunc}
+}
+
 type HealthChecker struct {
-	publisher queue.Publisher
-	failStore failstore.Store
-	deduper   dedup.Store
-	startTime time.Time
+	publisher     queue.Publisher
+	failStore     failstore.Store
+	deduper       dedup.Store
+	redisClient   RedisHealthChecker
+	startTime     time.Time
 }
 
 func NewHealthChecker(publisher queue.Publisher, failStore failstore.Store, deduper dedup.Store) *HealthChecker {
@@ -24,6 +41,16 @@ func NewHealthChecker(publisher queue.Publisher, failStore failstore.Store, dedu
 		failStore: failStore,
 		deduper:   deduper,
 		startTime: time.Now().UTC(),
+	}
+}
+
+func NewHealthCheckerWithRedis(publisher queue.Publisher, failStore failstore.Store, deduper dedup.Store, redisClient RedisHealthChecker) *HealthChecker {
+	return &HealthChecker{
+		publisher:   publisher,
+		failStore:   failStore,
+		deduper:     deduper,
+		redisClient: redisClient,
+		startTime:   time.Now().UTC(),
 	}
 }
 
@@ -65,6 +92,16 @@ func (h *HealthChecker) Healthz(w http.ResponseWriter, r *http.Request) {
 		components["dedup"] = componentHealth{Status: "ok"}
 	} else {
 		components["dedup"] = componentHealth{Status: "disabled"}
+	}
+
+	if h.redisClient != nil {
+		redisStatus := h.checkRedis(ctx)
+		components["redis"] = redisStatus
+		if redisStatus.Status != "ok" {
+			overallStatus = "degraded"
+		}
+	} else {
+		components["redis"] = componentHealth{Status: "disabled"}
 	}
 
 	resp := healthResponse{
@@ -151,6 +188,32 @@ func (h *HealthChecker) checkFailStore(ctx context.Context) componentHealth {
 	}
 
 	return componentHealth{Status: "ok"}
+}
+
+func (h *HealthChecker) checkRedis(ctx context.Context) componentHealth {
+	start := time.Now()
+	checkCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+
+	if h.redisClient == nil {
+		return componentHealth{Status: "disabled"}
+	}
+
+	err := h.redisClient.Ping(checkCtx)
+	latency := time.Since(start).Seconds() * 1000
+
+	if err != nil {
+		return componentHealth{
+			Status:    "error",
+			LatencyMs: latency,
+			Error:     err.Error(),
+		}
+	}
+
+	return componentHealth{
+		Status:    "ok",
+		LatencyMs: latency,
+	}
 }
 
 func writeReadyzError(w http.ResponseWriter, message string) {

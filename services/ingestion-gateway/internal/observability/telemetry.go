@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -171,6 +172,68 @@ func (t *Telemetry) BindQueueMetrics(serviceName string, provider queue.Snapshot
 	}, usageGauge, failureGauge, depthGauge, sourceUsageGauge, sourceFailureGauge, sourceDepthGauge)
 	if err != nil {
 		return fmt.Errorf("register queue metrics callback: %w", err)
+	}
+	t.shutdown = append(t.shutdown, func(context.Context) error {
+		return registration.Unregister()
+	})
+	return nil
+}
+
+func (t *Telemetry) BindRedisPoolMetrics(serviceName string, client *redis.Client) error {
+	if client == nil {
+		return nil
+	}
+	meter := otel.GetMeterProvider().Meter(serviceName)
+
+	totalConnsGauge, err := meter.Int64ObservableGauge("redis_pool_total_connections",
+		metric.WithDescription("Total number of connections in the Redis pool"))
+	if err != nil {
+		return fmt.Errorf("create redis total connections gauge: %w", err)
+	}
+	idleConnsGauge, err := meter.Int64ObservableGauge("redis_pool_idle_connections",
+		metric.WithDescription("Number of idle connections in the Redis pool"))
+	if err != nil {
+		return fmt.Errorf("create redis idle connections gauge: %w", err)
+	}
+	activeConnsGauge, err := meter.Int64ObservableGauge("redis_pool_active_connections",
+		metric.WithDescription("Number of active connections in the Redis pool"))
+	if err != nil {
+		return fmt.Errorf("create redis active connections gauge: %w", err)
+	}
+	staleConnsGauge, err := meter.Int64ObservableGauge("redis_pool_stale_connections",
+		metric.WithDescription("Number of stale connections removed from the Redis pool"))
+	if err != nil {
+		return fmt.Errorf("create redis stale connections gauge: %w", err)
+	}
+	hitsGauge, err := meter.Int64ObservableGauge("redis_pool_hits_total",
+		metric.WithDescription("Total number of free connection hits"))
+	if err != nil {
+		return fmt.Errorf("create redis hits gauge: %w", err)
+	}
+	missesGauge, err := meter.Int64ObservableGauge("redis_pool_misses_total",
+		metric.WithDescription("Total number of free connection misses"))
+	if err != nil {
+		return fmt.Errorf("create redis misses gauge: %w", err)
+	}
+	timeoutsGauge, err := meter.Int64ObservableGauge("redis_pool_timeouts_total",
+		metric.WithDescription("Total number of connection timeouts"))
+	if err != nil {
+		return fmt.Errorf("create redis timeouts gauge: %w", err)
+	}
+
+	registration, err := meter.RegisterCallback(func(ctx context.Context, observer metric.Observer) error {
+		stats := client.PoolStats()
+		observer.ObserveInt64(totalConnsGauge, int64(stats.TotalConns))
+		observer.ObserveInt64(idleConnsGauge, int64(stats.IdleConns))
+		observer.ObserveInt64(activeConnsGauge, int64(stats.TotalConns-stats.IdleConns))
+		observer.ObserveInt64(staleConnsGauge, int64(stats.StaleConns))
+		observer.ObserveInt64(hitsGauge, int64(stats.Hits))
+		observer.ObserveInt64(missesGauge, int64(stats.Misses))
+		observer.ObserveInt64(timeoutsGauge, int64(stats.Timeouts))
+		return nil
+	}, totalConnsGauge, idleConnsGauge, activeConnsGauge, staleConnsGauge, hitsGauge, missesGauge, timeoutsGauge)
+	if err != nil {
+		return fmt.Errorf("register redis pool metrics callback: %w", err)
 	}
 	t.shutdown = append(t.shutdown, func(context.Context) error {
 		return registration.Unregister()

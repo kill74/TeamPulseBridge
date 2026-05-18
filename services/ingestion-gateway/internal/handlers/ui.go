@@ -27,7 +27,26 @@ var uiSmokeRateLimiter = struct {
 	entries     map[string]*uiRateEntry
 	lastCleanup time.Time
 }{
-	entries: map[string]*uiRateEntry{},
+	entries:     map[string]*uiRateEntry{},
+	lastCleanup: time.Now(),
+}
+
+func init() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			uiSmokeRateLimiter.mu.Lock()
+			cutoff := time.Now().Add(-time.Minute)
+			for ip, entry := range uiSmokeRateLimiter.entries {
+				if entry.windowStart.Before(cutoff) {
+					delete(uiSmokeRateLimiter.entries, ip)
+				}
+			}
+			uiSmokeRateLimiter.lastCleanup = time.Now()
+			uiSmokeRateLimiter.mu.Unlock()
+		}
+	}()
 }
 
 type uiRateEntry struct {

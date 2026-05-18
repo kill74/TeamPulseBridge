@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -46,51 +47,7 @@ func NewAdminHandler(cfg config.Config, publisher queue.Publisher, logger *slog.
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-
-	var failedStore failstore.Store
-	if cfg.FailedStoreEnabled {
-		store, err := failstore.NewFileStore(cfg.FailedStorePath)
-		if err != nil {
-			logger.Error("admin failed-event explorer disabled due to invalid configuration",
-				"path", cfg.FailedStorePath,
-				"error", err,
-				"error_code", apperr.CodeFailedEventStore,
-			)
-		} else {
-			failedStore = store
-		}
-	}
-
-	var auditStore replayaudit.Store
-	if cfg.ReplayAuditEnabled {
-		store, err := replayaudit.NewFileStore(cfg.ReplayAuditPath)
-		if err != nil {
-			logger.Error("admin replay-audit history disabled due to invalid configuration",
-				"path", cfg.ReplayAuditPath,
-				"error", err,
-				"error_code", apperr.CodeReplayConfigInvalid,
-			)
-		} else {
-			auditStore = store
-		}
-	}
-
-	var securityStore securityaudit.Store
-	if cfg.SecurityAuditEnabled {
-		store, err := securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)
-		if err != nil {
-			logger.Error("admin security audit explorer disabled due to invalid configuration",
-				"path", cfg.SecurityAuditPath,
-				"retention_days", cfg.SecurityAuditRetentionDays,
-				"error", err,
-				"error_code", apperr.CodeReplayConfigInvalid,
-			)
-		} else {
-			securityStore = store
-		}
-	}
-
-	return NewAdminHandlerWithDependencies(cfg, publisher, logger, failedStore, auditStore, securityStore, nil)
+	return NewAdminHandlerWithDependencies(cfg, publisher, logger, nil, nil, nil, nil)
 }
 
 func NewAdminHandlerWithDependencies(cfg config.Config, publisher queue.Publisher, logger *slog.Logger, failed failstore.Store, audit replayaudit.Store, security securityaudit.Store, flags *config.FeatureFlags) *AdminHandler {
@@ -655,7 +612,10 @@ func bodyPreview(body []byte, limit int) string {
 		return clean
 	}
 	truncated := clean[:limit]
-	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+	for truncated != "" {
+		if _, size := utf8.DecodeLastRuneInString(truncated); size != 0 {
+			break
+		}
 		truncated = truncated[:len(truncated)-1]
 	}
 	return truncated + "...truncated"
@@ -663,8 +623,9 @@ func bodyPreview(body []byte, limit int) string {
 
 func redactSecrets(s string) string {
 	patterns := []string{`"token"`, `"secret"`, `"password"`, `"key"`, `"authorization"`}
+	lower := strings.ToLower(s)
 	for _, pattern := range patterns {
-		idx := strings.Index(strings.ToLower(s), pattern)
+		idx := strings.Index(lower, pattern)
 		if idx == -1 {
 			continue
 		}
@@ -679,6 +640,7 @@ func redactSecrets(s string) string {
 		}
 		if end > start {
 			s = s[:start] + "[REDACTED]" + s[end:]
+			lower = strings.ToLower(s)
 		}
 	}
 	return s
@@ -705,7 +667,7 @@ func decodeAdminJSONRequest(w http.ResponseWriter, r *http.Request, maxBytes int
 	return nil
 }
 
-func cloneReplayHeaders(base map[string]string, overrides map[string]string) map[string]string {
+func cloneReplayHeaders(base, overrides map[string]string) map[string]string {
 	out := make(map[string]string, len(base)+len(overrides))
 	for k, v := range base {
 		out[k] = v
@@ -799,6 +761,15 @@ func (h *AdminHandler) executeReplay(ctx context.Context, in replayExecutionInpu
 	result.Bytes = len(record.Body)
 
 	headers := cloneReplayHeaders(record.Headers, in.HeaderOverrides)
+	headers["X-Replay-Source"] = "admin-replay"
+	headers["X-Replay-Event-ID"] = record.EventID
+	headers["X-Replay-Timestamp"] = time.Now().UTC().Format(time.RFC3339)
+	if in.RequestID != "" {
+		headers["X-Replay-Request-ID"] = in.RequestID
+	}
+	if in.Actor != "" {
+		headers["X-Replay-Actor"] = in.Actor
+	}
 	if in.DryRun {
 		result.Status = "validated"
 		result.HTTPStatus = http.StatusOK

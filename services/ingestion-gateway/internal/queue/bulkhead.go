@@ -105,15 +105,18 @@ func (b *BulkheadPublisher) Close() error {
 	var errs []error
 	for source, sp := range b.sources {
 		if err := sp.queue.Close(); err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("source %s: %w", source, err))
 			b.logger.Error("bulkhead source queue close failed", "source", source, "error", err)
 		}
 	}
 
-	if len(errs) > 0 {
+	if len(errs) == 0 {
+		return nil
+	}
+	if len(errs) == 1 {
 		return errs[0]
 	}
-	return nil
+	return fmt.Errorf("multiple close errors: %v", errs)
 }
 
 func (b *BulkheadPublisher) Snapshot() PublisherSnapshot {

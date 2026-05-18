@@ -26,6 +26,7 @@ fail() {
 
 TAG="$1"
 [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "tag must match vMAJOR.MINOR.PATCH"
+git rev-parse "$TAG" >/dev/null 2>&1 || fail "tag $TAG does not exist locally"
 
 command -v git >/dev/null 2>&1 || fail "git is required"
 command -v go >/dev/null 2>&1 || fail "go is required"

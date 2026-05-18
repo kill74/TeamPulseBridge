@@ -56,3 +56,41 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  - package-ecosystem: "docker"
+    directory: "/services/ingestion-gateway"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:30"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker)"
+    groups:
+      docker-patch-and-minor:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "terraform"
+    directory: "/infrastructure/terraform"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "terraform"
+    commit-message:
+      prefix: "chore(terraform)"
+    groups:
+      terraform-patch-and-minor:
+        update-types:
+          - "minor"
+          - "patch"

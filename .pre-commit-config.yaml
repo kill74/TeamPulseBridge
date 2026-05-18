@@ -15,9 +15,10 @@ repos:
     hooks:
       - id: gofmt-ingestion-gateway
         name: gofmt (ingestion-gateway)
-        entry: bash -c 'cd services/ingestion-gateway && gofmt -w ./cmd ./internal && git add ./cmd ./internal'
+        entry: bash -c 'cd services/ingestion-gateway && gofmt -w ./cmd ./internal'
         language: system
         pass_filenames: false
+        files: ^services/ingestion-gateway/.*\.go$
 
       - id: govet-ingestion-gateway
         name: go vet (ingestion-gateway)

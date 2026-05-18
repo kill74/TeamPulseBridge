@@ -1,0 +1,97 @@
+name: security-scan
+
+on:
+  push:
+    branches: ['main', 'master']
+    paths:
+      - 'services/ingestion-gateway/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.github/workflows/security-scan.yml'
+  pull_request:
+    branches: ['main', 'master']
+    paths:
+      - 'services/ingestion-gateway/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.github/workflows/security-scan.yml'
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-image-scan:
+    name: Trivy Container Image Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build ingestion-gateway image
+        working-directory: services/ingestion-gateway
+        run: docker build -t teampulsebridge-ingestion-gateway:scan .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: teampulsebridge-ingestion-gateway:scan
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+  trivy-fs-scan:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+
+  govulncheck:
+    name: Go Vulnerability Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-ingestion-gateway-go
+        with:
+          go-version: "1.25.x"
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        working-directory: services/ingestion-gateway
+        run: govulncheck ./...

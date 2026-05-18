@@ -1,4 +1,4 @@
-SHELL := /bin/sh
+SHELL := /bin/bash
 
 TERRAFORM ?= terraform
 CHECKOV ?= checkov
@@ -26,12 +26,15 @@ help:
 	@echo "  make precommit-run - Run pre-commit hooks on all files"
 	@echo "  make fmt           - Format all Go code"
 	@echo "  make lint          - Run golangci-lint"
+	@echo "  make vet           - Run go vet"
 	@echo "  make test          - Run unit tests"
 	@echo "  make contract-lint - Lint fixture catalog conventions for webhook contracts"
 	@echo "  make contract-test - Run webhook contract, fixture catalog, and schema drift checks"
 	@echo "  make ci-contract   - Run fixture lint + targeted contract quality checks"
 	@echo "  make race          - Run race detector tests"
-	@echo "  make verify        - fmt + lint + test + race"
+	@echo "  make fuzz          - Run fuzz tests for 30s"
+	@echo "  make fuzz-ci       - Run fuzz tests for 5m (CI)"
+	@echo "  make verify        - fmt + lint + vet + test + race"
 	@echo "  make run           - Run ingestion gateway locally"
 	@echo "  make up            - Start local docker stack"
 	@echo "  make down          - Stop local docker stack"
@@ -92,7 +95,7 @@ dev-setup:
 	@command -v go >/dev/null 2>&1 || (echo "Go is required" && exit 1)
 	@command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1)
 	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469 python-hcl2==8.1.2
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@python3 -m pre_commit install --install-hooks
 	@python3 -m pre_commit install -t pre-push
@@ -120,6 +123,9 @@ fmt:
 lint:
 	cd services/ingestion-gateway && golangci-lint run ./...
 
+vet:
+	cd services/ingestion-gateway && go vet ./...
+
 test:
 	cd services/ingestion-gateway && go test ./...
 
@@ -132,13 +138,19 @@ contract-test:
 race:
 	cd services/ingestion-gateway && go test -race ./...
 
-verify: fmt lint test race
+fuzz:
+	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=30s ./internal/handlers ./internal/queue ./internal/config ./internal/dedup
+
+fuzz-ci:
+	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=5m ./internal/handlers ./internal/queue ./internal/config ./internal/dedup
+
+verify: fmt lint vet test race
 
 ci-go:
 	cd services/ingestion-gateway && test -z "$$(gofmt -l ./cmd ./internal)"
 	cd services/ingestion-gateway && go vet ./...
 	cd services/ingestion-gateway && go test ./...
-	cd services/ingestion-gateway && $(GOLANGCI_LINT) run --config ../../.golangci.yml ./...
+	cd services/ingestion-gateway && $(GOLANGCI_LINT) run --config $(CURDIR)/.golangci.yml ./...
 	cd services/ingestion-gateway && $(GOVULNCHECK) -format text ./...
 
 ci-contract: contract-lint contract-test
@@ -224,9 +236,12 @@ integration-test:
 	trap cleanup EXIT; \
 	docker rm -f pubsub-emulator-make > /dev/null 2>&1 || true; \
 	docker run -d --name pubsub-emulator-make -p 8085:8085 google/cloud-sdk:emulators gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 > /dev/null; \
-	sleep 3; \
+	for i in $$(seq 1 30); do \
+		if curl -s http://localhost:8085/ >/dev/null 2>&1; then echo "Pub/Sub Emulator is ready"; break; fi; \
+		sleep 1; \
+	done; \
 	cd services/ingestion-gateway; \
-	PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project go test -v -race -coverpkg=./... -coverprofile=coverage.out -timeout 30s ./...
+	PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project go test -v -race -coverpkg=./... -coverprofile=coverage.out -timeout 120s ./...
 
 integration-test-queue:
 	@echo "Starting Pub/Sub Emulator..."
@@ -238,9 +253,12 @@ integration-test-queue:
 	trap cleanup EXIT; \
 	docker rm -f pubsub-emulator-queue > /dev/null 2>&1 || true; \
 	docker run -d --name pubsub-emulator-queue -p 8085:8085 google/cloud-sdk:emulators gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 > /dev/null; \
-	sleep 3; \
+	for i in $$(seq 1 30); do \
+		if curl -s http://localhost:8085/ >/dev/null 2>&1; then echo "Pub/Sub Emulator is ready"; break; fi; \
+		sleep 1; \
+	done; \
 	cd services/ingestion-gateway; \
-	PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project go test -v -race -timeout 30s ./internal/queue
+	PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project go test -v -race -timeout 120s ./internal/queue
 
 integration-test-handlers:
 	@echo "Starting Pub/Sub Emulator..."
@@ -252,9 +270,12 @@ integration-test-handlers:
 	trap cleanup EXIT; \
 	docker rm -f pubsub-emulator-handlers > /dev/null 2>&1 || true; \
 	docker run -d --name pubsub-emulator-handlers -p 8085:8085 google/cloud-sdk:emulators gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 > /dev/null; \
-	sleep 3; \
+	for i in $$(seq 1 30); do \
+		if curl -s http://localhost:8085/ >/dev/null 2>&1; then echo "Pub/Sub Emulator is ready"; break; fi; \
+		sleep 1; \
+	done; \
 	cd services/ingestion-gateway; \
-	PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project go test -v -race -timeout 30s ./internal/handlers
+	PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project go test -v -race -timeout 120s ./internal/handlers
 
 integration-bench:
 	@echo "Starting Pub/Sub Emulator..."
@@ -266,7 +287,10 @@ integration-bench:
 	trap cleanup EXIT; \
 	docker rm -f pubsub-emulator-bench > /dev/null 2>&1 || true; \
 	docker run -d --name pubsub-emulator-bench -p 8085:8085 google/cloud-sdk:emulators gcloud beta emulators pubsub start --host-port=0.0.0.0:8085 > /dev/null; \
-	sleep 3; \
+	for i in $$(seq 1 30); do \
+		if curl -s http://localhost:8085/ >/dev/null 2>&1; then echo "Pub/Sub Emulator is ready"; break; fi; \
+		sleep 1; \
+	done; \
 	cd services/ingestion-gateway; \
 	PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_PROJECT_ID=test-project go test -v -run=^$ -bench=. -benchmem -benchtime=5s ./internal/handlers ./internal/queue
 
@@ -371,4 +395,4 @@ gitops-bootstrap:
 	@test -n "$(PROJECT_ID)" || (echo "PROJECT_ID is required" && exit 1)
 	@test -n "$(CLUSTER)" || (echo "CLUSTER is required" && exit 1)
 	@test -n "$(REGION)" || (echo "REGION is required" && exit 1)
-	bash infrastructure/scripts/bootstrap-gitops-argocd.sh $(PROJECT_ID) $(CLUSTER) $(REGION) $(REPO_URL) $(REVISION)
+	bash infrastructure/scripts/bootstrap-gitops-argocd.sh "$(PROJECT_ID)" "$(CLUSTER)" "$(REGION)" "$(REPO_URL)" "$(REVISION)"

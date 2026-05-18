@@ -103,3 +103,10 @@ func (p *CircuitBreakerPublisher) Close() error {
 func (p *CircuitBreakerPublisher) HealthCheck(ctx context.Context) error {
 	return p.wrapped.HealthCheck(ctx)
 }
+
+func (p *CircuitBreakerPublisher) Snapshot() PublisherSnapshot {
+	if sp, ok := p.wrapped.(SnapshotProvider); ok {
+		return sp.Snapshot()
+	}
+	return PublisherSnapshot{}
+}

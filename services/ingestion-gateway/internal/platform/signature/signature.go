@@ -40,6 +40,28 @@ func ValidateSlack(secret, timestamp, body, providedSignature string, now time.T
 	return nil
 }
 
+func ValidateSlackWithRotation(secrets []string, timestamp, body, providedSignature string, now time.Time, maxSkew time.Duration) error {
+	if len(secrets) == 0 {
+		return fmt.Errorf("slack signing secrets are not configured")
+	}
+
+	var lastErr error
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		if err := ValidateSlack(secret, timestamp, body, providedSignature, now, maxSkew); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("no valid slack signing secret found")
+}
+
 func ValidateGitHub(secret string, body []byte, provided string) error {
 	if secret == "" {
 		return fmt.Errorf("github webhook secret is not configured")
@@ -61,6 +83,28 @@ func ValidateGitHub(secret string, body []byte, provided string) error {
 	return nil
 }
 
+func ValidateGitHubWithRotation(secrets []string, body []byte, provided string) error {
+	if len(secrets) == 0 {
+		return fmt.Errorf("github webhook secrets are not configured")
+	}
+
+	var lastErr error
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		if err := ValidateGitHub(secret, body, provided); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("no valid github webhook secret found")
+}
+
 func ValidateGitLab(token, provided string) error {
 	if token == "" {
 		return fmt.Errorf("gitlab webhook token is not configured")
@@ -79,6 +123,28 @@ func ValidateGitLab(token, provided string) error {
 	return nil
 }
 
+func ValidateGitLabWithRotation(tokens []string, provided string) error {
+	if len(tokens) == 0 {
+		return fmt.Errorf("gitlab webhook tokens are not configured")
+	}
+
+	var lastErr error
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		if err := ValidateGitLab(token, provided); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("no valid gitlab webhook token found")
+}
+
 func ValidateTeamsClientState(expected, provided string) error {
 	if expected == "" {
 		return fmt.Errorf("teams client state is not configured")
@@ -95,4 +161,26 @@ func ValidateTeamsClientState(expected, provided string) error {
 		return fmt.Errorf("invalid teams client state")
 	}
 	return nil
+}
+
+func ValidateTeamsClientStateWithRotation(states []string, provided string) error {
+	if len(states) == 0 {
+		return fmt.Errorf("teams client states are not configured")
+	}
+
+	var lastErr error
+	for _, state := range states {
+		if state == "" {
+			continue
+		}
+		if err := ValidateTeamsClientState(state, provided); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("no valid teams client state found")
 }

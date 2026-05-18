@@ -55,28 +55,7 @@ func NewWebhookHandler(cfg config.Config, publisher queue.Publisher, logger *slo
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-
-	dedupTTL := time.Duration(cfg.DedupTTLSeconds) * time.Second
-	if dedupTTL <= 0 {
-		dedupTTL = 5 * time.Minute
-	}
-	deduper := dedup.NewMemory(cfg.DedupEnabled, dedupTTL)
-
-	var failedStore failstore.Store
-	if cfg.FailedStoreEnabled {
-		store, err := failstore.NewFileStore(cfg.FailedStorePath)
-		if err != nil {
-			logger.Error("failed event store disabled due to invalid configuration",
-				"path", cfg.FailedStorePath,
-				"error", err,
-				"error_code", apperr.CodeFailedEventStore,
-			)
-		} else {
-			failedStore = store
-		}
-	}
-
-	return NewWebhookHandlerWithDependencies(cfg, publisher, logger, record, deduper, failedStore, nil, nil)
+	return NewWebhookHandlerWithDependencies(cfg, publisher, logger, record, nil, nil, nil, nil)
 }
 
 func NewWebhookHandlerWithDependencies(
@@ -352,7 +331,7 @@ func (h *WebhookHandler) rejectUnauthorized(w http.ResponseWriter, r *http.Reque
 	return true
 }
 
-func readBody(w http.ResponseWriter, r *http.Request) ([]byte, *apperr.Error, int) {
+func readBody(w http.ResponseWriter, r *http.Request) (body []byte, appErr *apperr.Error, status int) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

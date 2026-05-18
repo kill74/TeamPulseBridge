@@ -37,6 +37,20 @@ func (p *TransformingPublisher) HealthCheck(ctx context.Context) error {
 	return p.wrapped.HealthCheck(ctx)
 }
 
+func (p *TransformingPublisher) Snapshot() PublisherSnapshot {
+	if sp, ok := p.wrapped.(SnapshotProvider); ok {
+		return sp.Snapshot()
+	}
+	return PublisherSnapshot{}
+}
+
+func (p *TransformingPublisher) SourceSnapshots() map[string]PublisherSnapshot {
+	if sp, ok := p.wrapped.(SourceSnapshotProvider); ok {
+		return sp.SourceSnapshots()
+	}
+	return nil
+}
+
 // PII Scrubbing Transformers
 
 var (

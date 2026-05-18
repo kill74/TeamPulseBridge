@@ -65,3 +65,120 @@ groups:
         annotations:
           summary: "Health check is failing"
           description: "Ingestion gateway health check has been failing for more than 1 minute."
+
+      - alert: RedisConnectionPoolExhausted
+        expr: |
+          redis_pool_idle_connections / redis_pool_total_connections < 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis connection pool nearly exhausted"
+          description: "Less than 10% of Redis connections are idle. Pool may be exhausted soon."
+
+      - alert: RedisConnectionTimeouts
+        expr: |
+          rate(redis_pool_timeouts_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis connection timeouts detected"
+          description: "Redis connection pool is experiencing timeouts. Current rate: {{ $value | humanize }} per second."
+
+      - alert: SLOBreachedAvailability
+        expr: |
+          (
+            sum(rate(webhook_requests_total{status=~"2..|3.."}[5m]))
+            /
+            sum(rate(webhook_requests_total[5m]))
+          ) < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "Availability SLO breach (< 99.9%)"
+          description: "Service availability has dropped below 99.9% SLO target. Current: {{ $value | humanizePercentage }}. Error budget is being consumed rapidly."
+
+      - alert: SLOBreachedLatencyP99
+        expr: |
+          histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "Latency SLO breach (P99 > 1s)"
+          description: "P99 latency has exceeded 1 second SLO target. Current P99: {{ $value | humanizeDuration }}."
+
+      - alert: SLOBreachedLatencyP95
+        expr: |
+          histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "Latency SLO breach (P95 > 500ms)"
+          description: "P95 latency has exceeded 500ms SLO target. Current P95: {{ $value | humanizeDuration }}."
+
+      - alert: ErrorBudgetBurnRateHigh
+        expr: |
+          (
+            sum(rate(webhook_requests_total{status=~"5.."}[1h]))
+            /
+            sum(rate(webhook_requests_total[1h]))
+          ) > 0.001
+        for: 5m
+        labels:
+          severity: warning
+          slo: error-budget
+        annotations:
+          summary: "Error budget burn rate is high"
+          description: "1-hour error budget burn rate exceeds 0.1%. At this rate, the monthly error budget will be exhausted quickly."
+
+      - alert: ErrorBudgetBurnRateCritical
+        expr: |
+          (
+            sum(rate(webhook_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(webhook_requests_total[5m]))
+          ) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          slo: error-budget
+        annotations:
+          summary: "Error budget burn rate is critical"
+          description: "5-minute error budget burn rate exceeds 1%. Immediate action required to prevent SLO breach."
+
+      - alert: CircuitBreakerOpen
+        expr: |
+          circuit_breaker_state == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker is open"
+          description: "Circuit breaker has tripped. Downstream service may be unavailable."
+
+      - alert: RetrySchedulerLag
+        expr: |
+          failed_event_store_entries > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Retry queue backlog is growing"
+          description: "Failed event store has more than 1000 entries for over 10 minutes. Retry scheduler may be falling behind."
+
+      - alert: DedupStoreMemoryHigh
+        expr: |
+          dedup_memory_entries > 100000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deduplication store memory usage high"
+          description: "In-memory deduplication store has more than 100,000 entries. Consider increasing TTL or switching to Redis."

@@ -39,7 +39,7 @@ jobs:
 
       - name: Validate metrics endpoint
         run: |
-          curl -fsS http://localhost:8080/metrics | head -n 20
+          curl -fsS http://localhost:8080/metrics | grep -q "go_" || exit 1
 
       - name: Show compose status
         if: always()

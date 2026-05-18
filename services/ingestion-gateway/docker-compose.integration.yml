@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Google Cloud Pub/Sub Emulator for testing
   pubsub-emulator:

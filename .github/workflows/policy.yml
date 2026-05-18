@@ -17,6 +17,9 @@ on:
       - 'scripts/policy/**'
       - '.checkov.yaml'
 
+permissions:
+  contents: read
+
 jobs:
   policy:
     runs-on: ubuntu-latest

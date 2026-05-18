@@ -76,7 +76,7 @@ func (s *Scheduler) Start() {
 
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
-	if !s.running {
+	if !s.running || s.stopped {
 		s.mu.Unlock()
 		s.wg.Wait()
 		return

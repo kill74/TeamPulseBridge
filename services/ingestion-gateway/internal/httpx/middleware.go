@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,17 @@ type Middleware func(http.Handler) http.Handler
 
 type RateLimiter interface {
 	Allow(key string, limit int) bool
+}
+
+type RateLimitResult struct {
+	Allowed   bool
+	Remaining int
+	ResetAt   time.Time
+	Limit     int
+}
+
+type RateLimiterWithInfo interface {
+	AllowWithInfo(key string, limit int, now time.Time) RateLimitResult
 }
 
 type RateLimitConfig struct {
@@ -118,11 +130,17 @@ func (l *IPRateLimiter) CleanupStale() {
 }
 
 func (l *IPRateLimiter) Allow(key string, limit int) bool {
+	result := l.AllowWithInfo(key, limit, l.now())
+	return result.Allowed
+}
+
+func (l *IPRateLimiter) AllowWithInfo(key string, limit int, now time.Time) RateLimitResult {
 	if limit <= 0 {
-		return false
+		return RateLimitResult{Allowed: false, Limit: limit}
 	}
-	now := l.now().Unix()
-	windowStart := now - (now % l.windowS)
+	unix := now.Unix()
+	windowStart := unix - (unix % l.windowS)
+	resetAt := time.Unix(windowStart+l.windowS, 0)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -131,15 +149,30 @@ func (l *IPRateLimiter) Allow(key string, limit int) bool {
 	if !ok || entry.windowStart != windowStart {
 		l.entries[key] = rateWindow{windowStart: windowStart, count: 1}
 		l.maybeCleanupLocked(windowStart)
-		return true
+		return RateLimitResult{
+			Allowed:   true,
+			Remaining: limit - 1,
+			ResetAt:   resetAt,
+			Limit:     limit,
+		}
 	}
 	if entry.count >= limit {
-		return false
+		return RateLimitResult{
+			Allowed:   false,
+			Remaining: 0,
+			ResetAt:   resetAt,
+			Limit:     limit,
+		}
 	}
 	entry.count++
 	l.entries[key] = entry
 	l.maybeCleanupLocked(windowStart)
-	return true
+	return RateLimitResult{
+		Allowed:   true,
+		Remaining: limit - entry.count,
+		ResetAt:   resetAt,
+		Limit:     limit,
+	}
 }
 
 func (l *IPRateLimiter) maybeCleanupLocked(currentWindowStart int64) {
@@ -301,7 +334,22 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 				limit = admin
 				scope = "admin"
 			}
-			if !limiter.Allow(scope+"|"+ip, limit) {
+
+			var result RateLimitResult
+			if rl, ok := limiter.(RateLimiterWithInfo); ok {
+				result = rl.AllowWithInfo(scope+"|"+ip, limit, cfg.Now())
+			} else {
+				allowed := limiter.Allow(scope+"|"+ip, limit)
+				result = RateLimitResult{Allowed: allowed, Limit: limit}
+			}
+
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(result.Limit))
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
+			if !result.ResetAt.IsZero() {
+				w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(result.ResetAt.Unix(), 10))
+			}
+
+			if !result.Allowed {
 				if cfg.OnReject != nil {
 					cfg.OnReject(r, "rate_limit_exceeded", http.StatusTooManyRequests)
 				}
@@ -470,4 +518,41 @@ func sanitizeLogValue(s string) string {
 		}
 		return r
 	}, s)
+}
+
+type ContentTypeConfig struct {
+	Required    bool
+	Allowed     []string
+	OnReject    func(w http.ResponseWriter, r *http.Request, contentType string)
+}
+
+func RequireContentType(cfg ContentTypeConfig) Middleware {
+	if !cfg.Required || len(cfg.Allowed) == 0 {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	allowed := make(map[string]struct{}, len(cfg.Allowed))
+	for _, ct := range cfg.Allowed {
+		allowed[strings.ToLower(strings.TrimSpace(ct))] = struct{}{}
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ct := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+			if ct == "" {
+				ct = "application/octet-stream"
+			}
+			for _, allowedCT := range cfg.Allowed {
+				if strings.HasPrefix(ct, strings.ToLower(allowedCT)) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			if cfg.OnReject != nil {
+				cfg.OnReject(w, r, ct)
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				fmt.Fprintf(w, `{"error":"unsupported content type: %s","allowed":["%s"]}`, ct, strings.Join(cfg.Allowed, `", "`))
+			}
+		})
+	}
 }

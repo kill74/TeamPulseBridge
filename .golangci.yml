@@ -11,6 +11,191 @@ linters:
     - gosimple
     - misspell
     - unused
+    - gocritic
+    - revive
+    - bodyclose
+    - nilerr
+    - errname
+    - wrapcheck
+    - copyloopvar
+    - fatcontext
+    - perfsprint
+    - testifylint
+    - spancheck
+    - predeclared
+    - unconvert
+    - usestdlibvars
+    - wastedassign
+    - zerologlint
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+      - opinionated
+    disabled-checks:
+      - hugeParam
+      - rangeValCopy
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+      - name: blank-imports
+        severity: warning
+      - name: context-as-argument
+        severity: warning
+      - name: context-keys-type
+        severity: warning
+      - name: dot-imports
+        severity: warning
+      - name: error-return
+        severity: warning
+      - name: error-strings
+        severity: warning
+      - name: error-naming
+        severity: warning
+      - name: increment-decrement
+        severity: warning
+      - name: var-naming
+        severity: warning
+      - name: var-declaration
+        severity: warning
+      - name: package-comments
+        severity: warning
+      - name: range
+        severity: warning
+      - name: receiver-naming
+        severity: warning
+      - name: time-naming
+        severity: warning
+      - name: unexported-return
+        severity: warning
+      - name: indent-error-flow
+        severity: warning
+      - name: errorf
+        severity: warning
+      - name: empty-block
+        severity: warning
+      - name: superfluous-else
+        severity: warning
+      - name: unused-parameter
+        severity: warning
+      - name: unreachable-code
+        severity: warning
+      - name: redefines-builtin-id
+        severity: warning
+      - name: import-shadowing
+        severity: warning
+      - name: bare-return
+        severity: warning
+      - name: bool-literal-in-expr
+        severity: warning
+      - name: comment-spacings
+        severity: warning
+      - name: confusing-naming
+        severity: warning
+      - name: confusing-results
+        severity: warning
+      - name: constant-logical-expr
+        severity: warning
+      - name: deep-exit
+        severity: warning
+      - name: defer
+        severity: warning
+      - name: early-return
+        severity: warning
+      - name: empty-lines
+        severity: warning
+      - name: flag-parameter
+        severity: warning
+      - name: function-length
+        severity: warning
+      - name: identical-branches
+        severity: warning
+      - name: if-return
+        severity: warning
+      - name: import-alias-naming
+        severity: warning
+      - name: line-length-limit
+        severity: warning
+        arguments:
+          - 200
+      - name: modifies-parameter
+        severity: warning
+      - name: modifies-value-receiver
+        severity: warning
+      - name: nested-structs
+        severity: warning
+      - name: optimize-operands-order
+        severity: warning
+      - name: range-val-address
+        severity: warning
+      - name: range-val-in-closure
+        severity: warning
+      - name: string-of-int
+        severity: warning
+      - name: struct-tag
+        severity: warning
+      - name: unconditional-recursion
+        severity: warning
+      - name: unhandled-error
+        severity: warning
+      - name: unnecessary-stmt
+        severity: warning
+      - name: unused-receiver
+        severity: warning
+      - name: use-any
+        severity: warning
+      - name: useless-break
+        severity: warning
+      - name: waitgroup-by-value
+        severity: warning
+  wrapcheck:
+    ignoreSigs:
+      - .Errorf(
+      - errors.New(
+      - errors.Unwrap(
+      - errors.Join(
+      - .Wrap(
+      - .Wrapf(
+      - .WithMessage(
+      - .WithMessagef(
+      - .WithStack(
+  testifylint:
+    enable-all: true
+    disable:
+      - float-compare
+      - go-require
+  spancheck:
+    checks:
+      - end
+      - record-error
+      - set-status
 
 issues:
   exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gocritic
+        - revive
+        - wrapcheck
+        - errcheck
+    - path: cmd/
+      linters:
+        - wrapcheck
+    - path: internal/testhelpers/
+      linters:
+        - wrapcheck
+        - gocritic

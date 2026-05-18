@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
   id-token: write
 
 concurrency:
@@ -42,8 +41,11 @@ jobs:
           } > release-notes.md
 
       - name: Preserve release notes across checkout
-        shell: bash
-        run: cp release-notes.md /tmp/release-notes.md
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 1
 
       - name: Setup ingestion-gateway Go
         uses: ./.github/actions/setup-ingestion-gateway-go
@@ -112,7 +114,6 @@ jobs:
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           body_path: release-notes.md
-          generate_release_notes: true
           files: |
             teampulsebridge-*
             SHA256SUMS
@@ -127,8 +128,9 @@ jobs:
           fetch-depth: 0
 
       - name: Restore release notes
-        shell: bash
-        run: cp /tmp/release-notes.md release-notes.md
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
 
       - name: Update CHANGELOG.md
         shell: bash
@@ -142,7 +144,7 @@ jobs:
           echo >> "$tmpfile"
           cat release-notes.md >> "$tmpfile"
           echo >> "$tmpfile"
-          tail -n +2 CHANGELOG.md >> "$tmpfile"
+          tail -n +3 CHANGELOG.md >> "$tmpfile"
           mv "$tmpfile" CHANGELOG.md
 
       - name: Commit and push changelog update

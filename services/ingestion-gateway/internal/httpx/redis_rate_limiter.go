@@ -37,28 +37,47 @@ func NewRedisRateLimiter(client *redis.Client, prefix string, window time.Durati
 }
 
 func (l *RedisRateLimiter) Allow(key string, limit int) bool {
+	result := l.AllowWithInfo(key, limit, l.now())
+	return result.Allowed
+}
+
+func (l *RedisRateLimiter) AllowWithInfo(key string, limit int, now time.Time) RateLimitResult {
 	if limit <= 0 {
-		return false
+		return RateLimitResult{Allowed: false, Limit: limit}
 	}
-	if l == nil || l.client == nil || strings.TrimSpace(key) == "" {
-		return true
+	if l.client == nil || strings.TrimSpace(key) == "" {
+		return RateLimitResult{Allowed: true, Limit: limit, Remaining: limit}
 	}
 
-	windowStart := l.windowStart(l.now().UTC())
+	windowStart := l.windowStart(now.UTC())
 	redisKey := l.redisKey(windowStart, key)
+	resetAt := time.Unix(windowStart+int64(l.window/time.Second), 0).UTC()
 	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
 	defer cancel()
 
 	count, err := l.client.Incr(ctx, redisKey).Result()
 	if err != nil {
-		// Availability-first fail-open behavior. Edge controls and local middleware
-		// still protect the service if Redis is temporarily unavailable.
-		return true
+		return RateLimitResult{
+			Allowed:   true,
+			Remaining: limit,
+			ResetAt:   resetAt,
+			Limit:     limit,
+		}
 	}
 	if count == 1 {
 		_ = l.client.Expire(ctx, redisKey, 2*l.window).Err()
 	}
-	return count <= int64(limit)
+
+	remaining := limit - int(count)
+	if remaining < 0 {
+		remaining = 0
+	}
+	return RateLimitResult{
+		Allowed:   count <= int64(limit),
+		Remaining: remaining,
+		ResetAt:   resetAt,
+		Limit:     limit,
+	}
 }
 
 func (l *RedisRateLimiter) windowStart(t time.Time) int64 {
