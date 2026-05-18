@@ -5,11 +5,11 @@ services:
     container_name: teampulse-pubsub-emulator
     command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
     ports:
-      - '8085:8085'
+      - "8085:8085"
     environment:
       PUBSUB_PROJECT_ID: test-project
     healthcheck:
-      test: ['CMD-SHELL', 'bash -c "echo > /dev/tcp/127.0.0.1/8085"']
+      test: ["CMD-SHELL", 'bash -c "echo > /dev/tcp/127.0.0.1/8085"']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -24,14 +24,12 @@ services:
     environment:
       PORT: 8080
       ENVIRONMENT: integration-test
-      QUEUE_BACKEND: pubsub
-      PUBSUB_PROJECT_ID: test-project
-      PUBSUB_TOPIC_ID: test-webhook-topic
+      QUEUE_BACKEND: log
       REQUIRE_SECRETS: 'false'
       ADMIN_AUTH_ENABLED: 'false'
       PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
     ports:
-      - '8080:8080'
+      - "8080:8080"
     depends_on:
       pubsub-emulator:
         condition: service_healthy
