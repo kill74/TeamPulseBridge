@@ -33,21 +33,24 @@ jobs:
       - name: Tidy modules
         working-directory: services/ingestion-gateway
         run: |
+          set -e
           go mod tidy
           git diff --exit-code go.mod go.sum
 
       - name: Run tests with coverage
         shell: bash
         run: |
+          set -e
           go test -race -count=1 -coverprofile=services/ingestion-gateway/coverage.out ./services/ingestion-gateway/...
 
       - name: Check coverage threshold
         shell: bash
         run: |
+          set -e
           COVERAGE=$(go tool cover -func=services/ingestion-gateway/coverage.out | grep total | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
           THRESHOLD=65
-          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+          if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
             echo "Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
             exit 1
           fi

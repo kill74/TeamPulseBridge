@@ -38,6 +38,7 @@ jobs:
 
       - name: Start Pub/Sub Emulator
         run: |
+          set -e
           docker run -d \
             --name pubsub-emulator \
             -p 8085:8085 \
