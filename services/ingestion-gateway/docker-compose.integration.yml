@@ -25,8 +25,8 @@ services:
       PORT: 8080
       ENVIRONMENT: integration-test
       QUEUE_BACKEND: log
-      REQUIRE_SECRETS: 'false'
-      ADMIN_AUTH_ENABLED: 'false'
+      REQUIRE_SECRETS: "false"
+      ADMIN_AUTH_ENABLED: "false"
       PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
     ports:
       - "8080:8080"

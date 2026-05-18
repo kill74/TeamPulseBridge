@@ -4,15 +4,15 @@ on:
   push:
     branches: [main]
     paths:
-      - 'services/ingestion-gateway/**'
-      - '.github/actions/setup-ingestion-gateway-go/**'
-      - '.github/workflows/integration.yml'
+      - "services/ingestion-gateway/**"
+      - ".github/actions/setup-ingestion-gateway-go/**"
+      - ".github/workflows/integration.yml"
   pull_request:
     branches: [main]
     paths:
-      - 'services/ingestion-gateway/**'
-      - '.github/actions/setup-ingestion-gateway-go/**'
-      - '.github/workflows/integration.yml'
+      - "services/ingestion-gateway/**"
+      - ".github/actions/setup-ingestion-gateway-go/**"
+      - ".github/workflows/integration.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
