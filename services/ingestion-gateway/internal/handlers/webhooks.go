@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -25,7 +26,7 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/securityaudit"
 )
 
-const maxBodyBytes = 1 << 20 // 1 MiB
+const maxRequestBodyBytes = 1 << 20 // 1 MiB
 
 type WebhookHandler struct {
 	cfg             config.Config
@@ -332,7 +333,7 @@ func (h *WebhookHandler) rejectUnauthorized(w http.ResponseWriter, r *http.Reque
 }
 
 func readBody(w http.ResponseWriter, r *http.Request) (body []byte, appErr *apperr.Error, status int) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		var maxErr *http.MaxBytesError
@@ -348,7 +349,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		_ = err // Headers already sent, cannot recover
+		slog.Debug("json encode failed in writeJSON", "error", err)
 	}
 }
 
@@ -358,6 +359,7 @@ func (h *WebhookHandler) respondError(w http.ResponseWriter, ctx context.Context
 		extras = map[string]any{"event_id": eventID}
 	}
 	httpx.WriteError(w, ctx, status, err, extras)
+	_ = h
 }
 
 func (h *WebhookHandler) forgetDedupKey(source, eventID string) {
@@ -459,19 +461,40 @@ func deriveEventID(source string, r *http.Request, body []byte) string {
 }
 
 func extractJSONField(body []byte, field string) string {
-	var doc map[string]any
-	if err := json.Unmarshal(body, &doc); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	t, err := dec.Token()
+	if err != nil || t != json.Delim('{') {
 		return ""
 	}
-	raw, ok := doc[field]
-	if !ok {
-		return ""
+
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+
+		key, ok := t.(string)
+		if !ok {
+			return ""
+		}
+
+		if key == field {
+			var value any
+			if err := dec.Decode(&value); err != nil {
+				return ""
+			}
+			if s, ok := value.(string); ok {
+				return strings.TrimSpace(s)
+			}
+			return ""
+		}
+
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return ""
+		}
 	}
-	s, ok := raw.(string)
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(s)
+	return ""
 }
 
 func fallbackEventID(source string, body []byte) string {

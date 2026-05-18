@@ -9,6 +9,7 @@ resources:
   - service.yaml
   - hpa.yaml
   - pdb.yaml
+  - vpa.yaml
 labels:
   - pairs:
       app.kubernetes.io/name: ingestion-gateway

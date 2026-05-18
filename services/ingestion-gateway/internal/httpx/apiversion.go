@@ -15,6 +15,8 @@ const (
 	CurrentAPIVersion    = "v1"
 	LegacyRoutePrefix    = "/webhooks/"
 	VersionedRoutePrefix = "/api/v1/webhooks/"
+	LegacyAdminPrefix    = "/admin/"
+	VersionedAdminPrefix = "/api/v1/admin/"
 )
 
 var DefaultSunsetDate = time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -44,13 +46,33 @@ func APIVersionMiddleware(cfg APIVersionConfig) func(http.Handler) http.Handler 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			path := r.URL.Path
 
-			if strings.HasPrefix(path, LegacyRoutePrefix) && !strings.HasPrefix(path, VersionedRoutePrefix) {
-				w.Header().Set(HeaderDeprecation, "true")
-				w.Header().Set(HeaderSunset, sunset.Format(time.RFC1123))
-				w.Header().Set(HeaderLink, fmt.Sprintf(`</api/%s%s>; rel="successor-version"`, version, strings.TrimPrefix(path, "/webhooks")))
-				w.Header().Set(HeaderAPIVersion, "legacy")
-			} else if strings.HasPrefix(path, VersionedRoutePrefix) {
-				w.Header().Set(HeaderAPIVersion, version)
+			// Define mappings for legacy to versioned routes
+			mappings := []struct {
+				legacy    string
+				versioned string
+				apiPath   string
+			}{
+				{LegacyRoutePrefix, VersionedRoutePrefix, "webhooks"},
+				{LegacyAdminPrefix, VersionedAdminPrefix, "admin"},
+			}
+
+			isVersioned := false
+			for _, m := range mappings {
+				if strings.HasPrefix(path, m.legacy) && !strings.HasPrefix(path, m.versioned) {
+					w.Header().Set(HeaderDeprecation, "true")
+					w.Header().Set(HeaderSunset, sunset.Format(time.RFC1123))
+					w.Header().Set(HeaderLink, fmt.Sprintf(`</api/%s/%s%s>; rel="successor-version"`, version, m.apiPath, strings.TrimPrefix(path, m.legacy)))
+					w.Header().Set(HeaderAPIVersion, "legacy")
+					break
+				} else if strings.HasPrefix(path, m.versioned) {
+					w.Header().Set(HeaderAPIVersion, version)
+					isVersioned = true
+					break
+				}
+			}
+
+			if !isVersioned && !strings.HasPrefix(path, "/api/") {
+				// Not an API route or already handled legacy route
 			}
 
 			requestedVersion := r.Header.Get(HeaderAPIVersion)

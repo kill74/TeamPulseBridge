@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -18,7 +19,7 @@ type Watcher struct {
 	logger   *slog.Logger
 	onChange func(Config)
 	stopCh   chan struct{}
-	stopped  bool
+	stopped  atomic.Bool
 }
 
 func NewWatcher(cfg Config, logger *slog.Logger, onChange func(Config)) (*Watcher, error) {
@@ -127,7 +128,22 @@ func configsEqual(a, b Config) bool {
 		a.SourceRateLimitEnabled == b.SourceRateLimitEnabled &&
 		a.PIIScrubbingEnabled == b.PIIScrubbingEnabled &&
 		a.AdminAuthEnabled == b.AdminAuthEnabled &&
-		a.RequestTimeoutSec == b.RequestTimeoutSec
+		a.RequestTimeoutSec == b.RequestTimeoutSec &&
+		a.RedisAddr == b.RedisAddr &&
+		a.DatabaseURL == b.DatabaseURL &&
+		a.PubSubProjectID == b.PubSubProjectID &&
+		a.PubSubTopicID == b.PubSubTopicID &&
+		a.AdminJWTSecret == b.AdminJWTSecret &&
+		a.AdminJWTIssuer == b.AdminJWTIssuer &&
+		a.AdminJWTAudience == b.AdminJWTAudience &&
+		a.SlackSigningSecret == b.SlackSigningSecret &&
+		a.GitHubWebhookSecret == b.GitHubWebhookSecret &&
+		a.GitLabWebhookToken == b.GitLabWebhookToken &&
+		a.TeamsClientState == b.TeamsClientState &&
+		a.RateLimitBackend == b.RateLimitBackend &&
+		a.FailedStoreEnabled == b.FailedStoreEnabled &&
+		a.ReplayAuditEnabled == b.ReplayAuditEnabled &&
+		a.SecurityAuditEnabled == b.SecurityAuditEnabled
 }
 
 func (w *Watcher) Get() Config {
@@ -139,10 +155,9 @@ func (w *Watcher) Get() Config {
 }
 
 func (w *Watcher) Stop() error {
-	if w.stopped {
+	if w.stopped.Swap(true) {
 		return nil
 	}
-	w.stopped = true
 	close(w.stopCh)
 	return w.watcher.Close()
 }
@@ -180,9 +195,137 @@ func ParseConfig(data []byte) (Config, error) {
 		envOverrides[key] = value
 	}
 
-	for key, value := range envOverrides {
-		_ = os.Setenv(key, value)
+	return LoadFromMap(envOverrides), nil
+}
+
+func LoadFromMap(overrides map[string]string) Config {
+	get := func(key, fallback string) string {
+		if v, ok := overrides[key]; ok && v != "" {
+			return v
+		}
+		return fallback
+	}
+	getEnv := func(key string) string {
+		if v, ok := overrides[key]; ok {
+			return v
+		}
+		return os.Getenv(key)
+	}
+	getInt := func(key string, fallback int) int {
+		if v, ok := overrides[key]; ok && v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				return n
+			}
+		}
+		return fallback
+	}
+	getBool := func(key string, fallback bool) bool {
+		if v, ok := overrides[key]; ok && v != "" {
+			v = strings.ToLower(strings.TrimSpace(v))
+			switch v {
+			case "1", "true", "yes", "y":
+				return true
+			case "0", "false", "no", "n":
+				return false
+			}
+		}
+		return fallback
+	}
+	getFloat := func(key string, fallback float64) float64 {
+		if v, ok := overrides[key]; ok && v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				return f
+			}
+		}
+		return fallback
+	}
+	getCSV := func(key string) []string {
+		if v, ok := overrides[key]; ok {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				return nil
+			}
+			parts := strings.Split(v, ",")
+			out := make([]string, 0, len(parts))
+			for _, p := range parts {
+				candidate := strings.TrimSpace(p)
+				if candidate != "" {
+					out = append(out, candidate)
+				}
+			}
+			if len(out) > 0 {
+				return out
+			}
+		}
+		return splitCSVEnv(key)
 	}
 
-	return LoadFromEnv(), nil
+	return Config{
+		Environment:                       get("ENVIRONMENT", "dev"),
+		Port:                              get("PORT", "8080"),
+		SlackSigningSecret:                getEnv("SLACK_SIGNING_SECRET"),
+		GitHubWebhookSecret:               getEnv("GITHUB_WEBHOOK_SECRET"),
+		GitLabWebhookToken:                getEnv("GITLAB_WEBHOOK_TOKEN"),
+		TeamsClientState:                  getEnv("TEAMS_CLIENT_STATE"),
+		QueueBuffer:                       getInt("QUEUE_BUFFER", 4096),
+		QueueWorkers:                      getInt("QUEUE_WORKERS", 1),
+		QueueBulkheadEnabled:              getBool("QUEUE_BULKHEAD_ENABLED", false),
+		QueueBulkheadBufferPerSource:      getInt("QUEUE_BULKHEAD_BUFFER_PER_SOURCE", 1024),
+		RequestTimeoutSec:                 getInt("REQUEST_TIMEOUT_SEC", 15),
+		RequireSecrets:                    getBool("REQUIRE_SECRETS", true),
+		QueueBackend:                      get("QUEUE_BACKEND", "log"),
+		PubSubProjectID:                   getEnv("PUBSUB_PROJECT_ID"),
+		PubSubTopicID:                     getEnv("PUBSUB_TOPIC_ID"),
+		AdminAuthEnabled:                  getBool("ADMIN_AUTH_ENABLED", true),
+		AdminJWTIssuer:                    getEnv("ADMIN_JWT_ISSUER"),
+		AdminJWTAudience:                  getEnv("ADMIN_JWT_AUDIENCE"),
+		AdminJWTSecret:                    getEnv("ADMIN_JWT_SECRET"),
+		AdminAllowCIDRs:                   getCSV("ADMIN_ALLOW_CIDRS"),
+		TrustedProxyCIDRs:                 getCSV("TRUSTED_PROXY_CIDRS"),
+		RateLimitEnabled:                  getBool("RATE_LIMIT_ENABLED", true),
+		RateLimitRPM:                      getInt("RATE_LIMIT_RPM", 300),
+		AdminRateLimitRPM:                 getInt("ADMIN_RATE_LIMIT_RPM", 60),
+		DedupEnabled:                      getBool("DEDUP_ENABLED", true),
+		DedupTTLSeconds:                   getInt("DEDUP_TTL_SEC", 300),
+		RedisAddr:                         getEnv("REDIS_ADDR"),
+		RedisPassword:                     getEnv("REDIS_PASSWORD"),
+		RedisDB:                           getInt("REDIS_DB", 0),
+		DedupRedisPrefix:                  get("DEDUP_REDIS_PREFIX", "webhook_dedup"),
+		FailedStoreEnabled:                getBool("FAILED_EVENT_STORE_ENABLED", true),
+		FailedStorePath:                   get("FAILED_EVENT_STORE_PATH", "data/failed-events.jsonl"),
+		DatabaseURL:                       getEnv("DATABASE_URL"),
+		ReplayAuditEnabled:                getBool("REPLAY_AUDIT_ENABLED", true),
+		ReplayAuditPath:                   get("REPLAY_AUDIT_PATH", "data/replay-audit.jsonl"),
+		SecurityAuditEnabled:              getBool("SECURITY_AUDIT_ENABLED", true),
+		SecurityAuditPath:                 get("SECURITY_AUDIT_PATH", "data/security-audit.jsonl"),
+		SecurityAuditRetentionDays:        getInt("SECURITY_AUDIT_RETENTION_DAYS", 30),
+		QueueBackpressureEnabled:          getBool("QUEUE_BACKPRESSURE_ENABLED", true),
+		QueueBackpressureSoftLimitPercent: getInt("QUEUE_BACKPRESSURE_SOFT_LIMIT_PERCENT", 70),
+		QueueBackpressureHardLimitPercent: getInt("QUEUE_BACKPRESSURE_HARD_LIMIT_PERCENT", 90),
+		QueueFailureBudgetPercent:         getInt("QUEUE_FAILURE_BUDGET_PERCENT", 15),
+		QueueFailureBudgetWindow:          getInt("QUEUE_FAILURE_BUDGET_WINDOW", 100),
+		QueueFailureBudgetMinSamples:      getInt("QUEUE_FAILURE_BUDGET_MIN_SAMPLES", 20),
+		QueueThrottleRetryAfterSec:        getInt("QUEUE_THROTTLE_RETRY_AFTER_SEC", 5),
+		SourceRateLimitEnabled:            getBool("SOURCE_RATE_LIMIT_ENABLED", true),
+		SourceRateLimits:                  parseSourceRateLimits(getEnv("SOURCE_RATE_LIMITS")),
+		SourceRateLimitDefault:            getInt("SOURCE_RATE_LIMIT_DEFAULT", 100),
+		SchemaValidationEnabled:           getBool("SCHEMA_VALIDATION_ENABLED", true),
+		SchemaPath:                        get("SCHEMA_PATH", "internal/schema/schemas"),
+		RetryEnabled:                      getBool("RETRY_ENABLED", false),
+		RetryMaxAttempts:                  getInt("RETRY_MAX_ATTEMPTS", 3),
+		RetryIntervalSec:                  getInt("RETRY_INTERVAL_SEC", 10),
+		PubSubPublishTimeoutSec:           getInt("PUBSUB_PUBLISH_TIMEOUT_SEC", 5),
+		PubSubPublishGoroutines:           getInt("PUBSUB_PUBLISH_GOROUTINES", 0),
+		PubSubMaxOutstandingMessages:      getInt("PUBSUB_MAX_OUTSTANDING_MESSAGES", 0),
+		PubSubMaxOutstandingBytes:         getInt("PUBSUB_MAX_OUTSTANDING_BYTES", 0),
+		PubSubFlowControlBehavior:         get("PUBSUB_FLOW_CONTROL_BEHAVIOR", "ignore"),
+		RateLimitBackend:                  get("RATE_LIMIT_BACKEND", "memory"),
+		RateLimitRedisPrefix:              get("RATE_LIMIT_REDIS_PREFIX", "rate_limit"),
+		PIIScrubbingEnabled:               getBool("PII_SCRUBBING_ENABLED", false),
+		ChaosEnabled:                      getBool("CHAOS_ENABLED", false),
+		ChaosErrorRate:                    getFloat("CHAOS_ERROR_RATE", 0.0),
+		ChaosLatencyRate:                  getFloat("CHAOS_LATENCY_RATE", 0.0),
+		ChaosLatencyMinMs:                 getInt("CHAOS_LATENCY_MIN_MS", 100),
+		ChaosLatencyMaxMs:                 getInt("CHAOS_LATENCY_MAX_MS", 500),
+	}
 }

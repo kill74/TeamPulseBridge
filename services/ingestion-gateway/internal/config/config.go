@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
@@ -72,6 +73,11 @@ type Config struct {
 	RateLimitBackend                  string
 	RateLimitRedisPrefix              string
 	PIIScrubbingEnabled               bool
+	ChaosEnabled                      bool
+	ChaosErrorRate                    float64
+	ChaosLatencyRate                  float64
+	ChaosLatencyMinMs                 int
+	ChaosLatencyMaxMs                 int
 }
 
 func LoadFromEnv() Config {
@@ -137,7 +143,24 @@ func LoadFromEnv() Config {
 		RateLimitBackend:                  envOrDefault("RATE_LIMIT_BACKEND", "memory"),
 		RateLimitRedisPrefix:              envOrDefault("RATE_LIMIT_REDIS_PREFIX", "rate_limit"),
 		PIIScrubbingEnabled:               boolOrDefault("PII_SCRUBBING_ENABLED", false),
+		ChaosEnabled:                      boolOrDefault("CHAOS_ENABLED", false),
+		ChaosErrorRate:                    floatOrDefault("CHAOS_ERROR_RATE", 0.0),
+		ChaosLatencyRate:                  floatOrDefault("CHAOS_LATENCY_RATE", 0.0),
+		ChaosLatencyMinMs:                 intOrDefault("CHAOS_LATENCY_MIN_MS", 100),
+		ChaosLatencyMaxMs:                 intOrDefault("CHAOS_LATENCY_MAX_MS", 500),
 	}
+}
+
+func floatOrDefault(key string, fallback float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fallback
+	}
+	return f
 }
 
 func (c Config) Validate() error {
@@ -314,12 +337,12 @@ func (c Config) Validate() error {
 				return fmt.Errorf("invalid ADMIN_ALLOW_CIDRS value %q: %w", cidr, err)
 			}
 		}
-		if !isNonProdEnvironment(c.Environment) && len(c.AdminAllowCIDRs) == 0 {
+		if !IsNonProdEnvironment(c.Environment) && len(c.AdminAllowCIDRs) == 0 {
 			return errors.New("ADMIN_ALLOW_CIDRS is required when ADMIN_AUTH_ENABLED=true in production-like environments")
 		}
 	}
 	if !c.RequireSecrets {
-		if !isNonProdEnvironment(c.Environment) {
+		if !IsNonProdEnvironment(c.Environment) {
 			return fmt.Errorf("REQUIRE_SECRETS=false is only allowed in non-prod environments, got ENVIRONMENT=%q", c.Environment)
 		}
 		return nil
@@ -358,7 +381,7 @@ func intOrDefault(key string, fallback int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARNING: invalid integer config %s=%q, using default %d\n", key, v, fallback)
+		slog.Warn("invalid integer config, using default", "key", key, "value", v, "default", fallback)
 		return fallback
 	}
 	return n
@@ -427,7 +450,7 @@ func parseSourceRateLimits(raw string) map[string]int {
 	return result
 }
 
-func isNonProdEnvironment(env string) bool {
+func IsNonProdEnvironment(env string) bool {
 	v := strings.ToLower(strings.TrimSpace(env))
 	if v == "" {
 		return false
@@ -451,12 +474,45 @@ func isWeakSecret(secret string) bool {
 		"admin":     {},
 		"test":      {},
 		"default":   {},
+		"12345678":  {},
+		"123456789": {},
+		"1234567890": {},
+		"qwerty":    {},
+		"abc123":    {},
+		"password1": {},
+		"letmein":   {},
+		"welcome":   {},
+		"monkey":    {},
+		"master":    {},
+		"dragon":    {},
 	}
 	if _, ok := weakValues[v]; ok {
 		return true
 	}
-	if strings.Count(v, string(v[0])) == len(v) {
+	if v != "" && strings.Count(v, string(v[0])) == len(v) {
 		return true
+	}
+	if len(v) >= 3 {
+		allSequential := true
+		for i := 1; i < len(v); i++ {
+			if v[i] != v[i-1]+1 {
+				allSequential = false
+				break
+			}
+		}
+		if allSequential {
+			return true
+		}
+		allReverseSequential := true
+		for i := 1; i < len(v); i++ {
+			if v[i] != v[i-1]-1 {
+				allReverseSequential = false
+				break
+			}
+		}
+		if allReverseSequential {
+			return true
+		}
 	}
 	return false
 }

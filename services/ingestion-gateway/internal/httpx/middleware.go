@@ -215,6 +215,12 @@ func RequestID() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
+			if requestID != "" {
+				requestID = sanitizeLogValue(requestID)
+				if len(requestID) > 128 {
+					requestID = requestID[:128]
+				}
+			}
 			if requestID == "" {
 				requestID = fmt.Sprintf("req-%d-%d", time.Now().UnixNano(), atomic.AddUint64(&reqCounter, 1))
 			}
@@ -249,6 +255,60 @@ func generateSpanID() string {
 		return strings.Repeat("0", 16)
 	}
 	return hex.EncodeToString(b)
+}
+
+type ChaosConfig struct {
+	Enabled      bool
+	ErrorRate    float64 // 0.0 to 1.0
+	LatencyRate  float64 // 0.0 to 1.0
+	LatencyMin   time.Duration
+	LatencyMax   time.Duration
+	InternalCode int
+}
+
+func Chaos(cfg ChaosConfig) Middleware {
+	if !cfg.Enabled {
+		return func(next http.Handler) http.Handler { return next }
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Randomness for chaos
+			randVal := func() float64 {
+				b := make([]byte, 8)
+				if _, err := rand.Read(b); err != nil {
+					return 0
+				}
+				var val uint64
+				for i := 0; i < 8; i++ {
+					val = (val << 8) | uint64(b[i])
+				}
+				return float64(val) / float64(^uint64(0))
+			}
+
+			// Inject Latency
+			if cfg.LatencyRate > 0 && randVal() < cfg.LatencyRate {
+				delay := cfg.LatencyMin
+				if cfg.LatencyMax > cfg.LatencyMin {
+					diff := cfg.LatencyMax - cfg.LatencyMin
+					delay += time.Duration(randVal() * float64(diff))
+				}
+				time.Sleep(delay)
+			}
+
+			// Inject Errors
+			if cfg.ErrorRate > 0 && randVal() < cfg.ErrorRate {
+				code := cfg.InternalCode
+				if code == 0 {
+					code = http.StatusInternalServerError
+				}
+				http.Error(w, "chaos: injected failure", code)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func RequestTimeout(timeout time.Duration) Middleware {
@@ -319,6 +379,9 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 	}
 	if cfg.Limiter == nil {
 		panic("httpx.RateLimit: cfg.Limiter is required to prevent goroutine leaks")
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
 	limiter := cfg.Limiter
 	trusted := parseCIDRs(cfg.TrustedProxyCIDRs)
@@ -518,41 +581,4 @@ func sanitizeLogValue(s string) string {
 		}
 		return r
 	}, s)
-}
-
-type ContentTypeConfig struct {
-	Required    bool
-	Allowed     []string
-	OnReject    func(w http.ResponseWriter, r *http.Request, contentType string)
-}
-
-func RequireContentType(cfg ContentTypeConfig) Middleware {
-	if !cfg.Required || len(cfg.Allowed) == 0 {
-		return func(next http.Handler) http.Handler { return next }
-	}
-	allowed := make(map[string]struct{}, len(cfg.Allowed))
-	for _, ct := range cfg.Allowed {
-		allowed[strings.ToLower(strings.TrimSpace(ct))] = struct{}{}
-	}
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ct := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
-			if ct == "" {
-				ct = "application/octet-stream"
-			}
-			for _, allowedCT := range cfg.Allowed {
-				if strings.HasPrefix(ct, strings.ToLower(allowedCT)) {
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-			if cfg.OnReject != nil {
-				cfg.OnReject(w, r, ct)
-			} else {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnsupportedMediaType)
-				fmt.Fprintf(w, `{"error":"unsupported content type: %s","allowed":["%s"]}`, ct, strings.Join(cfg.Allowed, `", "`))
-			}
-		})
-	}
 }

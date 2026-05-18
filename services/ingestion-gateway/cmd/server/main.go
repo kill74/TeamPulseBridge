@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,6 +22,7 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/handlers"
 	"teampulsebridge/services/ingestion-gateway/internal/httpx"
 	"teampulsebridge/services/ingestion-gateway/internal/observability"
+	"teampulsebridge/services/ingestion-gateway/internal/platform/resilience"
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
 	"teampulsebridge/services/ingestion-gateway/internal/replayaudit"
 	"teampulsebridge/services/ingestion-gateway/internal/retry"
@@ -61,20 +61,20 @@ func (d *deferredHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type HandlerBuilder struct {
-	logger      *slog.Logger
+	logger      *observability.Logger
 	cfg         *config.Config
 	securityFn  func(req *http.Request, reason string, status int)
 	limiter     httpx.RateLimiter
 	stopLimiter func()
 }
 
-func NewHandlerBuilder(logger *slog.Logger, cfg *config.Config, securityFn func(req *http.Request, reason string, status int)) *HandlerBuilder {
+func NewHandlerBuilder(logger *observability.Logger, cfg *config.Config, securityFn func(req *http.Request, reason string, status int)) *HandlerBuilder {
 	limiter := httpx.NewIPRateLimiter(nil, time.Minute, 1024)
 	return NewHandlerBuilderWithLimiter(logger, cfg, securityFn, limiter, limiter.Stop)
 }
 
 func NewHandlerBuilderWithLimiter(
-	logger *slog.Logger,
+	logger *observability.Logger,
 	cfg *config.Config,
 	securityFn func(req *http.Request, reason string, status int),
 	limiter httpx.RateLimiter,
@@ -105,6 +105,13 @@ func (b *HandlerBuilder) Build(publicMux http.Handler, durationHistogram metric.
 			OnVersionMismatch: func(w http.ResponseWriter, _ *http.Request, requested string) {
 				http.Error(w, fmt.Sprintf("unsupported API version: %s (current: %s)", requested, httpx.CurrentAPIVersion), http.StatusNotAcceptable)
 			},
+		}),
+		httpx.Chaos(httpx.ChaosConfig{
+			Enabled:     b.cfg.ChaosEnabled,
+			ErrorRate:   b.cfg.ChaosErrorRate,
+			LatencyRate: b.cfg.ChaosLatencyRate,
+			LatencyMin:  time.Duration(b.cfg.ChaosLatencyMinMs) * time.Millisecond,
+			LatencyMax:  time.Duration(b.cfg.ChaosLatencyMaxMs) * time.Millisecond,
 		}),
 		httpx.RequestTimeout(timeoutSec),
 		httpx.RequestID(),
@@ -139,8 +146,12 @@ func (b *HandlerBuilder) Build(publicMux http.Handler, durationHistogram metric.
 			Secret:   b.cfg.AdminJWTSecret,
 			OnReject: b.securityFn,
 		}),
-		httpx.Recoverer(b.logger),
-		httpx.AccessLog(b.logger, durationHistogram),
+		httpx.RequireCSRF(httpx.CSRFConfig{
+			Enabled:  b.cfg.AdminAuthEnabled,
+			OnReject: b.securityFn,
+		}),
+		httpx.Recoverer(b.logger.Logger),
+		httpx.AccessLog(b.logger.Logger, durationHistogram),
 		observability.HTTPMiddleware("ingestion-gateway"),
 	)
 }
@@ -162,7 +173,7 @@ func main() {
 	logger := observability.NewLogger("ingestion-gateway", cfg.Environment, buildVersion)
 
 	ctx := context.Background()
-	telemetry, err := observability.Setup(ctx, logger, "ingestion-gateway")
+	telemetry, err := observability.Setup(ctx, logger.Logger, "ingestion-gateway")
 	if err != nil {
 		logger.Error("telemetry setup failed", "error", err)
 		os.Exit(1)
@@ -178,7 +189,7 @@ func main() {
 	var failedStore failstore.Store
 	var deduper dedup.Store
 
-	runtimePublisher, err := queue.BuildRuntimePublisher(ctx, cfg, logger, queue.AsyncPublisherOptions{
+	runtimePublisher, err := queue.BuildRuntimePublisher(ctx, cfg, logger.Logger, queue.AsyncPublisherOptions{
 		Hooks: queue.AsyncPublisherHooks{
 			OnBackpressure: func(metricCtx context.Context, source, action string, _ queue.PublisherSnapshot) {
 				telemetry.QueueBackpressureCounter.Add(metricCtx, 1,
@@ -277,7 +288,7 @@ func main() {
 	if cfg.DatabaseURL != "" {
 		pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 		if err != nil {
-			logger.Error("failed to connect to postgres database", "error", err)
+			logger.Error("failed to connect to postgres database", "error", redactDSN(err.Error()))
 			os.Exit(1)
 		}
 		defer pool.Close()
@@ -286,57 +297,69 @@ func main() {
 	}
 
 	if cfg.FailedStoreEnabled {
+		var store failstore.Store
 		if pgPool != nil {
-			failedStore = failstore.NewPostgresStore(pgPool)
+			store = failstore.NewPostgresStore(pgPool)
 		} else {
-			store, err := failstore.NewFileStore(cfg.FailedStorePath)
+			var err error
+			store, err = failstore.NewFileStore(cfg.FailedStorePath)
 			if err != nil {
 				logger.Error("failed event store disabled due to invalid configuration",
 					"path", cfg.FailedStorePath,
 					"error", err,
 				)
-			} else {
-				failedStore = store
 			}
+		}
+
+		if store != nil {
+			breaker := resilience.NewCircuitBreaker(5, 30*time.Second)
+			failedStore = failstore.NewCircuitBreakerStore(store, breaker, logger.Logger)
 		}
 	}
 
 	var replayAuditStore replayaudit.Store
 	if cfg.ReplayAuditEnabled {
+		var store replayaudit.Store
 		if pgPool != nil {
-			replayAuditStore = replayaudit.NewPostgresStore(pgPool)
+			store = replayaudit.NewPostgresStore(pgPool)
 		} else {
-			store, err := replayaudit.NewFileStore(cfg.ReplayAuditPath)
+			var err error
+			store, err = replayaudit.NewFileStore(cfg.ReplayAuditPath)
 			if err != nil {
 				logger.Error("replay audit history disabled due to invalid configuration",
 					"path", cfg.ReplayAuditPath,
 					"error", err,
 				)
-			} else {
-				replayAuditStore = store
 			}
+		}
+		if store != nil {
+			// Reuse the same breaker pattern if needed or create a new one
+			replayAuditStore = store
 		}
 	}
 
 	var securityAuditStore securityaudit.Store
 	if cfg.SecurityAuditEnabled {
+		var store securityaudit.Store
 		if pgPool != nil {
-			securityAuditStore = securityaudit.NewPostgresStore(pgPool)
+			store = securityaudit.NewPostgresStore(pgPool)
 		} else {
-			store, err := securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)
+			var err error
+			store, err = securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)
 			if err != nil {
 				logger.Error("security audit stream disabled due to invalid configuration",
 					"path", cfg.SecurityAuditPath,
 					"retention_days", cfg.SecurityAuditRetentionDays,
 					"error", err,
 				)
-			} else {
-				securityAuditStore = store
 			}
+		}
+		if store != nil {
+			securityAuditStore = store
 		}
 	}
 
-	if isProductionLike(cfg.Environment) && pgPool == nil && (cfg.FailedStoreEnabled || cfg.ReplayAuditEnabled || cfg.SecurityAuditEnabled) {
+	if config.IsNonProdEnvironment(cfg.Environment) && pgPool == nil && (cfg.FailedStoreEnabled || cfg.ReplayAuditEnabled || cfg.SecurityAuditEnabled) {
 		logger.Warn("production-like environment is using file-backed operational stores; set DATABASE_URL for durable multi-replica failed-event, replay-audit, and security-audit storage",
 			"environment", cfg.Environment,
 			"failed_event_store_enabled", cfg.FailedStoreEnabled,
@@ -410,7 +433,7 @@ func main() {
 	flags.Register("source_rate_limit.enabled", cfg.SourceRateLimitEnabled)
 	flags.Register("queue_bulkhead.enabled", cfg.QueueBulkheadEnabled)
 
-	admin := handlers.NewAdminHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger, failedStore, replayAuditStore, securityAuditStore, flags)
+	admin := handlers.NewAdminHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger.Logger, failedStore, replayAuditStore, securityAuditStore, flags)
 
 	var schemaValidator *schema.Validator
 	if cfg.SchemaValidationEnabled {
@@ -423,7 +446,7 @@ func main() {
 		}
 	}
 
-	h := handlers.NewWebhookHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger, func(reqCtx context.Context, source string, status int) {
+	h := handlers.NewWebhookHandlerWithDependencies(cfg, runtimePublisher.Publisher, logger.Logger, func(reqCtx context.Context, source string, status int) {
 		telemetry.WebhookCounter.Add(reqCtx, 1,
 			metric.WithAttributes(
 				attribute.String("source", source),
@@ -469,7 +492,7 @@ func main() {
 			logger.Info("retry scheduler leader election enabled via redis", "instance_id", hostname)
 		}
 
-		retryScheduler = retry.NewScheduler(failedStore, runtimePublisher.Publisher, logger, retry.SchedulerOptions{
+		retryScheduler = retry.NewScheduler(failedStore, runtimePublisher.Publisher, logger.Logger, retry.SchedulerOptions{
 			MaxRetries:     cfg.RetryMaxAttempts,
 			Interval:       time.Duration(cfg.RetryIntervalSec) * time.Second,
 			LeaderElection: leaderElection,
@@ -497,14 +520,26 @@ func main() {
 	webhookMux.HandleFunc("GET /admin/ui", admin.HandleAdminUI)
 	webhookMux.HandleFunc("GET /assets/admin.css", admin.AdminUIStyles)
 	webhookMux.HandleFunc("GET /assets/admin.js", admin.AdminUIScript)
-	webhookMux.HandleFunc("GET /admin/configz", admin.Configz)
-	webhookMux.HandleFunc("GET /admin/events/failed", admin.FailedEvents)
-	webhookMux.HandleFunc("GET /admin/events/replay-audit", admin.ReplayAudit)
-	webhookMux.HandleFunc("GET /admin/events/security-audit", admin.SecurityAudit)
-	webhookMux.HandleFunc("GET /admin/flags", admin.FeatureFlags)
-	webhookMux.HandleFunc("POST /admin/flags", admin.FeatureFlags)
-	webhookMux.HandleFunc("POST /admin/events/replay/batch", admin.ReplayFailedEventsBatch)
-	webhookMux.HandleFunc("POST /admin/events/replay", admin.ReplayFailedEvent)
+
+	adminHandlers := map[string]http.HandlerFunc{
+		"configz":             admin.Configz,
+		"events/failed":       admin.FailedEvents,
+		"events/replay-audit": admin.ReplayAudit,
+		"events/security-audit": admin.SecurityAudit,
+		"flags":               admin.FeatureFlags,
+		"events/replay/batch": admin.ReplayFailedEventsBatch,
+		"events/replay":       admin.ReplayFailedEvent,
+	}
+
+	for path, handler := range adminHandlers {
+		webhookMux.HandleFunc("GET /admin/"+path, handler)
+		if strings.HasPrefix(path, "flags") || strings.HasPrefix(path, "events/replay") {
+			webhookMux.HandleFunc("POST /admin/"+path, handler)
+		}
+	}
+
+	httpx.RegisterVersionedRoutes(webhookMux, adminHandlers, "/api/v1/admin/")
+
 	webhookHandlers := map[string]http.HandlerFunc{
 		"slack":  h.HandleSlack,
 		"teams":  h.HandleTeams,
@@ -530,20 +565,25 @@ func main() {
 	handlerBuilder := NewHandlerBuilderWithLimiter(logger, &cfg, securityRejectFn, requestLimiter, stopRequestLimiter)
 
 	if configFile := os.Getenv("CONFIG_FILE"); configFile != "" {
-		watcher, err := config.NewWatcher(cfg, logger, func(_ config.Config) {
-			logger.Warn("configuration file changed but hot-reload is not implemented; restart required for changes to take effect", "path", configFile)
+		watcher, err := config.NewWatcher(cfg, logger.Logger, func(newCfg config.Config) {
+			logger.Info("config file changed, applying hot-reloadable settings", "path", configFile)
+
+			// Hot-reload log level
+			newLevel := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
+			// Note: We might want to prefer the level from the config file if defined there
+			logger.SetLevel(newLevel)
+			logger.Info("log level updated", "level", newLevel.String())
 		})
 		if err != nil {
 			logger.Warn("config watcher initialization failed", "path", configFile, "error", err)
 		} else {
+			defer func() {
+				if stopErr := watcher.Stop(); stopErr != nil {
+					logger.Error("config watcher stop failed", "error", stopErr)
+				}
+			}()
 			if err := watcher.Start(configFile); err != nil {
 				logger.Warn("config watcher start failed", "path", configFile, "error", err)
-			} else {
-				defer func() {
-					if stopErr := watcher.Stop(); stopErr != nil {
-						logger.Error("config watcher stop failed", "error", stopErr)
-					}
-				}()
 			}
 		}
 	}
@@ -602,19 +642,10 @@ func main() {
 	deduper.Stop()
 	handlerBuilder.Stop()
 	if redisClient != nil {
-		_ = redisClient.Close()
+		if closeErr := redisClient.Close(); closeErr != nil {
+			logger.Error("redis client close failed", "error", closeErr)
+		}
 	}
-}
-
-func isProductionLike(environment string) bool {
-	env := strings.ToLower(strings.TrimSpace(environment))
-	if env == "" {
-		return false
-	}
-	if strings.Contains(env, "dev") || strings.Contains(env, "test") || strings.Contains(env, "local") || strings.Contains(env, "ci") {
-		return false
-	}
-	return env == "prod" || env == "production" || strings.Contains(env, "prod")
 }
 
 func securitySourceFromPath(path string) string {
@@ -646,4 +677,15 @@ func envOrTLS(key string) string {
 		return ""
 	}
 	return v
+}
+
+func redactDSN(s string) string {
+	if idx := strings.Index(s, "://"); idx != -1 {
+		proto := s[:idx+3]
+		rest := s[idx+3:]
+		if atIdx := strings.Index(rest, "@"); atIdx != -1 {
+			return proto + "[REDACTED]@" + rest[atIdx+1:]
+		}
+	}
+	return s
 }

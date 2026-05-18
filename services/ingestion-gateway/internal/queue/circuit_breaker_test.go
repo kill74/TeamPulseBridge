@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"teampulsebridge/services/ingestion-gateway/internal/platform/resilience"
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
 )
 
@@ -30,7 +31,7 @@ func (m *mockPublisher) HealthCheck(ctx context.Context) error {
 }
 
 func TestCircuitBreaker(t *testing.T) {
-	cb := queue.NewCircuitBreaker(3, 100*time.Millisecond)
+	cb := resilience.NewCircuitBreaker(3, 100*time.Millisecond)
 	assert.True(t, cb.Allow())
 	assert.Equal(t, "closed", cb.State())
 
@@ -53,7 +54,7 @@ func TestCircuitBreaker(t *testing.T) {
 func TestCircuitBreakerPublisher(t *testing.T) {
 	logger := slog.Default()
 	mp := &mockPublisher{}
-	cb := queue.NewCircuitBreaker(2, 50*time.Millisecond)
+	cb := resilience.NewCircuitBreaker(2, 50*time.Millisecond)
 	p := queue.NewCircuitBreakerPublisher(mp, cb, logger)
 
 	// Success
@@ -69,7 +70,7 @@ func TestCircuitBreakerPublisher(t *testing.T) {
 
 	// Circuit open
 	err = p.Publish(context.Background(), "src", []byte("body"), nil)
-	require.Equal(t, queue.ErrCircuitOpen, err)
+	require.Equal(t, resilience.ErrCircuitOpen, err)
 
 	// Wait for half-open
 	time.Sleep(100 * time.Millisecond)

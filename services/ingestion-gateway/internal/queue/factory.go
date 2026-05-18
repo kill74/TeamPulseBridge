@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"teampulsebridge/services/ingestion-gateway/internal/config"
+	"teampulsebridge/services/ingestion-gateway/internal/platform/resilience"
 )
 
 type RuntimePublisher struct {
@@ -53,7 +54,7 @@ func BuildRuntimePublisher(ctx context.Context, cfg config.Config, logger *slog.
 		if err != nil {
 			return nil, fmt.Errorf("init pubsub publisher: %w", err)
 		}
-		cb := NewCircuitBreaker(5, 30*time.Second)
+		cb := resilience.NewCircuitBreaker(5, 30*time.Second)
 		base = NewCircuitBreakerPublisher(pub, cb, logger)
 		r.closers = append(r.closers, pub.Close)
 	default:
@@ -89,8 +90,9 @@ func BuildRuntimePublisher(ctx context.Context, cfg config.Config, logger *slog.
 	}
 
 	if cfg.PIIScrubbingEnabled {
-		r.Publisher = NewTransformingPublisher(r.Publisher, ScrubEmails, ScrubTokens)
-		logger.Info("PII scrubbing enabled for outbound queue publishes")
+		scrubber := NewStructuralScrubber()
+		r.Publisher = NewTransformingPublisher(r.Publisher, ScrubEmails, ScrubTokens, scrubber.Scrub)
+		logger.Info("structural PII scrubbing enabled for outbound queue publishes")
 	}
 
 	return r, nil
