@@ -3,16 +3,16 @@ name: CI
 on:
   push:
     paths:
-      - 'services/ingestion-gateway/**'
-      - '.github/actions/setup-ingestion-gateway-go/**'
-      - '.github/workflows/ci.yml'
-      - '.golangci.yml'
+      - "services/ingestion-gateway/**"
+      - ".github/actions/setup-ingestion-gateway-go/**"
+      - ".github/workflows/ci.yml"
+      - ".golangci.yml"
   pull_request:
     paths:
-      - 'services/ingestion-gateway/**'
-      - '.github/actions/setup-ingestion-gateway-go/**'
-      - '.github/workflows/ci.yml'
-      - '.golangci.yml'
+      - "services/ingestion-gateway/**"
+      - ".github/actions/setup-ingestion-gateway-go/**"
+      - ".github/workflows/ci.yml"
+      - ".golangci.yml"
 
 permissions:
   contents: read
@@ -53,10 +53,9 @@ jobs:
           echo "Coverage meets threshold"
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: v2.1
-          install-mode: goinstall
+          version: v1.61.0
           working-directory: services/ingestion-gateway
           args: --timeout=5m
 

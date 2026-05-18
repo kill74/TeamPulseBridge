@@ -9,7 +9,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/ingestion-gateway ./cmd/server
 
-FROM gcr.io/distroless/static-debian12:latest-nonroot
+FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=builder /out/ingestion-gateway /app/ingestion-gateway
 COPY --from=builder /src/internal/schema/schemas /app/internal/schema/schemas
