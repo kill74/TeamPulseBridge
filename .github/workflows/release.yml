@@ -128,7 +128,7 @@ jobs:
           fetch-depth: 0
 
       - name: Restore release notes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-notes
 
