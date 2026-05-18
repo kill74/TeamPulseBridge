@@ -15,6 +15,26 @@ type PostgresStore struct {
 }
 
 func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	query := `
+		CREATE TABLE IF NOT EXISTS replay_audit (
+			audit_id VARCHAR(64) PRIMARY KEY,
+			event_id VARCHAR(64) NOT NULL,
+			source VARCHAR(255) NOT NULL,
+			actor VARCHAR(255) NOT NULL,
+			mode VARCHAR(50) NOT NULL,
+			result VARCHAR(50) NOT NULL,
+			error_code VARCHAR(100) NOT NULL,
+			http_status INT NOT NULL,
+			request_id VARCHAR(64) NOT NULL,
+			replayed_at TIMESTAMP WITH TIME ZONE NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_replay_audit_replayed_at ON replay_audit(replayed_at DESC);
+	`
+	_, _ = pool.Exec(ctx, query)
+
 	return &PostgresStore{
 		pool: pool,
 	}

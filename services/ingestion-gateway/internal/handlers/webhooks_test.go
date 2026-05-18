@@ -174,7 +174,7 @@ func TestHandleGitHubPayloadTooLarge(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := NewWebhookHandler(cfg, pub, logger, nil)
 
-	body := bytes.Repeat([]byte("a"), maxBodyBytes+1)
+	body := bytes.Repeat([]byte("a"), maxRequestBodyBytes+1)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 

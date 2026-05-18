@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/pubsub/v2"
@@ -22,6 +23,7 @@ type PubSubPublisher struct {
 	topicName      string
 	logger         *slog.Logger
 	publishTimeout time.Duration
+	closeOnce      sync.Once
 }
 
 type pubSubEnvelope struct {
@@ -155,8 +157,12 @@ func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byt
 }
 
 func (p *PubSubPublisher) Close() error {
-	p.topic.Stop()
-	return p.client.Close()
+	var closeErr error
+	p.closeOnce.Do(func() {
+		p.topic.Stop()
+		closeErr = p.client.Close()
+	})
+	return closeErr
 }
 
 func pubsubLimitExceededBehavior(behavior string) pubsub.LimitExceededBehavior {

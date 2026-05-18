@@ -164,10 +164,6 @@ func (b *BulkheadPublisher) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-func (b *BulkheadPublisher) Publisher() Publisher {
-	return b
-}
-
 func (b *BulkheadPublisher) emitBackpressure(ctx context.Context, source, action string, snapshot PublisherSnapshot) {
 	if b.options.Hooks.OnBackpressure != nil {
 		b.options.Hooks.OnBackpressure(ctx, source, action, snapshot)

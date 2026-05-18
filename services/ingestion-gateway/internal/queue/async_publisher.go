@@ -16,9 +16,10 @@ var ErrQueueClosed = errors.New("publish queue is closed")
 var ErrQueueThrottled = errors.New("publish queue is throttled")
 
 type queuedEvent struct {
-	source  string
-	body    []byte
-	headers map[string]string
+	source    string
+	body      []byte
+	headers   map[string]string
+	createdAt time.Time
 }
 
 type AsyncPublisherOptions struct {

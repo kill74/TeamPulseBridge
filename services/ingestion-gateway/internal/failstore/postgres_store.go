@@ -19,6 +19,24 @@ type PostgresStore struct {
 }
 
 func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	query := `
+		CREATE TABLE IF NOT EXISTS failed_events (
+			event_id VARCHAR(64) PRIMARY KEY,
+			source VARCHAR(255) NOT NULL,
+			reason TEXT NOT NULL,
+			payload_hash VARCHAR(64) NOT NULL,
+			failed_at TIMESTAMP WITH TIME ZONE NOT NULL,
+			retry_count INT NOT NULL DEFAULT 0,
+			headers JSONB NOT NULL DEFAULT '{}',
+			body BYTEA NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_failed_events_failed_at ON failed_events(failed_at DESC);
+	`
+	_, _ = pool.Exec(ctx, query)
+
 	return &PostgresStore{
 		pool: pool,
 	}

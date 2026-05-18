@@ -6,3 +6,11 @@ coverage.out
 bin
 .vscode
 .idea
+.env
+.env.*
+data/
+*.key
+*.pem
+*.db
+*.sqlite
+*.jsonl

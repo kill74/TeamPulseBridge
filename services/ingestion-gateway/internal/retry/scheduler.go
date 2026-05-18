@@ -20,7 +20,6 @@ type Scheduler struct {
 	maxRetries int
 	interval   time.Duration
 	ticker     *time.Ticker
-	stop       chan struct{}
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	mu         sync.Mutex
@@ -52,7 +51,6 @@ func NewScheduler(store failstore.Store, publisher queue.Publisher, logger *slog
 		logger:     logger,
 		maxRetries: opts.MaxRetries,
 		interval:   opts.Interval,
-		stop:       make(chan struct{}),
 		onRetry:    opts.OnRetry,
 		leader:     opts.LeaderElection,
 	}
@@ -89,7 +87,6 @@ func (s *Scheduler) Stop() {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	close(s.stop)
 	s.mu.Unlock()
 
 	s.wg.Wait()
@@ -102,12 +99,10 @@ func (s *Scheduler) run(ctx context.Context) {
 		case <-s.ticker.C:
 			if s.leader != nil {
 				if !s.leader.IsLeader(ctx) && !s.leader.Renew(ctx) {
-					continue // Not the leader, skip this tick
+					continue
 				}
 			}
 			s.processRetries(ctx)
-		case <-s.stop:
-			return
 		case <-ctx.Done():
 			return
 		}

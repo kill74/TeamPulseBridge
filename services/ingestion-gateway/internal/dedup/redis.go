@@ -56,9 +56,8 @@ func (r *Redis) Forget(key string) {
 	_ = r.client.Del(ctx, fullKey).Err()
 }
 
-// Stop closes the Redis client connections.
+// Stop disables the dedup store without closing the shared Redis client.
+// The Redis client lifecycle is managed centrally by the application.
 func (r *Redis) Stop() {
-	if r.client != nil {
-		_ = r.client.Close()
-	}
+	r.enabled = false
 }

@@ -30,7 +30,7 @@ const (
 	adminReplayAuditDefaultLimit  = 20
 	adminReplayAuditMaxLimit      = 100
 	adminReplayBatchMaxEvents     = 25
-	adminReplayRequestMaxBody     = 64 << 10
+	adminReplayRequestMaxBody     = 256 << 10
 )
 
 type AdminHandler struct {
@@ -460,7 +460,21 @@ func (h *AdminHandler) FeatureFlags(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.logger.Info("feature flag updated", "flag", req.Flag, "enabled", req.Enabled)
+		actor := replayActorFromRequest(r, h.cfg.AdminJWTSecret)
+		h.logger.Info("feature flag updated", "flag", req.Flag, "enabled", req.Enabled, "actor", actor)
+		if h.security != nil {
+			_, _ = h.security.Save(r.Context(), securityaudit.SaveInput{
+				Category:   "feature_flag_change",
+				Outcome:    "accepted",
+				Source:     "admin",
+				Reason:     "flag:" + req.Flag + "=" + strconv.FormatBool(req.Enabled),
+				Path:       r.URL.Path,
+				HTTPStatus: http.StatusOK,
+				RequestID:  httpx.RequestIDFromContext(r.Context()),
+				Actor:      actor,
+				ClientIP:   httpx.ClientIP(r, h.cfg.TrustedProxyCIDRs),
+			})
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"flag":    req.Flag,
 			"enabled": req.Enabled,
@@ -476,6 +490,7 @@ func (h *AdminHandler) FeatureFlags(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) respondError(w http.ResponseWriter, r *http.Request, status int, err *apperr.Error) {
 	httpx.WriteError(w, r.Context(), status, err, nil)
+	_ = h
 }
 
 func parseFailedEventsLimit(r *http.Request) (int, error) {
@@ -613,16 +628,22 @@ func bodyPreview(body []byte, limit int) string {
 	}
 	truncated := clean[:limit]
 	for truncated != "" {
-		if _, size := utf8.DecodeLastRuneInString(truncated); size != 0 {
+		if _, size := utf8.DecodeLastRuneInString(truncated); size == 0 {
+			truncated = truncated[:len(truncated)-1]
+		} else {
 			break
 		}
-		truncated = truncated[:len(truncated)-1]
 	}
 	return truncated + "...truncated"
 }
 
 func redactSecrets(s string) string {
-	patterns := []string{`"token"`, `"secret"`, `"password"`, `"key"`, `"authorization"`}
+	patterns := []string{
+		`"token"`, `"secret"`, `"password"`, `"key"`, `"authorization"`,
+		`"api_key"`, `"api-key"`, `"apikey"`, `"access_token"`, `"access-token"`,
+		`"client_secret"`, `"client-secret"`, `"bearer"`, `"credential"`,
+		`"auth_token"`, `"auth-token"`, `"private_key"`, `"private-key"`,
+	}
 	lower := strings.ToLower(s)
 	for _, pattern := range patterns {
 		idx := strings.Index(lower, pattern)
@@ -667,7 +688,21 @@ func decodeAdminJSONRequest(w http.ResponseWriter, r *http.Request, maxBytes int
 	return nil
 }
 
-func cloneReplayHeaders(base, overrides map[string]string) map[string]string {
+var replayHeaderDenylist = map[string]struct{}{
+	"authorization":  {},
+	"cookie":         {},
+	"x-event-id":     {},
+	"traceparent":    {},
+	"x-operator":     {},
+	"x-user":         {},
+	"x-replay-source": {},
+	"x-replay-event-id": {},
+	"x-replay-timestamp": {},
+	"x-replay-request-id": {},
+	"x-replay-actor": {},
+}
+
+func cloneReplayHeaders(base, overrides map[string]string) (map[string]string, error) {
 	out := make(map[string]string, len(base)+len(overrides))
 	for k, v := range base {
 		out[k] = v
@@ -677,9 +712,12 @@ func cloneReplayHeaders(base, overrides map[string]string) map[string]string {
 		if key == "" {
 			continue
 		}
+		if _, denied := replayHeaderDenylist[strings.ToLower(key)]; denied {
+			return nil, fmt.Errorf("header %q is not allowed in replay overrides", key)
+		}
 		out[key] = strings.TrimSpace(v)
 	}
-	return out
+	return out, nil
 }
 
 func (h *AdminHandler) replayStoreDependencyError(op string) (int, *apperr.Error) {
@@ -760,7 +798,28 @@ func (h *AdminHandler) executeReplay(ctx context.Context, in replayExecutionInpu
 	result.Source = record.Source
 	result.Bytes = len(record.Body)
 
-	headers := cloneReplayHeaders(record.Headers, in.HeaderOverrides)
+	headers, err := cloneReplayHeaders(record.Headers, in.HeaderOverrides)
+	if err != nil {
+		result.HTTPStatus = http.StatusBadRequest
+		result.ErrorCode = string(apperr.CodeReplayInputInvalid)
+		result.Message = err.Error()
+		h.recordReplayAuditFromContext(ctx, replayaudit.SaveInput{
+			EventID:    record.EventID,
+			Source:     record.Source,
+			Actor:      in.Actor,
+			Mode:       mode,
+			Result:     "failed",
+			ErrorCode:  result.ErrorCode,
+			HTTPStatus: result.HTTPStatus,
+			RequestID:  in.RequestID,
+		})
+		return result, apperr.New(
+			"handlers.admin.executeReplay",
+			apperr.CodeReplayInputInvalid,
+			result.Message,
+			err,
+		)
+	}
 	headers["X-Replay-Source"] = "admin-replay"
 	headers["X-Replay-Event-ID"] = record.EventID
 	headers["X-Replay-Timestamp"] = time.Now().UTC().Format(time.RFC3339)

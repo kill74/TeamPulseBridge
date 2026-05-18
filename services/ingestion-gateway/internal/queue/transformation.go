@@ -22,7 +22,8 @@ func NewTransformingPublisher(wrapped Publisher, transformers ...Transformer) *T
 }
 
 func (p *TransformingPublisher) Publish(ctx context.Context, source string, body []byte, headers map[string]string) error {
-	scrubbed := body
+	scrubbed := make([]byte, len(body))
+	copy(scrubbed, body)
 	for _, transform := range p.transformers {
 		scrubbed = transform(scrubbed)
 	}

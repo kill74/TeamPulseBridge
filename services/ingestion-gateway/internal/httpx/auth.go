@@ -1,6 +1,9 @@
 package httpx
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,6 +27,74 @@ type AdminCIDRConfig struct {
 	CIDRs             []string
 	TrustedProxyCIDRs []string
 	OnReject          func(r *http.Request, reason string, status int)
+}
+
+type CSRFConfig struct {
+	Enabled  bool
+	OnReject func(r *http.Request, reason string, status int)
+}
+
+func RequireCSRF(cfg CSRFConfig) Middleware {
+	if !cfg.Enabled {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !isAdminPath(r.URL.Path) || !isStateChangingMethod(r.Method) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			cookieToken := r.Header.Get("Cookie")
+			var cookieVal string
+			for _, part := range strings.Split(cookieToken, ";") {
+				part = strings.TrimSpace(part)
+				if strings.HasPrefix(part, "__Host-CSRF-Token=") {
+					cookieVal = strings.TrimPrefix(part, "__Host-CSRF-Token=")
+					break
+				}
+			}
+
+			headerVal := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
+			if cookieVal == "" || headerVal == "" {
+				rejectSecurity(w, r, http.StatusForbidden, "csrf_missing_token", cfg.OnReject, apperr.New(
+					"httpx.RequireCSRF",
+					apperr.CodeForbidden,
+					"csrf token required",
+					nil,
+				))
+				return
+			}
+
+			if subtle.ConstantTimeCompare([]byte(cookieVal), []byte(headerVal)) != 1 {
+				rejectSecurity(w, r, http.StatusForbidden, "csrf_token_mismatch", cfg.OnReject, apperr.New(
+					"httpx.RequireCSRF",
+					apperr.CodeForbidden,
+					"csrf token mismatch",
+					nil,
+				))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func CSRFTokenCookie() (name, value string) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "__Host-CSRF-Token", "fallback"
+	}
+	return "__Host-CSRF-Token", hex.EncodeToString(b)
+}
+
+func isStateChangingMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
 }
 
 func RequireAdminCIDRAllowlist(cfg AdminCIDRConfig) Middleware {

@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	promclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
@@ -270,6 +271,12 @@ func setupTracing(ctx context.Context, res *resource.Resource) (*sdktrace.Tracer
 }
 
 func setupMetrics(res *resource.Resource) (*sdkmetric.MeterProvider, http.Handler, func(context.Context) error, error) {
+	if err := promclient.Register(promclient.NewGoCollector()); err != nil {
+		if _, ok := err.(promclient.AlreadyRegisteredError); !ok {
+			return nil, nil, nil, fmt.Errorf("register go collector: %w", err)
+		}
+	}
+
 	exporter, err := prometheus.New()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("init prometheus exporter: %w", err)

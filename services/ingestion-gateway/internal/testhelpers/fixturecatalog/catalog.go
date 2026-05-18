@@ -186,6 +186,9 @@ func contractsDir() string {
 }
 
 func serviceRoot() string {
-	_, currentFile, _, _ := runtime.Caller(0)
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return "."
+	}
 	return filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", "..", ".."))
 }

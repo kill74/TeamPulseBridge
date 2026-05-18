@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"html/template"
 	"net/http"
 )
@@ -28,7 +30,7 @@ var adminUITemplate = template.Must(template.New("admin_ui").Parse(`<!doctype ht
       <li><a href="#config">Configuration</a></li>
     </ul>
     <div class="sidebar-footer">
-      <div class="version">v1.2.0</div>
+      <div class="version">{{.Version}}</div>
     </div>
   </nav>
 
@@ -106,15 +108,36 @@ var adminUITemplate = template.Must(template.New("admin_ui").Parse(`<!doctype ht
 `))
 
 func (h *AdminHandler) HandleAdminUI(w http.ResponseWriter, r *http.Request) {
+	csrfName, csrfValue := csrfTokenCookie()
+	http.SetCookie(w, &http.Cookie{
+		Name:     csrfName,
+		Value:    csrfValue,
+		Path:     "/admin",
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		HttpOnly: false,
+	})
+
 	data := struct {
 		Version string
 	}{
 		Version: adminUIVersion,
 	}
-	_ = adminUITemplate.Execute(w, data)
+	if err := adminUITemplate.Execute(w, data); err != nil {
+		h.logger.Error("admin ui template execution failed", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}
 }
 
-func (h *AdminHandler) AdminUIStyles(w http.ResponseWriter, r *http.Request) {
+func csrfTokenCookie() (name, value string) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "__Host-CSRF-Token", "fallback"
+	}
+	return "__Host-CSRF-Token", hex.EncodeToString(b)
+}
+
+func (h *AdminHandler) AdminUIStyles(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/css")
 	_, _ = w.Write([]byte(`
 :root {
@@ -262,7 +285,7 @@ td {
 `))
 }
 
-func (h *AdminHandler) AdminUIScript(w http.ResponseWriter, r *http.Request) {
+func (h *AdminHandler) AdminUIScript(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript")
 	_, _ = w.Write([]byte(`
 async function fetchData(url) {

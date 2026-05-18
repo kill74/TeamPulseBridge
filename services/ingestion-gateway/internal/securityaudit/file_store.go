@@ -245,7 +245,8 @@ func (s *FileStore) pruneExpiredLocked(ctx context.Context, now time.Time) error
 		return fmt.Errorf("create security audit dir: %w", err)
 	}
 
-	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	tmpPath := s.path + ".tmp"
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open security audit store for pruning: %w", err)
 	}
@@ -262,16 +263,22 @@ func (s *FileStore) pruneExpiredLocked(ctx context.Context, now time.Time) error
 			default:
 			}
 			if err := enc.Encode(record); err != nil {
+				_ = os.Remove(tmpPath)
 				return fmt.Errorf("rewrite security audit store: %w", err)
 			}
 		}
 		if err := f.Sync(); err != nil {
+			_ = os.Remove(tmpPath)
 			return fmt.Errorf("sync security audit store: %w", err)
 		}
 		return nil
 	}()
 	if writeErr != nil {
 		return writeErr
+	}
+	if err := os.Rename(tmpPath, s.path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename security audit store: %w", err)
 	}
 	s.lastPruned = now
 	return nil
