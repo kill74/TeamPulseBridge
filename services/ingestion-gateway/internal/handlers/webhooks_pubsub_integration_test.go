@@ -85,7 +85,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		slackHandler := handlers.NewWebhookHandler(config.Config{SlackSigningSecret: webhookSecret}, pubsubPublisher, logger, metricsFn)
 
 		// Act - make webhook request
-		req := httptest.NewRequest("POST", "/webhooks/slack", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/slack", bytes.NewReader(body))
 		req.Header.Set("X-Slack-Request-Timestamp", timestamp)
 		req.Header.Set("X-Slack-Signature", slackSig)
 		req.Header.Set("Content-Type", "application/json")
@@ -149,7 +149,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		githubHandler := handlers.NewWebhookHandler(config.Config{GitHubWebhookSecret: webhookSecret}, pubsubPublisher, logger, metricsFn)
 
 		// Act
-		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 		req.Header.Set("X-Hub-Signature-256", githubSig)
 		req.Header.Set("Content-Type", "application/json")
 
@@ -193,7 +193,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		githubHandler := handlers.NewWebhookHandler(config.Config{GitHubWebhookSecret: webhookSecret}, pubsubPublisher, logger, metricsFn)
 
 		// Act
-		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 		req.Header.Set("X-Hub-Signature-256", incorrectSig)
 		req.Header.Set("Content-Type", "application/json")
 
@@ -231,7 +231,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 			sig.Write(body)
 			githubSig := fmt.Sprintf("sha256=%s", hex.EncodeToString(sig.Sum(nil)))
 
-			req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(body))
+			req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 			req.Header.Set("X-Hub-Signature-256", githubSig)
 
 			w := httptest.NewRecorder()
@@ -288,7 +288,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 		sig.Write(body)
 		githubSig := fmt.Sprintf("sha256=%s", hex.EncodeToString(sig.Sum(nil)))
 
-		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 		req.Header.Set("X-Hub-Signature-256", githubSig)
 
 		w := httptest.NewRecorder()
@@ -360,7 +360,7 @@ func TestWebhookWithMiddleware(t *testing.T) {
 		)
 
 		// Act
-		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(payload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))
 		req.Header.Set("X-Hub-Signature-256", githubSig)
 
 		w := httptest.NewRecorder()
@@ -419,7 +419,7 @@ func BenchmarkWebhookToPubSub(b *testing.B) {
 		sig.Write(payload)
 		githubSig := fmt.Sprintf("sha256=%s", hex.EncodeToString(sig.Sum(nil)))
 
-		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(payload))
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(payload))
 		req.Header.Set("X-Hub-Signature-256", githubSig)
 
 		w := httptest.NewRecorder()

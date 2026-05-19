@@ -206,7 +206,7 @@ func validateToken(tokenString string, cfg JWTConfig) error {
 		jwt.WithAudience(cfg.Audience),
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("parse token: %w", err)
 	}
 	if !token.Valid {
 		return fmt.Errorf("token invalid")

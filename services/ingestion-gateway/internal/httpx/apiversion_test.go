@@ -19,7 +19,7 @@ func TestAPIVersionMiddleware_LegacyRoute(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("POST", "/webhooks/github", nil)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -56,7 +56,7 @@ func TestAPIVersionMiddleware_VersionedRoute(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("POST", "/api/v1/webhooks/github", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -88,7 +88,7 @@ func TestAPIVersionMiddleware_VersionMismatch(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("POST", "/api/v1/webhooks/github", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", nil)
 	req.Header.Set(HeaderAPIVersion, "v2")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -110,7 +110,7 @@ func TestAPIVersionMiddleware_VersionMatch(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("POST", "/api/v1/webhooks/github", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", nil)
 	req.Header.Set(HeaderAPIVersion, "v1")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -130,7 +130,7 @@ func TestAPIVersionMiddleware_Disabled(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest("POST", "/webhooks/github", nil)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -185,7 +185,7 @@ func TestRegisterVersionedRoutes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			req := httptest.NewRequest("POST", tt.path, nil)
+			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
 			rr := httptest.NewRecorder()
 			mux.ServeHTTP(rr, req)
 			if rr.Code != tt.expect {

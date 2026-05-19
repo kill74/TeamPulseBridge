@@ -193,7 +193,10 @@ func (p *AsyncPublisher) safePublish(ctx context.Context, workerID int, e queued
 			err = fmt.Errorf("publish panic on worker %d: %v", workerID, r)
 		}
 	}()
-	return p.inner.Publish(ctx, e.source, e.body, e.headers)
+	if err := p.inner.Publish(ctx, e.source, e.body, e.headers); err != nil {
+		return fmt.Errorf("publish event: %w", err)
+	}
+	return nil
 }
 
 func (p *AsyncPublisher) Snapshot() PublisherSnapshot {

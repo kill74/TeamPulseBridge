@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 )
 
@@ -27,15 +28,24 @@ func (p *TransformingPublisher) Publish(ctx context.Context, source string, body
 	for _, transform := range p.transformers {
 		scrubbed = transform(scrubbed)
 	}
-	return p.wrapped.Publish(ctx, source, scrubbed, headers)
+	if err := p.wrapped.Publish(ctx, source, scrubbed, headers); err != nil {
+		return fmt.Errorf("transforming publisher publish: %w", err)
+	}
+	return nil
 }
 
 func (p *TransformingPublisher) Close() error {
-	return p.wrapped.Close()
+	if err := p.wrapped.Close(); err != nil {
+		return fmt.Errorf("transforming publisher close: %w", err)
+	}
+	return nil
 }
 
 func (p *TransformingPublisher) HealthCheck(ctx context.Context) error {
-	return p.wrapped.HealthCheck(ctx)
+	if err := p.wrapped.HealthCheck(ctx); err != nil {
+		return fmt.Errorf("transforming publisher health check: %w", err)
+	}
+	return nil
 }
 
 func (p *TransformingPublisher) Snapshot() PublisherSnapshot {

@@ -156,7 +156,7 @@ func (r *doctorReport) checkEnvFiles(root string) {
 	envPath := filepath.Join(root, ".env")
 	examplePath := filepath.Join(root, ".env.example")
 
-	envFile := ""
+	var envFile string
 	switch {
 	case fileExists(envPath):
 		r.okf(".env file is present")

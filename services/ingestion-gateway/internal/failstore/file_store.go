@@ -144,7 +144,7 @@ func (s *FileStore) GetByID(ctx context.Context, eventID string) (FailedEvent, e
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return FailedEvent{}, ctx.Err()
+			return FailedEvent{}, fmt.Errorf("get failed event by id: %w", ctx.Err())
 		default:
 		}
 
@@ -191,7 +191,7 @@ func (s *FileStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, e
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("list recent failed events: %w", ctx.Err())
 		default:
 		}
 

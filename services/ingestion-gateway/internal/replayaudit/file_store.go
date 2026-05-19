@@ -171,7 +171,7 @@ func (s *FileStore) List(ctx context.Context, q ListQuery) (ListResult, error) {
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return ListResult{}, ctx.Err()
+			return ListResult{}, fmt.Errorf("list replay audit: %w", ctx.Err())
 		default:
 		}
 		line := strings.TrimSpace(scanner.Text())

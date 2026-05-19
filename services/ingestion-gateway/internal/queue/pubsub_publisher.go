@@ -147,7 +147,9 @@ func (p *PubSubPublisher) Close() error {
 	var closeErr error
 	p.closeOnce.Do(func() {
 		p.topic.Stop()
-		closeErr = p.client.Close()
+		if err := p.client.Close(); err != nil {
+			closeErr = fmt.Errorf("close pubsub client: %w", err)
+		}
 	})
 	return closeErr
 }

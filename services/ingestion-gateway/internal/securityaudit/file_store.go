@@ -146,7 +146,7 @@ func (s *FileStore) ListRecent(ctx context.Context, limit int) ([]Record, error)
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("list recent security audit: %w", ctx.Err())
 		default:
 		}
 
@@ -259,7 +259,7 @@ func (s *FileStore) pruneExpiredLocked(ctx context.Context, now time.Time) error
 		for _, record := range filtered {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return fmt.Errorf("prune expired records: %w", ctx.Err())
 			default:
 			}
 			if err := enc.Encode(record); err != nil {
@@ -302,7 +302,7 @@ func (s *FileStore) readRecordsLocked(ctx context.Context) ([]Record, error) {
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("read security audit records: %w", ctx.Err())
 		default:
 		}
 

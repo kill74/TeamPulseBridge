@@ -153,7 +153,7 @@ func (b *BulkheadPublisher) SourceSnapshots() map[string]PublisherSnapshot {
 
 func (b *BulkheadPublisher) HealthCheck(ctx context.Context) error {
 	if err := b.inner.HealthCheck(ctx); err != nil {
-		return err
+		return fmt.Errorf("inner publisher health check: %w", err)
 	}
 
 	b.mu.RLock()

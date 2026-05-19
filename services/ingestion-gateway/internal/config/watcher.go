@@ -194,7 +194,10 @@ func (w *Watcher) Stop() error {
 		return nil
 	}
 	close(w.stopCh)
-	return w.watcher.Close()
+	if err := w.watcher.Close(); err != nil {
+		return fmt.Errorf("close file watcher: %w", err)
+	}
+	return nil
 }
 
 func LoadFromFile(path string) (Config, error) {

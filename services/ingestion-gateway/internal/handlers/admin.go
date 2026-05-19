@@ -543,7 +543,7 @@ func parseReplayAuditQuery(r *http.Request) (replayaudit.ListQuery, error) {
 	eventID := strings.TrimSpace(r.URL.Query().Get("event_id"))
 	sortOrder, err := replayaudit.ParseSortOrder(r.URL.Query().Get("sort"))
 	if err != nil {
-		return replayaudit.ListQuery{}, err
+		return replayaudit.ListQuery{}, fmt.Errorf("parse replay audit sort order: %w", err)
 	}
 
 	if len(cursor) > 128 {
@@ -708,14 +708,14 @@ func decodeAdminJSONRequest(w http.ResponseWriter, r *http.Request, maxBytes int
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
-		return err
+		return fmt.Errorf("decode admin json request: %w", err)
 	}
 	var extra json.RawMessage
 	if err := dec.Decode(&extra); err != io.EOF {
 		if err == nil {
 			return errors.New("request body must contain a single JSON object")
 		}
-		return err
+		return fmt.Errorf("check for extra json in admin request: %w", err)
 	}
 	return nil
 }
