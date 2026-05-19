@@ -80,7 +80,7 @@ func TestSeniorIntegration_FullIngestionPipeline(t *testing.T) {
 
 	// Helper to sign GitHub webhooks
 	signGitHub := func(secret, body []byte) string {
-		mac := hmac.New(sha256.New, []byte(secret))
+		mac := hmac.New(sha256.New, secret)
 		mac.Write(body)
 		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	}
@@ -113,7 +113,7 @@ func TestSeniorIntegration_FullIngestionPipeline(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, rr.Code)
 		
 		spy.mu.Lock()
-		assert.True(t, len(spy.security) >= 1, "security event should have been recorded")
+		assert.GreaterOrEqual(t, len(spy.security), 1, "security event should have been recorded")
 		spy.mu.Unlock()
 	})
 }
@@ -133,7 +133,7 @@ func TestSeniorIntegration_QueueSaturation(t *testing.T) {
 
 	// Helper to sign GitHub webhooks
 	signGitHub := func(secret, body []byte) string {
-		mac := hmac.New(sha256.New, []byte(secret))
+		mac := hmac.New(sha256.New, secret)
 		mac.Write(body)
 		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	}

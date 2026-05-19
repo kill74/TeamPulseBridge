@@ -156,7 +156,7 @@ func TestAsyncPublisherClonesQueuedPayloads(t *testing.T) {
 	inner.mu.Lock()
 	defer inner.mu.Unlock()
 	assert.Equal(t, "github", inner.source)
-	assert.Equal(t, `{"status":"ok"}`, string(inner.body))
+	assert.JSONEq(t, `{"status":"ok"}`, string(inner.body))
 	assert.Equal(t, map[string]string{"X-Test": "original"}, inner.headers)
 }
 
@@ -226,7 +226,7 @@ func TestAsyncPublisherAdaptiveBackpressureThrottlesUnderFailureBudgetBurn(t *te
 
 	err := p.Publish(context.Background(), "github", []byte(`{"id":6}`), nil)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrQueueThrottled)
+	require.ErrorIs(t, err, ErrQueueThrottled)
 
 	close(inner.release)
 	require.NoError(t, p.Close())

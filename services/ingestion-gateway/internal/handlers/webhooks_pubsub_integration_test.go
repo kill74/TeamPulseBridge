@@ -111,13 +111,13 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 			Body   json.RawMessage `json:"body"`
 		}
 		err = json.Unmarshal(messages[0].Data, &envelope)
-		assert.NoError(t, err, "should parse envelope")
+		require.NoError(t, err, "should parse envelope")
 		assert.Equal(t, "slack", envelope.Source)
 
 		// Verify original payload in envelope body
 		var received map[string]interface{}
 		err = json.Unmarshal(envelope.Body, &received)
-		assert.NoError(t, err, "should parse original payload")
+		require.NoError(t, err, "should parse original payload")
 		assert.Equal(t, "event_callback", received["type"])
 	})
 
@@ -161,7 +161,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 
 		// Verify message in Pub/Sub
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 3*time.Second)
-		assert.NoError(t, err, "should receive message from Pub/Sub")
+		require.NoError(t, err, "should receive message from Pub/Sub")
 		assert.Len(t, messages, 1)
 
 		// Verify message
@@ -172,7 +172,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 			Body   json.RawMessage `json:"body"`
 		}
 		err = json.Unmarshal(messages[0].Data, &envelope)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, "github", envelope.Source)
 	})
 
@@ -205,7 +205,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 
 		// Verify no message in Pub/Sub
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 1*time.Second)
-		assert.Error(t, err, "should timeout receiving (no message sent)")
+		require.Error(t, err, "should timeout receiving (no message sent)")
 		assert.Empty(t, messages, "should not publish message for invalid signature")
 	})
 
@@ -242,7 +242,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 
 		// Assert - verify all messages received
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 5, 5*time.Second)
-		assert.NoError(t, err, "should receive all messages")
+		require.NoError(t, err, "should receive all messages")
 		assert.Len(t, messages, 5, "should receive all 5 messages")
 
 		// Pub/Sub does not guarantee strict ordering without ordering keys.
@@ -252,11 +252,11 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 				Body json.RawMessage `json:"body"`
 			}
 			err := json.Unmarshal(msg.Data, &envelope)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			var payload map[string]interface{}
 			err = json.Unmarshal(envelope.Body, &payload)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			number, ok := payload["number"].(float64)
 			assert.True(t, ok, "payload should contain numeric number field")
 			numbers = append(numbers, number)
@@ -301,7 +301,7 @@ func TestWebhookToPubSubIntegration(t *testing.T) {
 
 		// Assert
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 3*time.Second)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Len(t, messages, 1)
 		assert.Equal(t, "github", messages[0].Attributes["source"])
 	})
@@ -371,7 +371,7 @@ func TestWebhookWithMiddleware(t *testing.T) {
 
 		// Verify message published
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 3*time.Second)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Len(t, messages, 1)
 
 		// Verify request ID was in headers (if captured)
@@ -379,7 +379,7 @@ func TestWebhookWithMiddleware(t *testing.T) {
 			Headers map[string]string `json:"headers"`
 		}
 		err = json.Unmarshal(messages[0].Data, &envelope)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		// Request ID would be in the original X-Request-ID header if present
 	})
 }

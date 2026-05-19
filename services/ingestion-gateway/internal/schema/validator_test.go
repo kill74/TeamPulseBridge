@@ -82,13 +82,13 @@ func TestValidator_LoadSchemas_EmptyDir(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	v, err := NewValidator(tmpDir)
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Nil(t, v)
 }
 
 func TestValidator_NoSchemaPath(t *testing.T) {
 	v, err := NewValidator("")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, v)
 	
 	err = v.Validate("any", []byte(`{"a":1}`))

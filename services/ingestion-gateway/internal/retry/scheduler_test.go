@@ -74,18 +74,18 @@ func TestScheduler_BackoffCalculation(t *testing.T) {
 	
 	// retry 0: 2^0 * 10 = 10s
 	b0 := s.calculateBackoff(0, base)
-	assert.True(t, b0 >= 10*time.Second)
-	assert.True(t, b0 <= 20*time.Second) // 10s + 10s max jitter
+	assert.GreaterOrEqual(t, b0, 10*time.Second)
+	assert.LessOrEqual(t, b0, 20*time.Second) // 10s + 10s max jitter
 	
 	// retry 1: 2^1 * 10 = 20s
 	b1 := s.calculateBackoff(1, base)
-	assert.True(t, b1 >= 20*time.Second)
-	assert.True(t, b1 <= 30*time.Second) // 20s + 10s max jitter
+	assert.GreaterOrEqual(t, b1, 20*time.Second)
+	assert.LessOrEqual(t, b1, 30*time.Second) // 20s + 10s max jitter
 	
 	// retry 2: 2^2 * 10 = 40s
 	b2 := s.calculateBackoff(2, base)
-	assert.True(t, b2 >= 40*time.Second)
-	assert.True(t, b2 <= 50*time.Second) // 40s + 10s max jitter
+	assert.GreaterOrEqual(t, b2, 40*time.Second)
+	assert.LessOrEqual(t, b2, 50*time.Second) // 40s + 10s max jitter
 	
 	// Max backoff check
 	bMax := s.calculateBackoff(10, base)
@@ -130,7 +130,7 @@ func TestScheduler_RetryLogic(t *testing.T) {
 	
 	pub.mu.Lock()
 	defer pub.mu.Unlock()
-	require.Equal(t, 1, len(pub.publishes))
+	require.Len(t, pub.publishes, 1)
 	assert.Equal(t, "github", pub.publishes[0].source)
 	assert.Equal(t, "1", pub.publishes[0].headers["X-Retry-Count"])
 }

@@ -66,7 +66,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 
 		// Verify message was published
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 3*time.Second)
-		assert.NoError(t, err, "should receive published message")
+		require.NoError(t, err, "should receive published message")
 		assert.Len(t, messages, 1, "should receive exactly one message")
 
 		// Verify message attributes
@@ -82,10 +82,10 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 			ReceivedAt time.Time         `json:"received_at"`
 		}
 		err = json.Unmarshal(messages[0].Data, &envelope)
-		assert.NoError(t, err, "message should contain valid JSON envelope")
+		require.NoError(t, err, "message should contain valid JSON envelope")
 		assert.Equal(t, "slack", envelope.Source)
 		assert.Equal(t, headers, envelope.Headers)
-		assert.Equal(t, json.RawMessage(body), envelope.Body)
+		assert.JSONEq(t, string(body), string(envelope.Body))
 	})
 
 	t.Run("PublishMultipleMessages", func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 
 		// Assert
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 3*time.Second)
-		assert.NoError(t, err, "should receive published message")
+		require.NoError(t, err, "should receive published message")
 		assert.Len(t, messages, 1, "should receive exactly one message")
 
 		// Verify large payload was preserved
@@ -152,13 +152,13 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 			Body json.RawMessage `json:"body"`
 		}
 		err = json.Unmarshal(messages[0].Data, &envelope)
-		assert.NoError(t, err, "should parse envelope")
+		require.NoError(t, err, "should parse envelope")
 
 		var receivedPayload struct {
 			Events []interface{} `json:"events"`
 		}
 		err = json.Unmarshal(envelope.Body, &receivedPayload)
-		assert.NoError(t, err, "should parse original payload")
+		require.NoError(t, err, "should parse original payload")
 		assert.Len(t, receivedPayload.Events, 100, "should preserve all events")
 	})
 
@@ -178,16 +178,16 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 
 		// Assert
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 3*time.Second)
-		assert.NoError(t, err, "should receive published message")
+		require.NoError(t, err, "should receive published message")
 		assert.Len(t, messages, 1)
 
 		var envelope struct {
 			Headers map[string]string `json:"headers"`
 		}
 		err = json.Unmarshal(messages[0].Data, &envelope)
-		assert.NoError(t, err, "should parse envelope")
+		require.NoError(t, err, "should parse envelope")
 		assert.NotNil(t, envelope.Headers, "headers should not be nil")
-		assert.Len(t, envelope.Headers, 0, "headers should be empty")
+		assert.Empty(t, envelope.Headers, "headers should be empty")
 	})
 
 	t.Run("PublishConcurrentMessages", func(t *testing.T) {
@@ -239,7 +239,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 
 		// Assert
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, 1, 3*time.Second)
-		assert.NoError(t, err, "should receive message")
+		require.NoError(t, err, "should receive message")
 		assert.Len(t, messages, 1)
 
 		// Verify message attributes
@@ -252,7 +252,7 @@ func TestPubSubPublisherIntegration(t *testing.T) {
 			Headers map[string]string `json:"headers"`
 		}
 		err = json.Unmarshal(messages[0].Data, &envelope)
-		assert.NoError(t, err, "should parse envelope")
+		require.NoError(t, err, "should parse envelope")
 		assert.Equal(t, headers, envelope.Headers, "headers should match")
 	})
 }
@@ -308,7 +308,7 @@ func TestAsyncPublisherWithPubSub(t *testing.T) {
 
 		// Assert - verify all messages eventually appeared
 		messages, err := pubsubtest.ReceiveMessages(ctx, sub, messageCount, 5*time.Second)
-		assert.NoError(t, err, "should receive all async messages")
+		require.NoError(t, err, "should receive all async messages")
 		assert.Len(t, messages, messageCount, "should receive all %d messages", messageCount)
 	})
 
@@ -332,7 +332,7 @@ func TestAsyncPublisherWithPubSub(t *testing.T) {
 		}
 
 		// Assert - should eventually get queue full error
-		assert.Error(t, lastErr, "should get error when queue is full")
+		require.Error(t, lastErr, "should get error when queue is full")
 		assert.ErrorIs(t, lastErr, queue.ErrQueueFull, "should be ErrQueueFull")
 	})
 }
