@@ -39,7 +39,7 @@ func (p *CircuitBreakerPublisher) Publish(ctx context.Context, source string, bo
 }
 
 func (p *CircuitBreakerPublisher) Close() error {
-	p.breaker.Close()
+	_ = p.breaker.Close()
 	if err := p.wrapped.Close(); err != nil {
 		return fmt.Errorf("circuit breaker wrapped close: %w", err)
 	}

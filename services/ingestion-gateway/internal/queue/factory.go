@@ -56,7 +56,7 @@ func BuildRuntimePublisher(ctx context.Context, cfg config.Config, logger *slog.
 		}
 		cb := resilience.NewCircuitBreaker(5, 30*time.Second)
 		base = NewCircuitBreakerPublisher(pub, cb, logger)
-		r.closers = append(r.closers, func() error { cb.Close(); return pub.Close() })
+		r.closers = append(r.closers, func() error { _ = cb.Close(); return pub.Close() })
 	default:
 		base = NewLogPublisher(logger)
 	}

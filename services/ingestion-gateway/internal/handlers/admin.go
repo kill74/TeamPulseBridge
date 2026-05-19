@@ -638,7 +638,7 @@ func bodyPreview(body []byte, limit int) string {
 		return clean
 	}
 	truncated := clean[:limit]
-	for len(truncated) > 0 {
+	for truncated != "" {
 		if _, size := utf8.DecodeLastRuneInString(truncated); size == 0 || size > len(truncated) {
 			truncated = truncated[:len(truncated)-1]
 		} else {

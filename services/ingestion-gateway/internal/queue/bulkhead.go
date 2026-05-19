@@ -59,7 +59,7 @@ func (b *BulkheadPublisher) GetOrCreateSource(source string) *SourcePublisher {
 	defer b.mu.Unlock()
 
 	if sp, ok = b.sources[source]; ok {
-		queue.Close()
+		_ = queue.Close()
 		return sp
 	}
 
