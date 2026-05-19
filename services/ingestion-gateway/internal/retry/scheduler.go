@@ -26,7 +26,6 @@ type Scheduler struct {
 	running    bool
 	stopped    bool
 	onRetry    func(ctx context.Context, source string, success bool, attempt int)
-	retries    sync.Map
 	leader     *LeaderElection
 }
 
@@ -127,49 +126,22 @@ func (s *Scheduler) processRetries(parent context.Context) {
 			return
 		default:
 		}
-		currentRetries := 0
-		if val, ok := s.retries.Load(event.EventID); ok {
-			if n, ok := val.(int); ok {
-				currentRetries = n
-			}
-		}
 
-		if currentRetries >= s.maxRetries {
+		if event.RetryCount >= s.maxRetries {
 			continue
 		}
 
-		backoff := s.calculateBackoff(currentRetries, s.interval)
+		backoff := s.calculateBackoff(event.RetryCount, s.interval)
 		if time.Since(event.FailedAt) < backoff {
 			continue
 		}
 
 		s.retryEvent(ctx, event)
 	}
-	s.pruneRetryState(seenEventIDs)
-}
-
-func (s *Scheduler) pruneRetryState(active map[string]struct{}) {
-	s.retries.Range(func(key, _ any) bool {
-		eventID, ok := key.(string)
-		if !ok {
-			s.retries.Delete(key)
-			return true
-		}
-		if _, exists := active[eventID]; !exists {
-			s.retries.Delete(key)
-		}
-		return true
-	})
 }
 
 func (s *Scheduler) retryEvent(ctx context.Context, event failstore.FailedEvent) {
-	currentRetries := 0
-	if val, ok := s.retries.Load(event.EventID); ok {
-		if n, ok := val.(int); ok {
-			currentRetries = n
-		}
-	}
-	nextRetries := currentRetries + 1
+	nextRetries := event.RetryCount + 1
 
 	if nextRetries > s.maxRetries {
 		s.logger.Info("max retries exceeded, skipping",
@@ -178,8 +150,6 @@ func (s *Scheduler) retryEvent(ctx context.Context, event failstore.FailedEvent)
 		)
 		return
 	}
-
-	s.retries.Store(event.EventID, nextRetries)
 
 	headers := make(map[string]string, len(event.Headers)+1)
 	for k, v := range event.Headers {
@@ -200,7 +170,6 @@ func (s *Scheduler) retryEvent(ctx context.Context, event failstore.FailedEvent)
 			"source", event.Source,
 			"attempt", nextRetries,
 		)
-		s.retries.Delete(event.EventID)
 	} else {
 		s.logger.Warn("event retry failed",
 			"event_id", event.EventID,

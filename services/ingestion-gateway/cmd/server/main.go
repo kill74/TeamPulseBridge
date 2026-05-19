@@ -299,7 +299,11 @@ func main() {
 	if cfg.FailedStoreEnabled {
 		var store failstore.Store
 		if pgPool != nil {
-			store = failstore.NewPostgresStore(pgPool)
+			var err error
+			store, err = failstore.NewPostgresStore(pgPool)
+			if err != nil {
+				logger.Error("failed event store disabled due to database error", "error", err)
+			}
 		} else {
 			var err error
 			store, err = failstore.NewFileStore(cfg.FailedStorePath)
@@ -321,7 +325,11 @@ func main() {
 	if cfg.ReplayAuditEnabled {
 		var store replayaudit.Store
 		if pgPool != nil {
-			store = replayaudit.NewPostgresStore(pgPool)
+			var err error
+			store, err = replayaudit.NewPostgresStore(pgPool)
+			if err != nil {
+				logger.Error("replay audit store disabled due to database error", "error", err)
+			}
 		} else {
 			var err error
 			store, err = replayaudit.NewFileStore(cfg.ReplayAuditPath)
@@ -333,7 +341,6 @@ func main() {
 			}
 		}
 		if store != nil {
-			// Reuse the same breaker pattern if needed or create a new one
 			replayAuditStore = store
 		}
 	}
@@ -342,7 +349,11 @@ func main() {
 	if cfg.SecurityAuditEnabled {
 		var store securityaudit.Store
 		if pgPool != nil {
-			store = securityaudit.NewPostgresStore(pgPool)
+			var err error
+			store, err = securityaudit.NewPostgresStore(pgPool)
+			if err != nil {
+				logger.Error("security audit store disabled due to database error", "error", err)
+			}
 		} else {
 			var err error
 			store, err = securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)

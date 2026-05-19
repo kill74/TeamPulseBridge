@@ -58,16 +58,18 @@ func WithPublishFlowControl(maxOutstandingMessages, maxOutstandingBytes int, beh
 }
 
 func NewPubSubPublisher(ctx context.Context, projectID, topicID string, logger *slog.Logger, opts ...PubSubOption) (*PubSubPublisher, error) {
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 50,
+		IdleConnTimeout:     90 * time.Second,
+	}
 	httpClient := &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 50,
-			IdleConnTimeout:     90 * time.Second,
-		},
-		Timeout: 30 * time.Second,
+		Transport: transport,
+		Timeout:   30 * time.Second,
 	}
 	client, err := pubsub.NewClient(ctx, projectID, option.WithHTTPClient(httpClient))
 	if err != nil {
+		transport.CloseIdleConnections()
 		return nil, fmt.Errorf("create pubsub client: %w", err)
 	}
 

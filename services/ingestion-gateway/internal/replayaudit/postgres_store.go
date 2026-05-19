@@ -14,7 +14,7 @@ type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
-func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
+func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -34,12 +34,12 @@ func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 		CREATE INDEX IF NOT EXISTS idx_replay_audit_replayed_at ON replay_audit(replayed_at DESC);
 	`
 	if _, err := pool.Exec(ctx, query); err != nil {
-		panic(fmt.Sprintf("failed to create replay audit tables: %v", err))
+		return nil, fmt.Errorf("create replay audit tables: %w", err)
 	}
 
 	return &PostgresStore{
 		pool: pool,
-	}
+	}, nil
 }
 
 func generateID() string {

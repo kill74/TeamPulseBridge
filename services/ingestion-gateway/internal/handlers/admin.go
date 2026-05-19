@@ -290,6 +290,16 @@ func (h *AdminHandler) ReplayFailedEventsBatch(w http.ResponseWriter, r *http.Re
 		Requested: len(req.EventIDs),
 	}
 	for _, eventID := range eventIDs {
+		select {
+		case <-r.Context().Done():
+			h.logger.Warn("batch replay cancelled",
+				"processed", summary.Processed,
+				"remaining", len(eventIDs)-summary.Processed,
+			)
+			goto writeResponse
+		default:
+		}
+
 		result, err := h.executeReplay(r.Context(), replayExecutionInput{
 			EventID:         eventID,
 			DryRun:          req.DryRun,
@@ -318,6 +328,7 @@ func (h *AdminHandler) ReplayFailedEventsBatch(w http.ResponseWriter, r *http.Re
 		}
 	}
 
+writeResponse:
 	writeJSON(w, batchReplayHTTPStatus(req.DryRun, summary), map[string]any{
 		"status":  batchReplayStatus(summary),
 		"dry_run": req.DryRun,
@@ -627,8 +638,8 @@ func bodyPreview(body []byte, limit int) string {
 		return clean
 	}
 	truncated := clean[:limit]
-	for truncated != "" {
-		if _, size := utf8.DecodeLastRuneInString(truncated); size == 0 {
+	for len(truncated) > 0 {
+		if _, size := utf8.DecodeLastRuneInString(truncated); size == 0 || size > len(truncated) {
 			truncated = truncated[:len(truncated)-1]
 		} else {
 			break
@@ -638,33 +649,54 @@ func bodyPreview(body []byte, limit int) string {
 }
 
 func redactSecrets(s string) string {
+	type replacement struct {
+		start int
+		end   int
+	}
+	var replacements []replacement
+	lower := strings.ToLower(s)
 	patterns := []string{
 		`"token"`, `"secret"`, `"password"`, `"key"`, `"authorization"`,
 		`"api_key"`, `"api-key"`, `"apikey"`, `"access_token"`, `"access-token"`,
 		`"client_secret"`, `"client-secret"`, `"bearer"`, `"credential"`,
 		`"auth_token"`, `"auth-token"`, `"private_key"`, `"private-key"`,
 	}
-	lower := strings.ToLower(s)
 	for _, pattern := range patterns {
-		idx := strings.Index(lower, pattern)
-		if idx == -1 {
-			continue
-		}
-		colonIdx := strings.Index(s[idx:], ":")
-		if colonIdx == -1 {
-			continue
-		}
-		start := idx + colonIdx + 1
-		end := start
-		for end < len(s) && s[end] != ',' && s[end] != '}' && s[end] != '\n' {
-			end++
-		}
-		if end > start {
-			s = s[:start] + "[REDACTED]" + s[end:]
-			lower = strings.ToLower(s)
+		searchStart := 0
+		for {
+			idx := strings.Index(lower[searchStart:], pattern)
+			if idx == -1 {
+				break
+			}
+			idx += searchStart
+			colonIdx := strings.Index(s[idx:], ":")
+			if colonIdx == -1 {
+				searchStart = idx + len(pattern)
+				continue
+			}
+			start := idx + colonIdx + 1
+			end := start
+			for end < len(s) && s[end] != ',' && s[end] != '}' && s[end] != '\n' {
+				end++
+			}
+			if end > start {
+				replacements = append(replacements, replacement{start, end})
+			}
+			searchStart = idx + len(pattern)
 		}
 	}
-	return s
+	if len(replacements) == 0 {
+		return s
+	}
+	var b strings.Builder
+	prev := 0
+	for _, r := range replacements {
+		b.WriteString(s[prev:r.start])
+		b.WriteString("[REDACTED]")
+		prev = r.end
+	}
+	b.WriteString(s[prev:])
+	return b.String()
 }
 
 func decodeAdminJSONRequest(w http.ResponseWriter, r *http.Request, maxBytes int64, out any) error {
@@ -952,7 +984,7 @@ func replayActorFromRequest(r *http.Request, jwtSecret string) string {
 					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 				}
 				return []byte(jwtSecret), nil
-			})
+			}, jwt.WithExpirationRequired())
 			if err == nil && parsedToken.Valid {
 				for _, key := range []string{"email", "sub", "preferred_username", "name"} {
 					if value := claimString(claims[key]); value != "" {

@@ -3,13 +3,14 @@ package dedup
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
 type Redis struct {
-	enabled bool
+	enabled atomic.Bool
 	client  *redis.Client
 	prefix  string
 	ttl     time.Duration
@@ -19,17 +20,18 @@ func NewRedis(enabled bool, client *redis.Client, prefix string, ttl time.Durati
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	return &Redis{
-		enabled: enabled,
-		client:  client,
-		prefix:  prefix,
-		ttl:     ttl,
+	r := &Redis{
+		client: client,
+		prefix: prefix,
+		ttl:    ttl,
 	}
+	r.enabled.Store(enabled)
+	return r
 }
 
 // Seen returns true if key has already been observed within the dedup window.
 func (r *Redis) Seen(key string) bool {
-	if !r.enabled || key == "" || r.client == nil {
+	if !r.enabled.Load() || key == "" || r.client == nil {
 		return false
 	}
 
@@ -47,7 +49,7 @@ func (r *Redis) Seen(key string) bool {
 }
 
 func (r *Redis) Forget(key string) {
-	if !r.enabled || key == "" || r.client == nil {
+	if !r.enabled.Load() || key == "" || r.client == nil {
 		return
 	}
 	fullKey := fmt.Sprintf("%s:%s", r.prefix, key)
@@ -59,5 +61,5 @@ func (r *Redis) Forget(key string) {
 // Stop disables the dedup store without closing the shared Redis client.
 // The Redis client lifecycle is managed centrally by the application.
 func (r *Redis) Stop() {
-	r.enabled = false
+	r.enabled.Store(false)
 }

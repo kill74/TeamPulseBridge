@@ -38,6 +38,7 @@ func (p *CircuitBreakerPublisher) Publish(ctx context.Context, source string, bo
 }
 
 func (p *CircuitBreakerPublisher) Close() error {
+	p.breaker.Close()
 	return p.wrapped.Close()
 }
 

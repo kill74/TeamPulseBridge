@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -116,23 +118,52 @@ func configsEqual(a, b Config) bool {
 		a.QueueBackend == b.QueueBackend &&
 		a.QueueBuffer == b.QueueBuffer &&
 		a.QueueWorkers == b.QueueWorkers &&
+		a.QueueBulkheadEnabled == b.QueueBulkheadEnabled &&
+		a.QueueBulkheadBufferPerSource == b.QueueBulkheadBufferPerSource &&
+		a.QueueBackpressureEnabled == b.QueueBackpressureEnabled &&
+		a.QueueBackpressureSoftLimitPercent == b.QueueBackpressureSoftLimitPercent &&
+		a.QueueBackpressureHardLimitPercent == b.QueueBackpressureHardLimitPercent &&
+		a.QueueFailureBudgetPercent == b.QueueFailureBudgetPercent &&
+		a.QueueFailureBudgetWindow == b.QueueFailureBudgetWindow &&
+		a.QueueFailureBudgetMinSamples == b.QueueFailureBudgetMinSamples &&
+		a.QueueThrottleRetryAfterSec == b.QueueThrottleRetryAfterSec &&
+		a.RequestTimeoutSec == b.RequestTimeoutSec &&
+		a.RequireSecrets == b.RequireSecrets &&
 		a.RateLimitEnabled == b.RateLimitEnabled &&
 		a.RateLimitRPM == b.RateLimitRPM &&
+		a.AdminRateLimitRPM == b.AdminRateLimitRPM &&
+		a.RateLimitBackend == b.RateLimitBackend &&
+		a.RateLimitRedisPrefix == b.RateLimitRedisPrefix &&
 		a.DedupEnabled == b.DedupEnabled &&
 		a.DedupTTLSeconds == b.DedupTTLSeconds &&
+		a.DedupRedisPrefix == b.DedupRedisPrefix &&
 		a.SchemaValidationEnabled == b.SchemaValidationEnabled &&
+		a.SchemaPath == b.SchemaPath &&
 		a.RetryEnabled == b.RetryEnabled &&
 		a.RetryMaxAttempts == b.RetryMaxAttempts &&
-		a.QueueBulkheadEnabled == b.QueueBulkheadEnabled &&
-		a.QueueBackpressureEnabled == b.QueueBackpressureEnabled &&
+		a.RetryIntervalSec == b.RetryIntervalSec &&
 		a.SourceRateLimitEnabled == b.SourceRateLimitEnabled &&
+		a.SourceRateLimitDefault == b.SourceRateLimitDefault &&
 		a.PIIScrubbingEnabled == b.PIIScrubbingEnabled &&
 		a.AdminAuthEnabled == b.AdminAuthEnabled &&
-		a.RequestTimeoutSec == b.RequestTimeoutSec &&
+		a.FailedStoreEnabled == b.FailedStoreEnabled &&
+		a.FailedStorePath == b.FailedStorePath &&
+		a.ReplayAuditEnabled == b.ReplayAuditEnabled &&
+		a.ReplayAuditPath == b.ReplayAuditPath &&
+		a.SecurityAuditEnabled == b.SecurityAuditEnabled &&
+		a.SecurityAuditPath == b.SecurityAuditPath &&
+		a.SecurityAuditRetentionDays == b.SecurityAuditRetentionDays &&
 		a.RedisAddr == b.RedisAddr &&
+		a.RedisPassword == b.RedisPassword &&
+		a.RedisDB == b.RedisDB &&
 		a.DatabaseURL == b.DatabaseURL &&
 		a.PubSubProjectID == b.PubSubProjectID &&
 		a.PubSubTopicID == b.PubSubTopicID &&
+		a.PubSubPublishTimeoutSec == b.PubSubPublishTimeoutSec &&
+		a.PubSubPublishGoroutines == b.PubSubPublishGoroutines &&
+		a.PubSubMaxOutstandingMessages == b.PubSubMaxOutstandingMessages &&
+		a.PubSubMaxOutstandingBytes == b.PubSubMaxOutstandingBytes &&
+		a.PubSubFlowControlBehavior == b.PubSubFlowControlBehavior &&
 		a.AdminJWTSecret == b.AdminJWTSecret &&
 		a.AdminJWTIssuer == b.AdminJWTIssuer &&
 		a.AdminJWTAudience == b.AdminJWTAudience &&
@@ -140,10 +171,14 @@ func configsEqual(a, b Config) bool {
 		a.GitHubWebhookSecret == b.GitHubWebhookSecret &&
 		a.GitLabWebhookToken == b.GitLabWebhookToken &&
 		a.TeamsClientState == b.TeamsClientState &&
-		a.RateLimitBackend == b.RateLimitBackend &&
-		a.FailedStoreEnabled == b.FailedStoreEnabled &&
-		a.ReplayAuditEnabled == b.ReplayAuditEnabled &&
-		a.SecurityAuditEnabled == b.SecurityAuditEnabled
+		a.ChaosEnabled == b.ChaosEnabled &&
+		a.ChaosErrorRate == b.ChaosErrorRate &&
+		a.ChaosLatencyRate == b.ChaosLatencyRate &&
+		a.ChaosLatencyMinMs == b.ChaosLatencyMinMs &&
+		a.ChaosLatencyMaxMs == b.ChaosLatencyMaxMs &&
+		slices.Equal(a.AdminAllowCIDRs, b.AdminAllowCIDRs) &&
+		slices.Equal(a.TrustedProxyCIDRs, b.TrustedProxyCIDRs) &&
+		maps.Equal(a.SourceRateLimits, b.SourceRateLimits)
 }
 
 func (w *Watcher) Get() Config {

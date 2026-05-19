@@ -350,9 +350,10 @@ func AccessLog(logger *slog.Logger, durationHistogram metric.Float64Histogram) M
 			start := time.Now()
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
-			duration := time.Since(start).Seconds()
+			duration := time.Since(start)
+			durationSec := duration.Seconds()
 			if durationHistogram != nil {
-				durationHistogram.Record(r.Context(), duration,
+				durationHistogram.Record(r.Context(), durationSec,
 					metric.WithAttributes(
 						attribute.String("method", r.Method),
 						attribute.String("path", sanitizeLogValue(r.URL.Path)),
@@ -365,7 +366,7 @@ func AccessLog(logger *slog.Logger, durationHistogram metric.Float64Histogram) M
 				"method", r.Method,
 				"path", sanitizeLogValue(r.URL.Path),
 				"status", rec.status,
-				"duration_ms", time.Since(start).Milliseconds(),
+				"duration_ms", duration.Milliseconds(),
 				"bytes", rec.size,
 				"remote_addr", sanitizeLogValue(r.RemoteAddr),
 			)

@@ -67,6 +67,10 @@ func (cb *CircuitBreaker) State() string {
 	return cb.state
 }
 
+func (cb *CircuitBreaker) Close() error {
+	return nil
+}
+
 func Execute[T any](ctx context.Context, cb *CircuitBreaker, fn func(ctx context.Context) (T, error)) (T, error) {
 	if !cb.Allow() {
 		var zero T

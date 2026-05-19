@@ -160,7 +160,7 @@ func TestAsyncPublisherClonesQueuedPayloads(t *testing.T) {
 	assert.Equal(t, map[string]string{"X-Test": "original"}, inner.headers)
 }
 
-func TestAsyncPublisherUsesPublishContextIndependentFromCanceledRequest(t *testing.T) {
+func TestAsyncPublisherPropagatesRequestContextWithTimeout(t *testing.T) {
 	inner := &contextCapturePublisher{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
@@ -173,7 +173,7 @@ func TestAsyncPublisherUsesPublishContextIndependentFromCanceledRequest(t *testi
 	cancel()
 	close(inner.release)
 	require.NoError(t, p.Close())
-	require.NoError(t, inner.ctxErr)
+	assert.ErrorIs(t, inner.ctxErr, context.Canceled)
 }
 
 func TestAsyncPublisherProcessesEventsWithMultipleWorkers(t *testing.T) {

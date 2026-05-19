@@ -53,14 +53,16 @@ func (b *BulkheadPublisher) GetOrCreateSource(source string) *SourcePublisher {
 		return sp
 	}
 
+	queue := NewAsyncPublisherWithOptions(b.inner, b.bufferPerSource, b.logger, b.options)
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if sp, ok = b.sources[source]; ok {
+		queue.Close()
 		return sp
 	}
 
-	queue := NewAsyncPublisherWithOptions(b.inner, b.bufferPerSource, b.logger, b.options)
 	sp = &SourcePublisher{
 		queue:  queue,
 		source: source,

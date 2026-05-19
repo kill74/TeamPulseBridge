@@ -20,6 +20,7 @@ type queuedEvent struct {
 	body      []byte
 	headers   map[string]string
 	createdAt time.Time
+	ctx       context.Context
 }
 
 type AsyncPublisherOptions struct {
@@ -89,16 +90,19 @@ func NewAsyncPublisherWithOptions(inner Publisher, buffer int, logger *slog.Logg
 
 func (p *AsyncPublisher) Publish(ctx context.Context, source string, body []byte, headers map[string]string) error {
 	e := queuedEvent{
-		source:  source,
-		body:    append([]byte(nil), body...),
-		headers: cloneHeaders(headers),
+		source:    source,
+		body:      append([]byte(nil), body...),
+		headers:   cloneHeaders(headers),
+		createdAt: time.Now(),
+		ctx:       ctx,
 	}
 	p.mu.RLock()
-	defer p.mu.RUnlock()
 	if p.closed {
+		p.mu.RUnlock()
 		return ErrQueueClosed
 	}
 	snapshot := p.Snapshot()
+	p.mu.RUnlock()
 	if p.isHardLimited(snapshot) {
 		p.emitBackpressure(ctx, source, "full", snapshot)
 		return ErrQueueFull
@@ -158,7 +162,8 @@ func (p *AsyncPublisher) run(workerID int) {
 }
 
 func (p *AsyncPublisher) processQueuedEvent(workerID int, e queuedEvent) {
-	publishCtx := context.Background()
+	publishCtx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
+	defer cancel()
 	start := time.Now()
 	err := p.safePublish(publishCtx, workerID, e)
 	latency := time.Since(start).Seconds()

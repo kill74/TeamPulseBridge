@@ -45,14 +45,10 @@ func RequireCSRF(cfg CSRFConfig) Middleware {
 				return
 			}
 
-			cookieToken := r.Header.Get("Cookie")
+			cookie, err := r.Cookie("__Host-CSRF-Token")
 			var cookieVal string
-			for _, part := range strings.Split(cookieToken, ";") {
-				part = strings.TrimSpace(part)
-				if strings.HasPrefix(part, "__Host-CSRF-Token=") {
-					cookieVal = strings.TrimPrefix(part, "__Host-CSRF-Token=")
-					break
-				}
+			if err == nil {
+				cookieVal = cookie.Value
 			}
 
 			headerVal := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
