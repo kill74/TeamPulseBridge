@@ -24,7 +24,11 @@ func NewLeaderElection(client *redis.Client, key, id string, ttl time.Duration) 
 }
 
 func (l *LeaderElection) IsLeader(ctx context.Context) bool {
-	// SETNX with TTL — only one instance succeeds
+	val, err := l.client.Get(ctx, l.key).Result()
+	return err == nil && val == l.id
+}
+
+func (l *LeaderElection) TryClaim(ctx context.Context) bool {
 	wasSet, err := l.client.SetNX(ctx, l.key, l.id, l.ttl).Result()
 	return err == nil && wasSet
 }

@@ -474,7 +474,7 @@ func (h *AdminHandler) FeatureFlags(w http.ResponseWriter, r *http.Request) {
 		actor := replayActorFromRequest(r, h.cfg.AdminJWTSecret)
 		h.logger.Info("feature flag updated", "flag", req.Flag, "enabled", req.Enabled, "actor", actor)
 		if h.security != nil {
-			_, _ = h.security.Save(r.Context(), securityaudit.SaveInput{
+			if _, auditErr := h.security.Save(r.Context(), securityaudit.SaveInput{
 				Category:   "feature_flag_change",
 				Outcome:    "accepted",
 				Source:     "admin",
@@ -484,7 +484,14 @@ func (h *AdminHandler) FeatureFlags(w http.ResponseWriter, r *http.Request) {
 				RequestID:  httpx.RequestIDFromContext(r.Context()),
 				Actor:      actor,
 				ClientIP:   httpx.ClientIP(r, h.cfg.TrustedProxyCIDRs),
-			})
+			}); auditErr != nil {
+				h.logger.Error("failed to persist security audit record for flag change",
+					"flag", req.Flag,
+					"enabled", req.Enabled,
+					"actor", actor,
+					"error", auditErr,
+				)
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"flag":    req.Flag,
@@ -501,7 +508,6 @@ func (h *AdminHandler) FeatureFlags(w http.ResponseWriter, r *http.Request) {
 
 func (h *AdminHandler) respondError(w http.ResponseWriter, r *http.Request, status int, err *apperr.Error) {
 	httpx.WriteError(w, r.Context(), status, err, nil)
-	_ = h
 }
 
 func parseFailedEventsLimit(r *http.Request) (int, error) {

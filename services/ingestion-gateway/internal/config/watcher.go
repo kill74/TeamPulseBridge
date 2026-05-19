@@ -360,6 +360,7 @@ func LoadFromMap(overrides map[string]string) Config {
 		RateLimitBackend:                  get("RATE_LIMIT_BACKEND", "memory"),
 		RateLimitRedisPrefix:              get("RATE_LIMIT_REDIS_PREFIX", "rate_limit"),
 		PIIScrubbingEnabled:               getBool("PII_SCRUBBING_ENABLED", false),
+		LogLevel:                          get("LOG_LEVEL", "info"),
 		ChaosEnabled:                      getBool("CHAOS_ENABLED", false),
 		ChaosErrorRate:                    getFloat("CHAOS_ERROR_RATE", 0.0),
 		ChaosLatencyRate:                  getFloat("CHAOS_LATENCY_RATE", 0.0),

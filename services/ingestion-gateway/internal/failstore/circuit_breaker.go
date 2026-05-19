@@ -33,21 +33,31 @@ func (s *CircuitBreakerStore) Save(ctx context.Context, in SaveInput) (FailedEve
 }
 
 func (s *CircuitBreakerStore) GetByID(ctx context.Context, eventID string) (FailedEvent, error) {
-	result, err := resilience.Execute(ctx, s.breaker, func(ctx context.Context) (FailedEvent, error) {
-		return s.wrapped.GetByID(ctx, eventID)
-	})
-	if err != nil {
-		return FailedEvent{}, fmt.Errorf("circuit breaker get by id: %w", err)
-	}
-	return result, nil
+	return s.wrapped.GetByID(ctx, eventID)
 }
 
 func (s *CircuitBreakerStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, error) {
-	result, err := resilience.Execute(ctx, s.breaker, func(ctx context.Context) ([]FailedEvent, error) {
-		return s.wrapped.ListRecent(ctx, limit)
+	return s.wrapped.ListRecent(ctx, limit)
+}
+
+func (s *CircuitBreakerStore) Delete(ctx context.Context, eventID string) error {
+	_, err := resilience.Execute(ctx, s.breaker, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, s.wrapped.Delete(ctx, eventID)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("circuit breaker list recent: %w", err)
+		return fmt.Errorf("circuit breaker delete: %w", err)
 	}
-	return result, nil
+	return nil
 }
+
+func (s *CircuitBreakerStore) UpdateRetryCount(ctx context.Context, eventID string, retryCount int) error {
+	_, err := resilience.Execute(ctx, s.breaker, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, s.wrapped.UpdateRetryCount(ctx, eventID, retryCount)
+	})
+	if err != nil {
+		return fmt.Errorf("circuit breaker update retry count: %w", err)
+	}
+	return nil
+}
+
+

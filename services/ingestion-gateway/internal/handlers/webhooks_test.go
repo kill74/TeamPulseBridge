@@ -59,6 +59,10 @@ func (s *captureFailedStore) ListRecent(_ context.Context, _ int) ([]failstore.F
 	return nil, nil
 }
 
+func (s *captureFailedStore) Delete(_ context.Context, _ string) error { return nil }
+
+func (s *captureFailedStore) UpdateRetryCount(_ context.Context, _ string, _ int) error { return nil }
+
 type captureSecurityEvents struct {
 	events []SecurityEvent
 }

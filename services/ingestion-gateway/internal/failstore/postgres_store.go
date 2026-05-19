@@ -132,6 +132,28 @@ func (s *PostgresStore) GetByID(ctx context.Context, eventID string) (FailedEven
 	return evt, nil
 }
 
+func (s *PostgresStore) Delete(ctx context.Context, eventID string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM failed_events WHERE event_id = $1`, eventID)
+	if err != nil {
+		return fmt.Errorf("delete event from postgres: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdateRetryCount(ctx context.Context, eventID string, retryCount int) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE failed_events SET retry_count = $1 WHERE event_id = $2`, retryCount, eventID)
+	if err != nil {
+		return fmt.Errorf("update retry count in postgres: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *PostgresStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, error) {
 	if limit <= 0 {
 		limit = 100

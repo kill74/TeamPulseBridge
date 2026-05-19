@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"log/slog"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 	"teampulsebridge/services/ingestion-gateway/internal/apperr"
 
 	"teampulsebridge/services/ingestion-gateway/internal/config"
@@ -20,6 +22,10 @@ import (
 )
 
 func main() {
+	os.Exit(runReplay())
+}
+
+func runReplay() int {
 	var (
 		filePath       string
 		eventID        string
@@ -41,9 +47,11 @@ func main() {
 	eventID = strings.TrimSpace(eventID)
 	if (filePath == "" && eventID == "") || (filePath != "" && eventID != "") {
 		exitf("provide exactly one input source: -file or -event-id")
+		return 1
 	}
 	if timeout <= 0 {
 		exitf("timeout must be > 0")
+		return 1
 	}
 
 	cfg := config.LoadFromEnv()
@@ -61,11 +69,12 @@ func main() {
 	}
 	if err != nil {
 		exitWithAppError(err)
+		return 1
 	}
 
 	if dryRun {
 		fmt.Printf("dry-run ok: source=%s bytes=%d headers=%d\n", event.Source, len(event.Body), len(event.Headers))
-		return
+		return 0
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -74,6 +83,7 @@ func main() {
 	pub, err := buildPublisher(ctx, cfg, logger)
 	if err != nil {
 		exitWithAppError(apperr.New("cmd.replay.buildPublisher", apperr.CodeReplayConfigInvalid, "build publisher failed", err))
+		return 1
 	}
 	defer func() {
 		_ = pub.Close()
@@ -81,6 +91,7 @@ func main() {
 
 	if err := pub.Publish(ctx, event.Source, event.Body, event.Headers); err != nil {
 		exitWithAppError(apperr.New("cmd.replay.publish", apperr.CodeReplayPublishFailed, "publish replay event failed", err))
+		return 1
 	}
 
 	logger.Info("replay published",
@@ -89,6 +100,7 @@ func main() {
 		"headers", len(event.Headers),
 		"backend", cfg.QueueBackend,
 	)
+	return 0
 }
 
 func loadEventFromFile(path, sourceOverride string, headerOverrides map[string]string) (replay.Event, error) {
@@ -96,16 +108,20 @@ func loadEventFromFile(path, sourceOverride string, headerOverrides map[string]s
 	if err != nil {
 		return replay.Event{}, apperr.New("cmd.replay.loadFile", apperr.CodeReplayReadFailed, "invalid replay file path", err)
 	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return replay.Event{}, apperr.New("cmd.replay.loadFile", apperr.CodeReplayReadFailed, "cannot resolve symlinks in path", err)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return replay.Event{}, apperr.New("cmd.replay.loadFile", apperr.CodeReplayReadFailed, "cannot determine working directory", err)
 	}
-	if !strings.HasPrefix(absPath, cwd) {
+	if !strings.HasPrefix(resolvedPath, cwd) {
 		return replay.Event{}, apperr.New("cmd.replay.loadFile", apperr.CodeReplayReadFailed,
 			"file path must be within current directory",
-			fmt.Errorf("path %q not under %q", path, cwd))
+			fmt.Errorf("path %q not under %q", resolvedPath, cwd))
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return replay.Event{}, apperr.New("cmd.replay.loadFile", apperr.CodeReplayReadFailed, "read replay file failed", err)
 	}
@@ -117,13 +133,28 @@ func loadEventFromFile(path, sourceOverride string, headerOverrides map[string]s
 }
 
 func loadEventFromStore(cfg config.Config, eventID string, headerOverrides map[string]string) (replay.Event, error) {
-	path := strings.TrimSpace(cfg.FailedStorePath)
-	if path == "" {
-		path = "data/failed-events.jsonl"
-	}
-	store, err := failstore.NewFileStore(path)
-	if err != nil {
-		return replay.Event{}, apperr.New("cmd.replay.loadStore", apperr.CodeReplayConfigInvalid, "invalid failed event store configuration", err)
+	var store failstore.Store
+	if strings.TrimSpace(cfg.DatabaseURL) != "" {
+		pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+		if err != nil {
+			return replay.Event{}, apperr.New("cmd.replay.loadStore", apperr.CodeReplayConfigInvalid, "connect to database failed", err)
+		}
+		defer pool.Close()
+		ps, err := failstore.NewPostgresStore(pool)
+		if err != nil {
+			return replay.Event{}, apperr.New("cmd.replay.loadStore", apperr.CodeReplayConfigInvalid, "create postgres store failed", err)
+		}
+		store = ps
+	} else {
+		path := strings.TrimSpace(cfg.FailedStorePath)
+		if path == "" {
+			path = "data/failed-events.jsonl"
+		}
+		fs, err := failstore.NewFileStore(path)
+		if err != nil {
+			return replay.Event{}, apperr.New("cmd.replay.loadStore", apperr.CodeReplayConfigInvalid, "invalid failed event store configuration", err)
+		}
+		store = fs
 	}
 
 	record, err := store.GetByID(context.Background(), eventID)
@@ -189,14 +220,13 @@ func (f *kvFlags) Set(value string) error {
 
 func exitf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "replay: "+format+"\n", args...)
-	os.Exit(1)
 }
 
 func exitWithAppError(err error) {
 	code := apperr.CodeOf(err)
 	if code == "" {
 		exitf("%v", err)
+		return
 	}
 	fmt.Fprintf(os.Stderr, "replay: [%s] %v\n", code, err)
-	os.Exit(1)
 }

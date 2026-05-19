@@ -20,7 +20,7 @@ type queuedEvent struct {
 	body      []byte
 	headers   map[string]string
 	createdAt time.Time
-	ctx       context.Context
+	deadline  time.Time
 }
 
 type AsyncPublisherOptions struct {
@@ -94,7 +94,9 @@ func (p *AsyncPublisher) Publish(ctx context.Context, source string, body []byte
 		body:      append([]byte(nil), body...),
 		headers:   cloneHeaders(headers),
 		createdAt: time.Now(),
-		ctx:       ctx,
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		e.deadline = deadline
 	}
 	p.mu.RLock()
 	if p.closed {
@@ -162,7 +164,13 @@ func (p *AsyncPublisher) run(workerID int) {
 }
 
 func (p *AsyncPublisher) processQueuedEvent(workerID int, e queuedEvent) {
-	publishCtx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
+	ctx := context.Background()
+	if !e.deadline.IsZero() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, e.deadline)
+		defer cancel()
+	}
+	publishCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	start := time.Now()
 	err := p.safePublish(publishCtx, workerID, e)

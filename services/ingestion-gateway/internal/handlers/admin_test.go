@@ -65,6 +65,33 @@ func (s *adminStoreStub) ListRecent(_ context.Context, limit int) ([]failstore.F
 	return out, nil
 }
 
+func (s *adminStoreStub) Delete(_ context.Context, eventID string) error {
+	delete(s.events, eventID)
+	recent := make([]failstore.FailedEvent, 0, len(s.recent))
+	for _, e := range s.recent {
+		if e.EventID != eventID {
+			recent = append(recent, e)
+		}
+	}
+	s.recent = recent
+	return nil
+}
+
+func (s *adminStoreStub) UpdateRetryCount(_ context.Context, eventID string, retryCount int) error {
+	if e, ok := s.events[eventID]; ok {
+		e.RetryCount = retryCount
+		s.events[eventID] = e
+		for i := range s.recent {
+			if s.recent[i].EventID == eventID {
+				s.recent[i].RetryCount = retryCount
+				break
+			}
+		}
+		return nil
+	}
+	return failstore.ErrNotFound
+}
+
 type adminPublisherStub struct {
 	calls int
 	last  struct {

@@ -10,7 +10,7 @@ import (
 var ErrCircuitOpen = errors.New("circuit breaker is open")
 
 type CircuitBreaker struct {
-	mu            sync.Mutex
+	mu            sync.RWMutex
 	failures      int
 	lastFailure   time.Time
 	threshold     int
@@ -62,8 +62,8 @@ func (cb *CircuitBreaker) RecordFailure() {
 }
 
 func (cb *CircuitBreaker) State() string {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
 	return cb.state
 }
 

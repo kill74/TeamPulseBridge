@@ -110,25 +110,7 @@ go run ./cmd/server
 
 ## API Surface
 
-Public and operator-facing routes:
-
-- `GET /`
-- `GET /assets/ui.css`
-- `GET /assets/ui.js`
-- `GET /healthz`
-- `GET /readyz`
-- `GET /metrics`
-- `GET /admin/configz`
-- `GET /admin/events/failed`
-- `GET /admin/events/replay-audit`
-- `GET /admin/events/security-audit`
-- `POST /admin/events/replay`
-- `POST /admin/events/replay/batch`
-- `POST /webhooks/slack`
-- `POST /webhooks/teams`
-- `POST /webhooks/github`
-- `POST /webhooks/gitlab`
-- `POST /ui/smoke-test`
+Public and operator-facing routes serve operator UI (`GET /`), webhook endpoints (`/webhooks/*`), admin operations (`/admin/*`), health checks, and metrics. Run the service and open `/admin/configz` for the complete route inventory, or browse routes via the operator UI.
 
 ## Event Store Consumer
 
@@ -246,92 +228,29 @@ If you want replay to publish to Pub/Sub, set:
 
 ## Configuration
 
-The full configuration surface is environment-variable driven.
+The full configuration surface is environment-variable driven. The table below covers the essentials; full reference is at `internal/config/config.go`.
 
-### Variables most people care about first
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `PORT` | `8080` | HTTP listen port |
+| `ENVIRONMENT` | `dev` | Runtime environment label |
+| `QUEUE_BACKEND` | `log` | `log` or `pubsub` |
+| `QUEUE_BUFFER` | `4096` | In-memory queue buffer size |
+| `QUEUE_WORKERS` | `1` | Concurrent queue workers |
+| `RATE_LIMIT_ENABLED` | `true` | Global rate limiting |
+| `RATE_LIMIT_RPM` | `300` | Requests per minute |
+| `RATE_LIMIT_BACKEND` | `memory` | `memory` or `redis` |
+| `DEDUP_ENABLED` | `true` | Event deduplication |
+| `DEDUP_TTL_SEC` | `300` | Dedup window in seconds |
+| `FAILED_EVENT_STORE_ENABLED` | `true` | Persist failed publishes |
+| `REQUIRE_SECRETS` | `false` | Require provider secrets |
+| `ADMIN_AUTH_ENABLED` | `false` | JWT guard on admin routes |
+| `SOURCE_RATE_LIMIT_ENABLED` | `true` | Per-source rate limiting |
+| `TRUSTED_PROXY_CIDRS` | — | Trusted proxy IP ranges |
 
-Runtime behavior:
+Provider secrets (`SLACK_SIGNING_SECRET`, `GITHUB_WEBHOOK_SECRET`, `GITLAB_WEBHOOK_TOKEN`, `TEAMS_CLIENT_STATE`) are required when `REQUIRE_SECRETS=true`. Pub/Sub config (`PUBSUB_PROJECT_ID`, `PUBSUB_TOPIC_ID`) is required when `QUEUE_BACKEND=pubsub`.
 
-- `PORT` default `8080`
-- `REQUEST_TIMEOUT_SEC` default `15`
-- `QUEUE_BACKEND` default `log`
-- `QUEUE_BUFFER` default `4096`
-- `QUEUE_WORKERS` default `1`
-- `QUEUE_BULKHEAD_ENABLED` default `false`
-- `QUEUE_BULKHEAD_BUFFER_PER_SOURCE` default `1024`
-- `QUEUE_BACKPRESSURE_ENABLED` default `true`
-- `QUEUE_BACKPRESSURE_SOFT_LIMIT_PERCENT` default `70`
-- `QUEUE_BACKPRESSURE_HARD_LIMIT_PERCENT` default `90`
-- `QUEUE_FAILURE_BUDGET_PERCENT` default `15`
-- `QUEUE_FAILURE_BUDGET_WINDOW` default `100`
-- `QUEUE_FAILURE_BUDGET_MIN_SAMPLES` default `20`
-- `QUEUE_THROTTLE_RETRY_AFTER_SEC` default `5`
-- `ENVIRONMENT` default `dev`
-
-Safety and traffic controls:
-
-- `RATE_LIMIT_ENABLED` default `true`
-- `RATE_LIMIT_RPM` default `300`
-- `ADMIN_RATE_LIMIT_RPM` default `60`
-- `RATE_LIMIT_BACKEND` default `memory`; use `redis` for distributed rate limiting across gateway replicas
-- `RATE_LIMIT_REDIS_PREFIX` default `rate_limit`
-- `SOURCE_RATE_LIMIT_ENABLED` default `true`
-- `SOURCE_RATE_LIMIT_DEFAULT` default `100`
-- `SOURCE_RATE_LIMITS` optional comma-separated overrides such as `github:300,slack:120`
-- `DEDUP_ENABLED` default `true`
-- `DEDUP_TTL_SEC` default `300`
-
-Failed-event and replay storage:
-
-- `FAILED_EVENT_STORE_ENABLED` default `true`
-- `FAILED_EVENT_STORE_PATH` default `data/failed-events.jsonl`
-- `REPLAY_AUDIT_ENABLED` default `true`
-- `REPLAY_AUDIT_PATH` default `data/replay-audit.jsonl`
-- `SECURITY_AUDIT_ENABLED` default `true`
-- `SECURITY_AUDIT_PATH` default `data/security-audit.jsonl`
-- `SECURITY_AUDIT_RETENTION_DAYS` default `30`
-
-Proxy and tracing support:
-
-- `TRUSTED_PROXY_CIDRS`
-- `OTEL_EXPORTER_OTLP_ENDPOINT`
-
-### Provider secrets
-
-These are required when `REQUIRE_SECRETS=true`:
-
-- `SLACK_SIGNING_SECRET`
-- `GITHUB_WEBHOOK_SECRET`
-- `GITLAB_WEBHOOK_TOKEN`
-- `TEAMS_CLIENT_STATE`
-
-### Pub/Sub configuration
-
-These are required when `QUEUE_BACKEND=pubsub`:
-
-- `PUBSUB_PROJECT_ID`
-- `PUBSUB_TOPIC_ID`
-- `PUBSUB_EMULATOR_HOST` for local emulator-based testing
-
-Publisher scaling controls:
-
-- `PUBSUB_PUBLISH_TIMEOUT_SEC` default `5`
-- `PUBSUB_PUBLISH_GOROUTINES` default `0`, which lets the Google client choose its default
-- `PUBSUB_MAX_OUTSTANDING_MESSAGES` default `0`, which leaves the client default unchanged
-- `PUBSUB_MAX_OUTSTANDING_BYTES` default `0`, which leaves the client default unchanged
-- `PUBSUB_FLOW_CONTROL_BEHAVIOR` default `ignore`; supported values are `ignore`, `block`, and `signal_error`
-
-### Admin protection
-
-These matter when `ADMIN_AUTH_ENABLED=true`:
-
-- `ADMIN_AUTH_ENABLED`
-- `ADMIN_JWT_ISSUER`
-- `ADMIN_JWT_AUDIENCE`
-- `ADMIN_JWT_SECRET`
-- `ADMIN_ALLOW_CIDRS`
-
-### Important validation rules
+### Validation rules
 
 - `QUEUE_BACKEND` must be `log` or `pubsub`
 - `QUEUE_WORKERS` must be between `1` and `1024` when explicitly set

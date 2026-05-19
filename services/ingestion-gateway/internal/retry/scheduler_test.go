@@ -37,7 +37,34 @@ func (m *mockStore) ListRecent(ctx context.Context, limit int) ([]failstore.Fail
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
-	return m.events, nil
+	// Return a copy of events to simulate deduplication
+	result := make([]failstore.FailedEvent, len(m.events))
+	copy(result, m.events)
+	return result, nil
+}
+
+func (m *mockStore) Delete(ctx context.Context, eventID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, e := range m.events {
+		if e.EventID == eventID {
+			m.events = append(m.events[:i], m.events[i+1:]...)
+			return nil
+		}
+	}
+	return failstore.ErrNotFound
+}
+
+func (m *mockStore) UpdateRetryCount(ctx context.Context, eventID string, retryCount int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, e := range m.events {
+		if e.EventID == eventID {
+			m.events[i].RetryCount = retryCount
+			return nil
+		}
+	}
+	return failstore.ErrNotFound
 }
 
 type mockPublisher struct {

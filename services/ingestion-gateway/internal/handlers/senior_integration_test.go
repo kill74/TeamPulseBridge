@@ -54,6 +54,8 @@ func (s *PipelineSpy) Close() error { return nil }
 func (s *PipelineSpy) HealthCheck(_ context.Context) error { return nil }
 func (s *PipelineSpy) GetByID(_ context.Context, _ string) (failstore.FailedEvent, error) { return failstore.FailedEvent{}, nil }
 func (s *PipelineSpy) ListRecent(_ context.Context, _ int) ([]failstore.FailedEvent, error) { return nil, nil }
+func (s *PipelineSpy) Delete(_ context.Context, _ string) error { return nil }
+func (s *PipelineSpy) UpdateRetryCount(_ context.Context, _ string, _ int) error { return nil }
 
 func TestSeniorIntegration_FullIngestionPipeline(t *testing.T) {
 	spy := &PipelineSpy{}

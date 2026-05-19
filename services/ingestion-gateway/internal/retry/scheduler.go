@@ -2,10 +2,10 @@ package retry
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"math"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -97,7 +97,12 @@ func (s *Scheduler) run(ctx context.Context) {
 		select {
 		case <-s.ticker.C:
 			if s.leader != nil {
-				if !s.leader.IsLeader(ctx) && !s.leader.Renew(ctx) {
+				if s.leader.IsLeader(ctx) {
+					if !s.leader.Renew(ctx) {
+						s.logger.Warn("failed to renew leader lease")
+						continue
+					}
+				} else if !s.leader.TryClaim(ctx) {
 					continue
 				}
 			}
@@ -128,6 +133,17 @@ func (s *Scheduler) processRetries(parent context.Context) {
 		}
 
 		if event.RetryCount >= s.maxRetries {
+			s.logger.Info("max retries exceeded, deleting exhausted event",
+				"event_id", event.EventID,
+				"retry_count", event.RetryCount,
+				"max_retries", s.maxRetries,
+			)
+			if delErr := s.store.Delete(ctx, event.EventID); delErr != nil {
+				s.logger.Error("failed to delete exhausted retry event",
+					"event_id", event.EventID,
+					"error", delErr,
+				)
+			}
 			continue
 		}
 
@@ -144,10 +160,16 @@ func (s *Scheduler) retryEvent(ctx context.Context, event failstore.FailedEvent)
 	nextRetries := event.RetryCount + 1
 
 	if nextRetries > s.maxRetries {
-		s.logger.Info("max retries exceeded, skipping",
+		s.logger.Info("max retries exceeded, deleting event",
 			"event_id", event.EventID,
 			"max_retries", s.maxRetries,
 		)
+		if delErr := s.store.Delete(ctx, event.EventID); delErr != nil {
+			s.logger.Error("failed to delete exhausted retry event",
+				"event_id", event.EventID,
+				"error", delErr,
+			)
+		}
 		return
 	}
 
@@ -165,18 +187,30 @@ func (s *Scheduler) retryEvent(ctx context.Context, event failstore.FailedEvent)
 	}
 
 	if success {
-		s.logger.Info("event retried successfully",
+		s.logger.Info("event retried successfully, removing from store",
 			"event_id", event.EventID,
 			"source", event.Source,
 			"attempt", nextRetries,
 		)
+		if delErr := s.store.Delete(ctx, event.EventID); delErr != nil {
+			s.logger.Error("failed to delete successfully retried event",
+				"event_id", event.EventID,
+				"error", delErr,
+			)
+		}
 	} else {
-		s.logger.Warn("event retry failed",
+		s.logger.Warn("event retry failed, updating retry count",
 			"event_id", event.EventID,
 			"source", event.Source,
 			"attempt", nextRetries,
 			"error", err,
 		)
+		if updErr := s.store.UpdateRetryCount(ctx, event.EventID, nextRetries); updErr != nil {
+			s.logger.Error("failed to update retry count",
+				"event_id", event.EventID,
+				"error", updErr,
+			)
+		}
 	}
 }
 
@@ -188,15 +222,8 @@ func (s *Scheduler) calculateBackoff(retryCount int, baseInterval time.Duration)
 	exp := math.Pow(2, float64(retryCount))
 	backoff := time.Duration(float64(baseInterval) * exp)
 
-	jitterBytes := make([]byte, 8)
-	if _, err := rand.Read(jitterBytes); err == nil {
-		var jitterVal uint64
-		for i := 0; i < 8; i++ {
-			jitterVal = (jitterVal << 8) | uint64(jitterBytes[i])
-		}
-		jitter := time.Duration(float64(jitterVal) / float64(^uint64(0)) * float64(baseInterval))
-		backoff += jitter
-	}
+	jitter := time.Duration(rand.Float64() * float64(baseInterval))
+	backoff += jitter
 
 	maxBackoff := 5 * time.Minute
 	if backoff > maxBackoff {

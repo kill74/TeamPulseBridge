@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"time"
+
+	"teampulsebridge/services/ingestion-gateway/internal/httpx"
 )
 
 const (
@@ -62,66 +63,15 @@ func sanitizeUISmokeHeaders(headers map[string]string) map[string]string {
 	return clean
 }
 
-func clientIPFromRequestSmoke(remoteAddr string, header http.Header, trustedProxyNets []*net.IPNet) string {
-	if len(trustedProxyNets) == 0 {
-		return clientIP(remoteAddr)
-	}
-	remoteHost, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
-	if err != nil {
-		remoteHost = strings.TrimSpace(remoteAddr)
-	}
-	remoteIP := net.ParseIP(remoteHost)
-	if remoteIP != nil && ipInNetsSmoke(remoteIP, trustedProxyNets) {
-		xff := strings.TrimSpace(header.Get("X-Forwarded-For"))
-		if xff != "" {
-			parts := strings.Split(xff, ",")
-			if len(parts) > 0 {
-				if ip := strings.TrimSpace(parts[0]); net.ParseIP(ip) != nil {
-					return ip
-				}
-			}
-		}
-		if xr := strings.TrimSpace(header.Get("X-Real-IP")); net.ParseIP(xr) != nil {
-			return xr
-		}
-	}
-	return clientIP(remoteAddr)
-}
-
-func parseSmokeProxyCIDRs(cidrs []string) []*net.IPNet {
-	if len(cidrs) == 0 {
-		return nil
-	}
-	result := make([]*net.IPNet, 0, len(cidrs))
-	for _, cidr := range cidrs {
-		_, network, err := net.ParseCIDR(strings.TrimSpace(cidr))
-		if err != nil {
-			continue
-		}
-		result = append(result, network)
-	}
-	return result
-}
-
-func ipInNetsSmoke(ip net.IP, nets []*net.IPNet) bool {
-	for _, n := range nets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
 // NewUISmokeTestProxy returns an internal proxy for controlled webhook smoke testing.
 // It accepts a wrappedHandler that includes the full middleware chain (rate limiting, auth, etc.)
 // to ensure smoke tests accurately represent production traffic patterns.
 func NewUISmokeTestProxy(wrappedHandler http.Handler, trustedProxyCIDRs []string) http.HandlerFunc {
-	trustedNets := parseSmokeProxyCIDRs(trustedProxyCIDRs)
 	return func(w http.ResponseWriter, r *http.Request) {
 		setUISecurityHeaders(w)
 		w.Header().Set("Cache-Control", "no-store")
 
-		if !allowUISmokeRequest(clientIPFromRequestSmoke(r.RemoteAddr, r.Header, trustedNets), time.Now().UTC()) {
+		if !allowUISmokeRequest(httpx.ClientIP(r, trustedProxyCIDRs), time.Now().UTC()) {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{
 				"error": "rate limit exceeded for UI smoke tests",
 			})

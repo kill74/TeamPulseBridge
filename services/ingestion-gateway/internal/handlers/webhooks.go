@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -359,7 +358,6 @@ func (h *WebhookHandler) respondError(w http.ResponseWriter, ctx context.Context
 		extras = map[string]any{"event_id": eventID}
 	}
 	httpx.WriteError(w, ctx, status, err, extras)
-	_ = h
 }
 
 func (h *WebhookHandler) forgetDedupKey(source, eventID string) {
@@ -419,7 +417,6 @@ func SecurityAuditRecord(r *http.Request, event SecurityEvent) securityaudit.Sav
 		HTTPStatus: event.Status,
 		RequestID:  httpx.RequestIDFromContext(r.Context()),
 		Actor:      actor,
-		ClientIP:   httpx.ClientIP(r, nil),
 	}
 }
 
@@ -461,40 +458,19 @@ func deriveEventID(source string, r *http.Request, body []byte) string {
 }
 
 func extractJSONField(body []byte, field string) string {
-	dec := json.NewDecoder(bytes.NewReader(body))
-	t, err := dec.Token()
-	if err != nil || t != json.Delim('{') {
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(body, &data); err != nil {
 		return ""
 	}
-
-	for dec.More() {
-		t, err := dec.Token()
-		if err != nil {
-			return ""
-		}
-
-		key, ok := t.(string)
-		if !ok {
-			return ""
-		}
-
-		if key == field {
-			var value any
-			if err := dec.Decode(&value); err != nil {
-				return ""
-			}
-			if s, ok := value.(string); ok {
-				return strings.TrimSpace(s)
-			}
-			return ""
-		}
-
-		var skip json.RawMessage
-		if err := dec.Decode(&skip); err != nil {
-			return ""
-		}
+	raw, ok := data[field]
+	if !ok {
+		return ""
 	}
-	return ""
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
 }
 
 func fallbackEventID(source string, body []byte) string {

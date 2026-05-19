@@ -190,7 +190,7 @@ func RequireAdminJWT(cfg JWTConfig) Middleware {
 }
 
 func isAdminPath(path string) bool {
-	return strings.HasPrefix(path, "/admin")
+	return strings.HasPrefix(path, "/admin") || strings.HasPrefix(path, "/api/v1/admin")
 }
 
 func validateToken(tokenString string, cfg JWTConfig) error {

@@ -41,6 +41,8 @@ type Store interface {
 	Save(ctx context.Context, in SaveInput) (FailedEvent, error)
 	GetByID(ctx context.Context, eventID string) (FailedEvent, error)
 	ListRecent(ctx context.Context, limit int) ([]FailedEvent, error)
+	Delete(ctx context.Context, eventID string) error
+	UpdateRetryCount(ctx context.Context, eventID string, retryCount int) error
 }
 
 type FileStore struct {
@@ -216,10 +218,147 @@ func (s *FileStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, e
 		return nil, fmt.Errorf("scan failed event store: %w", err)
 	}
 
+	events = deduplicateEvents(events)
+
 	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
 		events[i], events[j] = events[j], events[i]
 	}
 	return events, nil
+}
+
+func (s *FileStore) Delete(_ context.Context, eventID string) error {
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return errors.New("event id must not be empty")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	events, err := s.readAllLocked()
+	if err != nil {
+		return err
+	}
+
+	filtered := events[:0]
+	for _, e := range events {
+		if e.EventID != eventID {
+			filtered = append(filtered, e)
+		}
+	}
+
+	if len(filtered) == len(events) {
+		return ErrNotFound
+	}
+
+	return s.rewriteFileLocked(filtered)
+}
+
+func (s *FileStore) UpdateRetryCount(_ context.Context, eventID string, retryCount int) error {
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return errors.New("event id must not be empty")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	events, err := s.readAllLocked()
+	if err != nil {
+		return err
+	}
+
+	found := false
+	for i := range events {
+		if events[i].EventID == eventID {
+			events[i].RetryCount = retryCount
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return ErrNotFound
+	}
+
+	return s.rewriteFileLocked(events)
+}
+
+// readAllLocked reads all events from the file. Must be called while holding s.mu.
+func (s *FileStore) readAllLocked() ([]FailedEvent, error) {
+	f, err := os.Open(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open failed event store: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	var events []FailedEvent
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var event FailedEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan failed event store: %w", err)
+	}
+	return events, nil
+}
+
+// rewriteFileLocked atomically rewrites the file with the given events. Must be called while holding s.mu.
+func (s *FileStore) rewriteFileLocked(events []FailedEvent) error {
+	tmpPath := s.path + ".tmp"
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+
+	enc := json.NewEncoder(f)
+	for _, event := range events {
+		if err := enc.Encode(event); err != nil {
+			_ = f.Close()
+			_ = os.Remove(tmpPath)
+			return fmt.Errorf("encode event: %w", err)
+		}
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("sync temp file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, s.path); err != nil {
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+	return nil
+}
+
+func deduplicateEvents(events []FailedEvent) []FailedEvent {
+	seen := make(map[string]int, len(events))
+	result := make([]FailedEvent, 0, len(events))
+	for _, e := range events {
+		idx, ok := seen[e.EventID]
+		if ok {
+			result[idx] = e
+		} else {
+			seen[e.EventID] = len(result)
+			result = append(result, e)
+		}
+	}
+	return result
 }
 
 func hashBody(body []byte) string {

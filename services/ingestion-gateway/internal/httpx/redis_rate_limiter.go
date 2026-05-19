@@ -41,6 +41,14 @@ func (l *RedisRateLimiter) Allow(key string, limit int) bool {
 	return result.Allowed
 }
 
+var incrWithExpireScript = redis.NewScript(`
+	local count = redis.call('INCR', KEYS[1])
+	if count == 1 then
+		redis.call('EXPIRE', KEYS[1], ARGV[1])
+	end
+	return count
+`)
+
 func (l *RedisRateLimiter) AllowWithInfo(key string, limit int, now time.Time) RateLimitResult {
 	if limit <= 0 {
 		return RateLimitResult{Allowed: false, Limit: limit}
@@ -55,7 +63,7 @@ func (l *RedisRateLimiter) AllowWithInfo(key string, limit int, now time.Time) R
 	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
 	defer cancel()
 
-	count, err := l.client.Incr(ctx, redisKey).Result()
+	count, err := incrWithExpireScript.Run(ctx, l.client, []string{redisKey}, int64(l.window/time.Second)).Int()
 	if err != nil {
 		return RateLimitResult{
 			Allowed:   true,
@@ -64,16 +72,13 @@ func (l *RedisRateLimiter) AllowWithInfo(key string, limit int, now time.Time) R
 			Limit:     limit,
 		}
 	}
-	if count == 1 {
-		_ = l.client.Expire(ctx, redisKey, 2*l.window).Err()
-	}
 
 	remaining := limit - int(count)
 	if remaining < 0 {
 		remaining = 0
 	}
 	return RateLimitResult{
-		Allowed:   count <= int64(limit),
+		Allowed:   count <= limit,
 		Remaining: remaining,
 		ResetAt:   resetAt,
 		Limit:     limit,

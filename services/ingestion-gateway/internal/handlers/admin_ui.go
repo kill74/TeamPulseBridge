@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"html/template"
 	"net/http"
 )
@@ -108,16 +106,6 @@ var adminUITemplate = template.Must(template.New("admin_ui").Parse(`<!doctype ht
 `))
 
 func (h *AdminHandler) HandleAdminUI(w http.ResponseWriter, r *http.Request) {
-	csrfName, csrfValue := csrfTokenCookie()
-	http.SetCookie(w, &http.Cookie{
-		Name:     csrfName,
-		Value:    csrfValue,
-		Path:     "/admin",
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-		HttpOnly: false,
-	})
-
 	data := struct {
 		Version string
 	}{
@@ -127,14 +115,6 @@ func (h *AdminHandler) HandleAdminUI(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("admin ui template execution failed", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 	}
-}
-
-func csrfTokenCookie() (name, value string) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "__Host-CSRF-Token", "fallback"
-	}
-	return "__Host-CSRF-Token", hex.EncodeToString(b)
 }
 
 func (h *AdminHandler) AdminUIStyles(w http.ResponseWriter, _ *http.Request) {

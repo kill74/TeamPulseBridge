@@ -15,6 +15,10 @@ import (
 )
 
 func main() {
+	os.Exit(runDoctor())
+}
+
+func runDoctor() int {
 	report := &doctorReport{}
 
 	fmt.Println("== TeamPulseBridge Doctor ==")
@@ -23,7 +27,7 @@ func main() {
 	if err != nil {
 		report.failf("workspace: %v", err)
 		report.finish()
-		return
+		return 1
 	}
 
 	fmt.Println()
@@ -57,6 +61,7 @@ func main() {
 	report.checkCommonLocalPorts()
 
 	report.finish()
+	return 0
 }
 
 type doctorReport struct {
@@ -84,14 +89,12 @@ func (r *doctorReport) finish() {
 	fmt.Printf("  failures: %d\n", r.failures)
 	fmt.Printf("  warnings: %d\n", r.warnings)
 
-	if r.failures > 0 {
-		fmt.Println()
-		fmt.Println("Doctor found blocking issues.")
-		os.Exit(1)
-	}
-
 	fmt.Println()
-	fmt.Println("Doctor checks passed.")
+	if r.failures > 0 {
+		fmt.Println("Doctor found blocking issues.")
+	} else {
+		fmt.Println("Doctor checks passed.")
+	}
 }
 
 func (r *doctorReport) checkCommand(name, label string, required bool) bool {

@@ -73,6 +73,7 @@ type Config struct {
 	RateLimitBackend                  string
 	RateLimitRedisPrefix              string
 	PIIScrubbingEnabled               bool
+	LogLevel                          string
 	ChaosEnabled                      bool
 	ChaosErrorRate                    float64
 	ChaosLatencyRate                  float64
@@ -143,6 +144,7 @@ func LoadFromEnv() Config {
 		RateLimitBackend:                  envOrDefault("RATE_LIMIT_BACKEND", "memory"),
 		RateLimitRedisPrefix:              envOrDefault("RATE_LIMIT_REDIS_PREFIX", "rate_limit"),
 		PIIScrubbingEnabled:               boolOrDefault("PII_SCRUBBING_ENABLED", false),
+		LogLevel:                          envOrDefault("LOG_LEVEL", "info"),
 		ChaosEnabled:                      boolOrDefault("CHAOS_ENABLED", false),
 		ChaosErrorRate:                    floatOrDefault("CHAOS_ERROR_RATE", 0.0),
 		ChaosLatencyRate:                  floatOrDefault("CHAOS_LATENCY_RATE", 0.0),
@@ -182,14 +184,14 @@ func (c Config) Validate() error {
 		queueWorkers = 1
 	}
 	if queueWorkers < 1 || queueWorkers > 1024 {
-		return fmt.Errorf("QUEUE_WORKERS must be between 1 and 1024, got %d", c.QueueWorkers)
+		return fmt.Errorf("QUEUE_WORKERS must be between 1 and 1024, got %d", queueWorkers)
 	}
 	bulkheadBufferPerSource := c.QueueBulkheadBufferPerSource
 	if bulkheadBufferPerSource == 0 {
 		bulkheadBufferPerSource = 1024
 	}
 	if bulkheadBufferPerSource < 1 || bulkheadBufferPerSource > 1_000_000 {
-		return fmt.Errorf("QUEUE_BULKHEAD_BUFFER_PER_SOURCE must be between 1 and 1000000, got %d", c.QueueBulkheadBufferPerSource)
+		return fmt.Errorf("QUEUE_BULKHEAD_BUFFER_PER_SOURCE must be between 1 and 1000000, got %d", bulkheadBufferPerSource)
 	}
 	if c.RequestTimeoutSec <= 0 {
 		return fmt.Errorf("REQUEST_TIMEOUT_SEC must be > 0, got %d", c.RequestTimeoutSec)
@@ -363,6 +365,37 @@ func (c Config) Validate() error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required secrets: %s", strings.Join(missing, ", "))
+	}
+	if c.ChaosEnabled {
+		if c.ChaosErrorRate < 0 || c.ChaosErrorRate > 1 {
+			return fmt.Errorf("CHAOS_ERROR_RATE must be between 0.0 and 1.0, got %f", c.ChaosErrorRate)
+		}
+		if c.ChaosLatencyRate < 0 || c.ChaosLatencyRate > 1 {
+			return fmt.Errorf("CHAOS_LATENCY_RATE must be between 0.0 and 1.0, got %f", c.ChaosLatencyRate)
+		}
+		if c.ChaosLatencyMinMs < 0 {
+			return fmt.Errorf("CHAOS_LATENCY_MIN_MS must be >= 0, got %d", c.ChaosLatencyMinMs)
+		}
+		if c.ChaosLatencyMaxMs < 0 || c.ChaosLatencyMaxMs > 30000 {
+			return fmt.Errorf("CHAOS_LATENCY_MAX_MS must be between 0 and 30000, got %d", c.ChaosLatencyMaxMs)
+		}
+		if c.ChaosLatencyMinMs > c.ChaosLatencyMaxMs {
+			return fmt.Errorf(
+				"CHAOS_LATENCY_MIN_MS (%d) must be <= CHAOS_LATENCY_MAX_MS (%d)",
+				c.ChaosLatencyMinMs,
+				c.ChaosLatencyMaxMs,
+			)
+		}
+	}
+	if c.SourceRateLimitEnabled {
+		if c.SourceRateLimitDefault <= 0 || c.SourceRateLimitDefault > 1000000 {
+			return fmt.Errorf("SOURCE_RATE_LIMIT_DEFAULT must be between 1 and 1000000, got %d", c.SourceRateLimitDefault)
+		}
+		for src, limit := range c.SourceRateLimits {
+			if limit <= 0 || limit > 1000000 {
+				return fmt.Errorf("source rate limit for %q must be between 1 and 1000000, got %d", src, limit)
+			}
+		}
 	}
 	return nil
 }

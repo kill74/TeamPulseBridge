@@ -2,10 +2,11 @@ package httpx
 
 import (
 	"context"
-	"crypto/rand"
+	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"net"
 	"net/http"
 	"runtime/debug"
@@ -69,8 +70,6 @@ type IPRateLimiter struct {
 	windowS  int64
 	hits     uint64
 	cleanup  int
-	stop     chan struct{}
-	stopOnce sync.Once
 }
 
 func NewIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN int) *IPRateLimiter {
@@ -83,36 +82,16 @@ func NewIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN 
 	if cleanupEveryN <= 0 {
 		cleanupEveryN = 1024
 	}
-	l := &IPRateLimiter{
+	return &IPRateLimiter{
 		entries: make(map[string]rateWindow, 256),
 		now:     now,
 		window:  window,
 		windowS: int64(window / time.Second),
 		cleanup: cleanupEveryN,
-		stop:    make(chan struct{}),
-	}
-	go l.periodicCleanup()
-	return l
-}
-
-func (l *IPRateLimiter) Stop() {
-	l.stopOnce.Do(func() {
-		close(l.stop)
-	})
-}
-
-func (l *IPRateLimiter) periodicCleanup() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			l.CleanupStale()
-		case <-l.stop:
-			return
-		}
 	}
 }
+
+func (l *IPRateLimiter) Stop() {}
 
 func (l *IPRateLimiter) CleanupStale() {
 	now := l.now().Unix()
@@ -230,7 +209,7 @@ func RequestID() Middleware {
 			ctx := context.WithValue(r.Context(), requestIDKey, requestID)
 			w.Header().Set("X-Request-Id", requestID)
 
-			traceparent := strings.TrimSpace(r.Header.Get("Traceparent"))
+			traceparent := sanitizeLogValue(strings.TrimSpace(r.Header.Get("Traceparent")))
 			if traceparent == "" {
 				traceID := generateTraceID()
 				spanID := generateSpanID()
@@ -246,7 +225,7 @@ func RequestID() Middleware {
 
 func generateTraceID() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := crand.Read(b); err != nil {
 		return strings.Repeat("0", 32)
 	}
 	return hex.EncodeToString(b)
@@ -254,19 +233,18 @@ func generateTraceID() string {
 
 func generateSpanID() string {
 	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := crand.Read(b); err != nil {
 		return strings.Repeat("0", 16)
 	}
 	return hex.EncodeToString(b)
 }
 
 type ChaosConfig struct {
-	Enabled      bool
-	ErrorRate    float64 // 0.0 to 1.0
-	LatencyRate  float64 // 0.0 to 1.0
-	LatencyMin   time.Duration
-	LatencyMax   time.Duration
-	InternalCode int
+	Enabled     bool
+	ErrorRate   float64 // 0.0 to 1.0
+	LatencyRate float64 // 0.0 to 1.0
+	LatencyMin  time.Duration
+	LatencyMax  time.Duration
 }
 
 func Chaos(cfg ChaosConfig) Middleware {
@@ -276,36 +254,19 @@ func Chaos(cfg ChaosConfig) Middleware {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Randomness for chaos
-			randVal := func() float64 {
-				b := make([]byte, 8)
-				if _, err := rand.Read(b); err != nil {
-					return 0
-				}
-				var val uint64
-				for i := 0; i < 8; i++ {
-					val = (val << 8) | uint64(b[i])
-				}
-				return float64(val) / float64(^uint64(0))
-			}
-
 			// Inject Latency
-			if cfg.LatencyRate > 0 && randVal() < cfg.LatencyRate {
+			if cfg.LatencyRate > 0 && mathrand.Float64() < cfg.LatencyRate {
 				delay := cfg.LatencyMin
 				if cfg.LatencyMax > cfg.LatencyMin {
 					diff := cfg.LatencyMax - cfg.LatencyMin
-					delay += time.Duration(randVal() * float64(diff))
+					delay += time.Duration(mathrand.Float64() * float64(diff))
 				}
 				time.Sleep(delay)
 			}
 
 			// Inject Errors
-			if cfg.ErrorRate > 0 && randVal() < cfg.ErrorRate {
-				code := cfg.InternalCode
-				if code == 0 {
-					code = http.StatusInternalServerError
-				}
-				http.Error(w, "chaos: injected failure", code)
+			if cfg.ErrorRate > 0 && mathrand.Float64() < cfg.ErrorRate {
+				http.Error(w, "chaos: injected failure", http.StatusInternalServerError)
 				return
 			}
 

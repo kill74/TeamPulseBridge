@@ -24,6 +24,7 @@ type PubSubPublisher struct {
 	topicName      string
 	logger         *slog.Logger
 	publishTimeout time.Duration
+	transport      *http.Transport
 	closeOnce      sync.Once
 }
 
@@ -87,6 +88,7 @@ func NewPubSubPublisher(ctx context.Context, projectID, topicID string, logger *
 	topic := client.Publisher(topicID)
 	p := &PubSubPublisher{
 		client:         client,
+		transport:      transport,
 		topic:          topic,
 		topicName:      topicName,
 		logger:         logger,
@@ -149,6 +151,9 @@ func (p *PubSubPublisher) Close() error {
 		p.topic.Stop()
 		if err := p.client.Close(); err != nil {
 			closeErr = fmt.Errorf("close pubsub client: %w", err)
+		}
+		if p.transport != nil {
+			p.transport.CloseIdleConnections()
 		}
 	})
 	return closeErr

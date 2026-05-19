@@ -66,7 +66,7 @@ func (p *TransformingPublisher) SourceSnapshots() map[string]PublisherSnapshot {
 
 var (
 	emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
-	tokenRegex = regexp.MustCompile(`(?i)(["']?(?:bearer|token|secret|password|key)["']?)(\s*[=:]\s*|\s+)(["']?)[a-zA-Z0-9\-_.~%]+(["']?)`)
+	tokenRegex = regexp.MustCompile(`(?i)(["']?(?:bearer|token|secret|password|key)["']?)([=:]\s*|\s+)(["']?)[a-zA-Z0-9\-_.~%]+(["']?)`)
 )
 
 func ScrubEmails(body []byte) []byte {

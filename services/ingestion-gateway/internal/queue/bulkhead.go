@@ -89,13 +89,13 @@ func (b *BulkheadPublisher) Publish(ctx context.Context, source string, body []b
 	err := sp.queue.Publish(ctx, source, body, headers)
 	if err != nil {
 		if b.options.Hooks.OnPublish != nil {
-			b.options.Hooks.OnPublish(ctx, source, "failed", sp.queue.Snapshot())
+			b.options.Hooks.OnPublish(safeContext(ctx), source, "failed", sp.queue.Snapshot())
 		}
 		return err
 	}
 
 	if b.options.Hooks.OnPublish != nil {
-		b.options.Hooks.OnPublish(ctx, source, "queued", sp.queue.Snapshot())
+		b.options.Hooks.OnPublish(safeContext(ctx), source, "queued", sp.queue.Snapshot())
 	}
 	return nil
 }

@@ -46,7 +46,7 @@ func (m *Memory) cleanupExpired() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for k, ts := range m.seen {
-		if ts.Before(now) || ts.Equal(now) {
+		if !ts.After(now) {
 			delete(m.seen, k)
 		}
 	}

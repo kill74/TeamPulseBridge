@@ -43,12 +43,14 @@ func (p *blockingPublisher) HealthCheck(_ context.Context) error {
 }
 
 type contextCapturePublisher struct {
-	started chan struct{}
-	release chan struct{}
-	ctxErr  error
+	started    chan struct{}
+	release    chan struct{}
+	ctxErr     error
+	publishCtx context.Context
 }
 
 func (p *contextCapturePublisher) Publish(ctx context.Context, _ string, _ []byte, _ map[string]string) error {
+	p.publishCtx = ctx
 	close(p.started)
 	<-p.release
 	p.ctxErr = ctx.Err()
@@ -160,20 +162,25 @@ func TestAsyncPublisherClonesQueuedPayloads(t *testing.T) {
 	assert.Equal(t, map[string]string{"X-Test": "original"}, inner.headers)
 }
 
-func TestAsyncPublisherPropagatesRequestContextWithTimeout(t *testing.T) {
+func TestAsyncPublisherPropagatesDeadlineFromRequestContext(t *testing.T) {
 	inner := &contextCapturePublisher{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
 	}
 	p := NewAsyncPublisherWithOptions(inner, 1, nil, AsyncPublisherOptions{WorkerCount: 1})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	deadline := time.Now().Add(30 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
 	require.NoError(t, p.Publish(ctx, "github", []byte(`{}`), nil))
 	<-inner.started
-	cancel()
 	close(inner.release)
 	require.NoError(t, p.Close())
-	assert.ErrorIs(t, inner.ctxErr, context.Canceled)
+
+	// The deadline from the caller's context should be preserved
+	innerCtxDeadline, ok := inner.publishCtx.Deadline()
+	assert.True(t, ok, "inner publisher should have a deadline")
+	assert.WithinDuration(t, deadline, innerCtxDeadline, time.Second)
 }
 
 func TestAsyncPublisherProcessesEventsWithMultipleWorkers(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -146,10 +147,6 @@ func (b *HandlerBuilder) Build(publicMux http.Handler, durationHistogram metric.
 			Secret:   b.cfg.AdminJWTSecret,
 			OnReject: b.securityFn,
 		}),
-		httpx.RequireCSRF(httpx.CSRFConfig{
-			Enabled:  b.cfg.AdminAuthEnabled,
-			OnReject: b.securityFn,
-		}),
 		httpx.Recoverer(b.logger.Logger),
 		httpx.AccessLog(b.logger.Logger, durationHistogram),
 		observability.HTTPMiddleware("ingestion-gateway"),
@@ -163,11 +160,15 @@ func (b *HandlerBuilder) Stop() {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	cfg := config.LoadFromEnv()
 	if err := cfg.Validate(); err != nil {
 		logger := observability.NewLogger("ingestion-gateway", "unknown", buildVersion)
 		logger.Error("invalid configuration", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	logger := observability.NewLogger("ingestion-gateway", cfg.Environment, buildVersion)
@@ -176,9 +177,12 @@ func main() {
 	telemetry, err := observability.Setup(ctx, logger.Logger, "ingestion-gateway")
 	if err != nil {
 		logger.Error("telemetry setup failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() {
+		if telemetry == nil {
+			return
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if shutdownErr := telemetry.Shutdown(shutdownCtx); shutdownErr != nil {
@@ -186,8 +190,118 @@ func main() {
 		}
 	}()
 
-	var failedStore failstore.Store
-	var deduper dedup.Store
+	dedupTTL := time.Duration(cfg.DedupTTLSeconds) * time.Second
+	if dedupTTL <= 0 {
+		dedupTTL = 5 * time.Minute
+	}
+
+	var (
+		failedStore         failstore.Store
+		deduper             dedup.Store
+		redisClient         *redis.Client
+		pgPool              *pgxpool.Pool
+		replayAuditStore    replayaudit.Store
+		securityAuditStore  securityaudit.Store
+	)
+
+	if cfg.RedisAddr != "" {
+		redisClient = redis.NewClient(&redis.Options{
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
+			DB:       cfg.RedisDB,
+		})
+		deduper = dedup.NewRedis(cfg.DedupEnabled, redisClient, cfg.DedupRedisPrefix, dedupTTL)
+		logger.Info("using redis for deduplication", "addr", cfg.RedisAddr)
+		if err := telemetry.BindRedisPoolMetrics("ingestion-gateway", redisClient); err != nil {
+			logger.Error("redis pool metrics binding failed", "error", err)
+		}
+	} else {
+		deduper = dedup.NewMemory(cfg.DedupEnabled, dedupTTL)
+		logger.Info("using in-memory deduplication (single-instance only)")
+	}
+
+	if cfg.DatabaseURL != "" {
+		pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+		if err != nil {
+			logger.Error("failed to connect to postgres database", "error", redactDSN(err.Error()))
+			return 1
+		}
+		defer pool.Close()
+		pgPool = pool
+		logger.Info("connected to postgres database")
+	}
+
+	if cfg.FailedStoreEnabled {
+		var store failstore.Store
+		if pgPool != nil {
+			var err error
+			store, err = failstore.NewPostgresStore(pgPool)
+			if err != nil {
+				logger.Error("failed event store disabled due to database error", "error", err)
+			}
+		} else {
+			var err error
+			store, err = failstore.NewFileStore(cfg.FailedStorePath)
+			if err != nil {
+				logger.Error("failed event store disabled due to invalid configuration",
+					"path", cfg.FailedStorePath,
+					"error", err,
+				)
+			}
+		}
+
+		if store != nil {
+			breaker := resilience.NewCircuitBreaker(5, 30*time.Second)
+			failedStore = failstore.NewCircuitBreakerStore(store, breaker, logger.Logger)
+		}
+	}
+
+	if cfg.ReplayAuditEnabled {
+		var store replayaudit.Store
+		if pgPool != nil {
+			var err error
+			store, err = replayaudit.NewPostgresStore(pgPool)
+			if err != nil {
+				logger.Error("replay audit store disabled due to database error", "error", err)
+			}
+		} else {
+			var err error
+			store, err = replayaudit.NewFileStore(cfg.ReplayAuditPath)
+			if err != nil {
+				logger.Error("replay audit history disabled due to invalid configuration",
+					"path", cfg.ReplayAuditPath,
+					"error", err,
+				)
+			}
+		}
+		if store != nil {
+			replayAuditStore = store
+		}
+	}
+
+	if cfg.SecurityAuditEnabled {
+		var store securityaudit.Store
+		if pgPool != nil {
+			var err error
+			store, err = securityaudit.NewPostgresStore(pgPool)
+			if err != nil {
+				logger.Error("security audit store disabled due to database error", "error", err)
+			}
+		} else {
+			var err error
+			store, err = securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)
+			if err != nil {
+				logger.Error("security audit stream disabled due to invalid configuration",
+					"path", cfg.SecurityAuditPath,
+					"retention_days", cfg.SecurityAuditRetentionDays,
+					"error", err,
+				)
+			}
+		}
+		if store != nil {
+			securityAuditStore = store
+		}
+	}
 
 	runtimePublisher, err := queue.BuildRuntimePublisher(ctx, cfg, logger.Logger, queue.AsyncPublisherOptions{
 		Hooks: queue.AsyncPublisherHooks{
@@ -250,7 +364,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("publisher initialization failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() {
 		if closeErr := runtimePublisher.Close(); closeErr != nil {
@@ -259,115 +373,7 @@ func main() {
 	}()
 	if err := telemetry.BindQueueMetrics("ingestion-gateway", runtimePublisher); err != nil {
 		logger.Error("queue telemetry binding failed", "error", err)
-		os.Exit(1)
-	}
-
-	dedupTTL := time.Duration(cfg.DedupTTLSeconds) * time.Second
-	if dedupTTL <= 0 {
-		dedupTTL = 5 * time.Minute
-	}
-
-	var redisClient *redis.Client
-	if cfg.RedisAddr != "" {
-		redisClient = redis.NewClient(&redis.Options{
-			Addr:     cfg.RedisAddr,
-			Password: cfg.RedisPassword,
-			DB:       cfg.RedisDB,
-		})
-		deduper = dedup.NewRedis(cfg.DedupEnabled, redisClient, cfg.DedupRedisPrefix, dedupTTL)
-		logger.Info("using redis for deduplication", "addr", cfg.RedisAddr)
-		if err := telemetry.BindRedisPoolMetrics("ingestion-gateway", redisClient); err != nil {
-			logger.Error("redis pool metrics binding failed", "error", err)
-		}
-	} else {
-		deduper = dedup.NewMemory(cfg.DedupEnabled, dedupTTL)
-		logger.Info("using in-memory deduplication (single-instance only)")
-	}
-
-	var pgPool *pgxpool.Pool
-	if cfg.DatabaseURL != "" {
-		pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
-		if err != nil {
-			logger.Error("failed to connect to postgres database", "error", redactDSN(err.Error()))
-			os.Exit(1)
-		}
-		defer pool.Close()
-		pgPool = pool
-		logger.Info("connected to postgres database")
-	}
-
-	if cfg.FailedStoreEnabled {
-		var store failstore.Store
-		if pgPool != nil {
-			var err error
-			store, err = failstore.NewPostgresStore(pgPool)
-			if err != nil {
-				logger.Error("failed event store disabled due to database error", "error", err)
-			}
-		} else {
-			var err error
-			store, err = failstore.NewFileStore(cfg.FailedStorePath)
-			if err != nil {
-				logger.Error("failed event store disabled due to invalid configuration",
-					"path", cfg.FailedStorePath,
-					"error", err,
-				)
-			}
-		}
-
-		if store != nil {
-			breaker := resilience.NewCircuitBreaker(5, 30*time.Second)
-			failedStore = failstore.NewCircuitBreakerStore(store, breaker, logger.Logger)
-		}
-	}
-
-	var replayAuditStore replayaudit.Store
-	if cfg.ReplayAuditEnabled {
-		var store replayaudit.Store
-		if pgPool != nil {
-			var err error
-			store, err = replayaudit.NewPostgresStore(pgPool)
-			if err != nil {
-				logger.Error("replay audit store disabled due to database error", "error", err)
-			}
-		} else {
-			var err error
-			store, err = replayaudit.NewFileStore(cfg.ReplayAuditPath)
-			if err != nil {
-				logger.Error("replay audit history disabled due to invalid configuration",
-					"path", cfg.ReplayAuditPath,
-					"error", err,
-				)
-			}
-		}
-		if store != nil {
-			replayAuditStore = store
-		}
-	}
-
-	var securityAuditStore securityaudit.Store
-	if cfg.SecurityAuditEnabled {
-		var store securityaudit.Store
-		if pgPool != nil {
-			var err error
-			store, err = securityaudit.NewPostgresStore(pgPool)
-			if err != nil {
-				logger.Error("security audit store disabled due to database error", "error", err)
-			}
-		} else {
-			var err error
-			store, err = securityaudit.NewFileStore(cfg.SecurityAuditPath, cfg.SecurityAuditRetentionDays)
-			if err != nil {
-				logger.Error("security audit stream disabled due to invalid configuration",
-					"path", cfg.SecurityAuditPath,
-					"retention_days", cfg.SecurityAuditRetentionDays,
-					"error", err,
-				)
-			}
-		}
-		if store != nil {
-			securityAuditStore = store
-		}
+		return 1
 	}
 
 	if config.IsNonProdEnvironment(cfg.Environment) && pgPool == nil && (cfg.FailedStoreEnabled || cfg.ReplayAuditEnabled || cfg.SecurityAuditEnabled) {
@@ -564,8 +570,16 @@ func main() {
 	var requestLimiter httpx.RateLimiter
 	var stopRequestLimiter func()
 	if cfg.RateLimitBackend == "redis" {
-		requestLimiter = httpx.NewRedisRateLimiter(redisClient, cfg.RateLimitRedisPrefix, time.Minute)
-		logger.Info("using redis-backed request rate limiting", "addr", cfg.RedisAddr, "prefix", cfg.RateLimitRedisPrefix)
+		if redisClient == nil {
+			logger.Error("redis client not initialized but RATE_LIMIT_BACKEND=redis; falling back to in-memory rate limiting")
+			memoryLimiter := httpx.NewIPRateLimiter(nil, time.Minute, 1024)
+			requestLimiter = memoryLimiter
+			stopRequestLimiter = memoryLimiter.Stop
+			logger.Warn("using in-memory request rate limiting (redis client was nil)")
+		} else {
+			requestLimiter = httpx.NewRedisRateLimiter(redisClient, cfg.RateLimitRedisPrefix, time.Minute)
+			logger.Info("using redis-backed request rate limiting", "addr", cfg.RedisAddr, "prefix", cfg.RateLimitRedisPrefix)
+		}
 	} else {
 		memoryLimiter := httpx.NewIPRateLimiter(nil, time.Minute, 1024)
 		requestLimiter = memoryLimiter
@@ -579,9 +593,8 @@ func main() {
 		watcher, err := config.NewWatcher(cfg, logger.Logger, func(newCfg config.Config) {
 			logger.Info("config file changed, applying hot-reloadable settings", "path", configFile)
 
-			// Hot-reload log level
-			newLevel := observability.ParseLevel(os.Getenv("LOG_LEVEL"))
-			// Note: We might want to prefer the level from the config file if defined there
+			// Hot-reload log level from the freshly loaded config
+			newLevel := observability.ParseLevel(newCfg.LogLevel)
 			logger.SetLevel(newLevel)
 			logger.Info("log level updated", "level", newLevel.String())
 		})
@@ -657,6 +670,7 @@ func main() {
 			logger.Error("redis client close failed", "error", closeErr)
 		}
 	}
+	return 0
 }
 
 func securitySourceFromPath(path string) string {
@@ -697,6 +711,9 @@ func redactDSN(s string) string {
 		if atIdx := strings.Index(rest, "@"); atIdx != -1 {
 			return proto + "[REDACTED]@" + rest[atIdx+1:]
 		}
+	}
+	if strings.Contains(s, "password=") {
+		s = regexp.MustCompile(`password=[^\s\'"]+`).ReplaceAllString(s, "password=[REDACTED]")
 	}
 	return s
 }

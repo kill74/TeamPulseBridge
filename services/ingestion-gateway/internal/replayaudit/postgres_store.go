@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -115,19 +116,31 @@ func (s *PostgresStore) List(ctx context.Context, q ListQuery) (ListResult, erro
 		paramID++
 	}
 
-	// Just for simplicity we'll ignore Cursor in this phase, as cursor pagination in postgres is typically done via order by columns.
-	// But let's do a simple OFFSET if Cursor is an int.
-	// We'll skip passing the cursor query part for now as it needs a specific implementation and the goal is to provide Phase 2.1 implementation.
-
-	if q.Sort == SortAsc {
-		query += ` ORDER BY replayed_at ASC`
-	} else {
-		query += ` ORDER BY replayed_at DESC`
+	if q.Cursor != "" {
+		cursorParts := strings.SplitN(q.Cursor, "|", 2)
+		if len(cursorParts) == 2 {
+			cursorTime, err := time.Parse(time.RFC3339Nano, cursorParts[0])
+			if err == nil {
+				if q.Sort == SortAsc {
+					query += fmt.Sprintf(" AND (replayed_at, audit_id) > ($%d, $%d)", paramID, paramID+1)
+				} else {
+					query += fmt.Sprintf(" AND (replayed_at, audit_id) < ($%d, $%d)", paramID, paramID+1)
+				}
+				args = append(args, cursorTime, cursorParts[1])
+				paramID += 2
+			}
+		}
 	}
 
-	// Requesting an extra row to check if there are more
+	if q.Sort == SortAsc {
+		query += ` ORDER BY replayed_at ASC, audit_id ASC`
+	} else {
+		query += ` ORDER BY replayed_at DESC, audit_id DESC`
+	}
+
 	query += fmt.Sprintf(" LIMIT $%d", paramID)
 	args = append(args, q.Limit+1)
+	paramID++
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -159,15 +172,20 @@ func (s *PostgresStore) List(ctx context.Context, q ListQuery) (ListResult, erro
 		return ListResult{}, fmt.Errorf("rows error: %w", err)
 	}
 
+	var nextCursor string
 	hasMore := false
 	if len(records) > q.Limit {
 		hasMore = true
 		records = records[:q.Limit]
 	}
+	if hasMore && len(records) > 0 {
+		last := records[len(records)-1]
+		nextCursor = last.ReplayedAt.Format(time.RFC3339Nano) + "|" + last.AuditID
+	}
 
 	return ListResult{
-		Records: records,
-		HasMore: hasMore,
-		// NextCursor not perfectly replicated for offset, but sufficient for skeleton
+		Records:    records,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
 	}, nil
 }

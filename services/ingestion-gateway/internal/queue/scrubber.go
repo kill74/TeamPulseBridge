@@ -12,7 +12,12 @@ type StructuralScrubber struct {
 
 func NewStructuralScrubber(fields ...string) *StructuralScrubber {
 	if len(fields) == 0 {
-		fields = []string{"email", "password", "token", "secret", "key", "authorization"}
+		fields = []string{
+			"email", "password", "token", "secret", "key", "authorization",
+			"api_key", "api-key", "apikey", "access_token", "access-token",
+			"client_secret", "client-secret", "auth_token", "auth-token",
+			"private_key", "private-key", "bearer", "credential",
+		}
 	}
 	return &StructuralScrubber{SensitiveFields: fields}
 }
@@ -53,7 +58,7 @@ func (s *StructuralScrubber) scrubRecursive(v any) {
 func (s *StructuralScrubber) isSensitive(key string) bool {
 	lower := strings.ToLower(key)
 	for _, f := range s.SensitiveFields {
-		if strings.Contains(lower, f) {
+		if lower == f {
 			return true
 		}
 	}

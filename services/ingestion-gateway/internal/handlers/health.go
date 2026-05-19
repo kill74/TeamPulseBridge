@@ -137,6 +137,13 @@ func (h *HealthChecker) Readyz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.redisClient != nil {
+		if err := h.redisClient.Ping(checkCtx); err != nil {
+			writeReadyzError(w, "redis health check failed: "+err.Error())
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{
