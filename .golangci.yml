@@ -38,7 +38,6 @@ linters:
         - fieldalignment
       enable-all: true
     revive:
-      default-severity: warning
       rules:
         - name: exported
           disabled: true
@@ -124,11 +123,6 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  severity: error
-  exclude-rules:
-    - severity: warning
-      linters:
-        - revive
 formatters:
   exclusions:
     generated: lax
