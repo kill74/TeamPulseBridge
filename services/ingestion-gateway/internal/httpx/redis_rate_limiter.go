@@ -73,7 +73,7 @@ func (l *RedisRateLimiter) AllowWithInfo(key string, limit int, now time.Time) R
 		}
 	}
 
-	remaining := limit - int(count)
+	remaining := limit - count
 	if remaining < 0 {
 		remaining = 0
 	}

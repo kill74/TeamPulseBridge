@@ -140,7 +140,6 @@ func (s *PostgresStore) List(ctx context.Context, q ListQuery) (ListResult, erro
 
 	query += fmt.Sprintf(" LIMIT $%d", paramID)
 	args = append(args, q.Limit+1)
-	paramID++
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {

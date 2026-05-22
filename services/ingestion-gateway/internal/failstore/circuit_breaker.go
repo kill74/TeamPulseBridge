@@ -33,11 +33,19 @@ func (s *CircuitBreakerStore) Save(ctx context.Context, in SaveInput) (FailedEve
 }
 
 func (s *CircuitBreakerStore) GetByID(ctx context.Context, eventID string) (FailedEvent, error) {
-	return s.wrapped.GetByID(ctx, eventID)
+	event, err := s.wrapped.GetByID(ctx, eventID)
+	if err != nil {
+		return FailedEvent{}, fmt.Errorf("circuit breaker get by id: %w", err)
+	}
+	return event, nil
 }
 
 func (s *CircuitBreakerStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, error) {
-	return s.wrapped.ListRecent(ctx, limit)
+	events, err := s.wrapped.ListRecent(ctx, limit)
+	if err != nil {
+		return nil, fmt.Errorf("circuit breaker list recent: %w", err)
+	}
+	return events, nil
 }
 
 func (s *CircuitBreakerStore) Delete(ctx context.Context, eventID string) error {
