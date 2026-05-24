@@ -40,6 +40,9 @@ bin/
 *.test
 *.prof
 *.cover
+cov
+coverage
+handlers
 coverage.out
 coverage.txt
 cover.out
