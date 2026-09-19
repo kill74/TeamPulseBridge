@@ -62,11 +62,12 @@ func (d *deferredHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type HandlerBuilder struct {
-	logger      *observability.Logger
-	cfg         *config.Config
-	securityFn  func(req *http.Request, reason string, status int)
-	limiter     httpx.RateLimiter
-	stopLimiter func()
+	logger       *observability.Logger
+	cfg          *config.Config
+	securityFn   func(req *http.Request, reason string, status int)
+	limiter      httpx.RateLimiter
+	stopLimiter  func()
+	combinedGate *httpx.CombinedGate
 }
 
 func NewHandlerBuilder(logger *observability.Logger, cfg *config.Config, securityFn func(req *http.Request, reason string, status int)) *HandlerBuilder {
@@ -95,10 +96,105 @@ func NewHandlerBuilderWithLimiter(
 	}
 }
 
+// WithCombinedGate enables single-RTT rate-limit+dedup (opt-in via RATE_LIMIT_COMBINED=true).
+func (b *HandlerBuilder) WithCombinedGate(gate *httpx.CombinedGate) *HandlerBuilder {
+	b.combinedGate = gate
+	return b
+}
+
+// headerOnlyEventID extracts stable IDs without reading the body, so the combined
+// gate can reserve dedup in 1 RTT. Body-derived IDs (slack/teams) fall back to
+// handler-level dedup.
+func headerOnlyEventID(r *http.Request, source string) string {
+	switch source {
+	case "github":
+		return strings.TrimSpace(r.Header.Get("X-GitHub-Delivery"))
+	case "gitlab":
+		for _, k := range []string{"X-Gitlab-Event-UUID", "X-Gitlab-Webhook-UUID", "X-Request-Id"} {
+			if v := strings.TrimSpace(r.Header.Get(k)); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
 func (b *HandlerBuilder) Build(publicMux http.Handler, durationHistogram metric.Float64Histogram) http.Handler {
 	timeoutSec := time.Duration(b.cfg.RequestTimeoutSec) * time.Second
+	maxInflight := b.cfg.HTTPMaxInflight
+	if maxInflight <= 0 {
+		maxInflight = 512
+	}
+	retryAfter := b.cfg.QueueThrottleRetryAfterSec
+	if retryAfter < 1 {
+		retryAfter = 2
+	}
+	// Correct order: Recoverer outermost (catches panics in all layers),
+	// then RequestID/OTEL (span covers rate-limit/JWT cost), then AccessLog,
+	// then Timeout/RateLimit/Auth innermost. Probes bypass expensive layers
+	// via IsProbePath checks inside each middleware.
+	//
+	// When RATE_LIMIT_COMBINED=true and a Redis gate is present, the two
+	// separate rate-limit middlewares are replaced by a single 1-RTT Lua
+	// (general + source + dedup). Otherwise the classic 3-RTT path is kept
+	// for backward compatibility.
+	useCombined := b.cfg.RateLimitCombined && b.combinedGate != nil
+	rateLimitMw := httpx.RateLimit(httpx.RateLimitConfig{
+		Enabled:           b.cfg.RateLimitEnabled && !useCombined,
+		General:           b.cfg.RateLimitRPM,
+		Admin:             b.cfg.AdminRateLimitRPM,
+		TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
+		OnReject:          b.securityFn,
+		Limiter:           b.limiter,
+	})
+	sourceLimitMw := httpx.SourceRateLimit(httpx.SourceRateLimitConfig{
+		Enabled:           b.cfg.SourceRateLimitEnabled && !useCombined,
+		Sources:           b.cfg.SourceRateLimits,
+		Default:           b.cfg.SourceRateLimitDefault,
+		TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
+		Limiter:           b.limiter,
+		OnReject: func(r *http.Request, source string, status int) {
+			b.securityFn(r, "source_rate_limit_exceeded:"+source, status)
+		},
+	})
+	combinedMw := httpx.RateLimitAndDedupCombined(b.combinedGate, httpx.CombinedGateConfig{
+		Enabled:           useCombined,
+		General:           b.cfg.RateLimitRPM,
+		Admin:             b.cfg.AdminRateLimitRPM,
+		Sources:           b.cfg.SourceRateLimits,
+		SourceDefault:     b.cfg.SourceRateLimitDefault,
+		TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
+		DedupEnabled:      b.cfg.DedupEnabled,
+		OnReject:          b.securityFn,
+		OnDuplicate: func(r *http.Request, source, eventID string) {
+			b.securityFn(r, "duplicate_short_circuit:"+source, http.StatusAccepted)
+		},
+		EventIDFromRequest: headerOnlyEventID,
+	})
 	return httpx.Chain(
 		publicMux,
+		httpx.Recoverer(b.logger.Logger),
+		httpx.RequestID(),
+		observability.HTTPMiddleware("ingestion-gateway"),
+		httpx.AccessLog(b.logger.Logger, durationHistogram),
+		httpx.MaxInflight(maxInflight, retryAfter),
+		httpx.RequestTimeout(timeoutSec),
+		combinedMw,
+		rateLimitMw,
+		sourceLimitMw,
+		httpx.RequireAdminCIDRAllowlist(httpx.AdminCIDRConfig{
+			Enabled:           b.cfg.AdminAuthEnabled,
+			CIDRs:             b.cfg.AdminAllowCIDRs,
+			TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
+			OnReject:          b.securityFn,
+		}),
+		httpx.RequireAdminJWT(httpx.JWTConfig{
+			Enabled:  b.cfg.AdminAuthEnabled,
+			Issuer:   b.cfg.AdminJWTIssuer,
+			Audience: b.cfg.AdminJWTAudience,
+			Secret:   b.cfg.AdminJWTSecret,
+			OnReject: b.securityFn,
+		}),
 		httpx.APIVersionMiddleware(httpx.APIVersionConfig{
 			Enabled:    true,
 			Version:    httpx.CurrentAPIVersion,
@@ -114,42 +210,6 @@ func (b *HandlerBuilder) Build(publicMux http.Handler, durationHistogram metric.
 			LatencyMin:  time.Duration(b.cfg.ChaosLatencyMinMs) * time.Millisecond,
 			LatencyMax:  time.Duration(b.cfg.ChaosLatencyMaxMs) * time.Millisecond,
 		}),
-		httpx.RequestTimeout(timeoutSec),
-		httpx.RequestID(),
-		httpx.RateLimit(httpx.RateLimitConfig{
-			Enabled:           b.cfg.RateLimitEnabled,
-			General:           b.cfg.RateLimitRPM,
-			Admin:             b.cfg.AdminRateLimitRPM,
-			TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
-			OnReject:          b.securityFn,
-			Limiter:           b.limiter,
-		}),
-		httpx.SourceRateLimit(httpx.SourceRateLimitConfig{
-			Enabled:           b.cfg.SourceRateLimitEnabled,
-			Sources:           b.cfg.SourceRateLimits,
-			Default:           b.cfg.SourceRateLimitDefault,
-			TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
-			Limiter:           b.limiter,
-			OnReject: func(r *http.Request, source string, status int) {
-				b.securityFn(r, "source_rate_limit_exceeded:"+source, status)
-			},
-		}),
-		httpx.RequireAdminCIDRAllowlist(httpx.AdminCIDRConfig{
-			Enabled:           b.cfg.AdminAuthEnabled,
-			CIDRs:             b.cfg.AdminAllowCIDRs,
-			TrustedProxyCIDRs: b.cfg.TrustedProxyCIDRs,
-			OnReject:          b.securityFn,
-		}),
-		httpx.RequireAdminJWT(httpx.JWTConfig{
-			Enabled:  b.cfg.AdminAuthEnabled,
-			Issuer:   b.cfg.AdminJWTIssuer,
-			Audience: b.cfg.AdminJWTAudience,
-			Secret:   b.cfg.AdminJWTSecret,
-			OnReject: b.securityFn,
-		}),
-		httpx.Recoverer(b.logger.Logger),
-		httpx.AccessLog(b.logger.Logger, durationHistogram),
-		observability.HTTPMiddleware("ingestion-gateway"),
 	)
 }
 
@@ -196,23 +256,67 @@ func run() int {
 	}
 
 	var (
-		failedStore         failstore.Store
-		deduper             dedup.Store
-		redisClient         *redis.Client
-		pgPool              *pgxpool.Pool
-		replayAuditStore    replayaudit.Store
-		securityAuditStore  securityaudit.Store
+		failedStore        failstore.Store
+		deduper            dedup.Store
+		redisClient        redis.UniversalClient
+		redisSingle        *redis.Client
+		pgPool             *pgxpool.Pool
+		replayAuditStore   replayaudit.Store
+		securityAuditStore securityaudit.Store
 	)
 
-	if cfg.RedisAddr != "" {
-		redisClient = redis.NewClient(&redis.Options{
-			Addr:     cfg.RedisAddr,
-			Password: cfg.RedisPassword,
-			DB:       cfg.RedisDB,
+	if len(cfg.RedisClusterAddrs) > 0 {
+		poolSize := cfg.RedisPoolSize
+		if poolSize <= 0 {
+			poolSize = 32
+		}
+		ioTimeoutMs := cfg.RedisIOTimeoutMs
+		if ioTimeoutMs <= 0 {
+			ioTimeoutMs = 100
+		}
+		cluster := redis.NewClusterClient(&redis.ClusterOptions{
+			Addrs:        cfg.RedisClusterAddrs,
+			Password:     cfg.RedisPassword,
+			PoolSize:     poolSize,
+			DialTimeout:  2 * time.Second,
+			ReadTimeout:  time.Duration(ioTimeoutMs) * time.Millisecond,
+			WriteTimeout: time.Duration(ioTimeoutMs) * time.Millisecond,
+			MaxRetries:   0,
 		})
+		redisClient = cluster
 		deduper = dedup.NewRedis(cfg.DedupEnabled, redisClient, cfg.DedupRedisPrefix, dedupTTL)
-		logger.Info("using redis for deduplication", "addr", cfg.RedisAddr)
-		if err := telemetry.BindRedisPoolMetrics("ingestion-gateway", redisClient); err != nil {
+		logger.Info("using redis cluster for deduplication",
+			"addrs", cfg.RedisClusterAddrs, "pool_size", poolSize)
+	} else if cfg.RedisAddr != "" {
+		poolSize := cfg.RedisPoolSize
+		if poolSize <= 0 {
+			poolSize = 32
+		}
+		minIdle := cfg.RedisMinIdleConns
+		if minIdle <= 0 {
+			minIdle = poolSize / 4
+		}
+		ioTimeoutMs := cfg.RedisIOTimeoutMs
+		if ioTimeoutMs <= 0 {
+			ioTimeoutMs = 100
+		}
+		redisSingle = redis.NewClient(&redis.Options{
+			Addr:         cfg.RedisAddr,
+			Password:     cfg.RedisPassword,
+			DB:           cfg.RedisDB,
+			PoolSize:     poolSize,
+			MinIdleConns: minIdle,
+			DialTimeout:  2 * time.Second,
+			ReadTimeout:  time.Duration(ioTimeoutMs) * time.Millisecond,
+			WriteTimeout: time.Duration(ioTimeoutMs) * time.Millisecond,
+			// Fail fast in the hot path; dedup/rate-limit are fail-open.
+			MaxRetries: 0,
+		})
+		redisClient = redisSingle
+		deduper = dedup.NewRedis(cfg.DedupEnabled, redisClient, cfg.DedupRedisPrefix, dedupTTL)
+		logger.Info("using redis for deduplication",
+			"addr", cfg.RedisAddr, "pool_size", poolSize, "min_idle", minIdle)
+		if err := telemetry.BindRedisPoolMetrics("ingestion-gateway", redisSingle); err != nil {
 			logger.Error("redis pool metrics binding failed", "error", err)
 		}
 	} else {
@@ -221,14 +325,26 @@ func run() int {
 	}
 
 	if cfg.DatabaseURL != "" {
-		pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+		poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+		if err != nil {
+			logger.Error("invalid postgres config", "error", redactDSN(err.Error()))
+			return 1
+		}
+		poolCfg.MaxConns = 20
+		poolCfg.MinConns = 2
+		poolCfg.MaxConnLifetime = 5 * time.Minute
+		poolCfg.MaxConnIdleTime = time.Minute
+		poolCfg.HealthCheckPeriod = 30 * time.Second
+		// Prepared statements: avoids re-parse/planning per Save/GetByID/ListRecent.
+		poolCfg.ConnConfig.RuntimeParams["statement_cache_mode"] = "prepare"
+		pool, err := pgxpool.NewWithConfig(context.Background(), poolCfg)
 		if err != nil {
 			logger.Error("failed to connect to postgres database", "error", redactDSN(err.Error()))
 			return 1
 		}
 		defer pool.Close()
 		pgPool = pool
-		logger.Info("connected to postgres database")
+		logger.Info("connected to postgres database", "max_conns", poolCfg.MaxConns)
 	}
 
 	if cfg.FailedStoreEnabled {
@@ -251,8 +367,18 @@ func run() int {
 		}
 
 		if store != nil {
-			breaker := resilience.NewCircuitBreaker(5, 30*time.Second)
-			failedStore = failstore.NewCircuitBreakerStore(store, breaker, logger.Logger)
+			cbThreshold := cfg.CircuitBreakerThreshold
+			if cbThreshold <= 0 {
+				cbThreshold = 25
+			}
+			cbRecovery := time.Duration(cfg.CircuitBreakerRecoverySec) * time.Second
+			if cbRecovery <= 0 {
+				cbRecovery = 8 * time.Second
+			}
+			breaker := resilience.NewCircuitBreaker(cbThreshold, cbRecovery)
+			cbStore := failstore.NewCircuitBreakerStore(store, breaker, logger.Logger)
+			// Async wrapper: error-path fsync off the request goroutine.
+			failedStore = failstore.NewAsyncStore(cbStore, 512)
 		}
 	}
 
@@ -275,7 +401,7 @@ func run() int {
 			}
 		}
 		if store != nil {
-			replayAuditStore = store
+			replayAuditStore = replayaudit.NewAsyncStore(store, 512)
 		}
 	}
 
@@ -299,7 +425,7 @@ func run() int {
 			}
 		}
 		if store != nil {
-			securityAuditStore = store
+			securityAuditStore = securityaudit.NewAsyncStore(store, 1024)
 		}
 	}
 
@@ -405,10 +531,12 @@ func run() int {
 		}
 		in.Source = source
 
+		// Bounded cardinality: route template, not raw path.
+		route := httpx.RouteTemplate(in.Path)
 		telemetry.SecurityRejectCounter.Add(reqCtx, 1,
 			metric.WithAttributes(
 				attribute.String("reason", in.Reason),
-				attribute.String("path", in.Path),
+				attribute.String("route", route),
 				attribute.Int("status", in.HTTPStatus),
 				attribute.String("source", in.Source),
 				attribute.String("category", in.Category),
@@ -505,13 +633,24 @@ func run() int {
 			if hostname == "" {
 				hostname = fmt.Sprintf("instance-%d", time.Now().UnixNano())
 			}
-			leaderElection = retry.NewLeaderElection(redisClient, "teampulse:retry_leader", hostname, 2*time.Minute)
-			logger.Info("retry scheduler leader election enabled via redis", "instance_id", hostname)
+			intervalSec := cfg.RetryIntervalSec
+			if intervalSec <= 0 {
+				intervalSec = 10
+			}
+			// TTL = 3x interval so failover is fast, not the old fixed 2m stall.
+			ttl := time.Duration(intervalSec*3) * time.Second
+			leaderElection = retry.NewLeaderElection(redisClient, "teampulse:retry_leader", hostname, ttl)
+			logger.Info("retry scheduler leader election enabled via redis", "instance_id", hostname, "ttl", ttl.String())
 		}
 
+		workers := cfg.RetryWorkers
+		if workers <= 0 {
+			workers = 8
+		}
 		retryScheduler = retry.NewScheduler(failedStore, runtimePublisher.Publisher, logger.Logger, retry.SchedulerOptions{
 			MaxRetries:     cfg.RetryMaxAttempts,
 			Interval:       time.Duration(cfg.RetryIntervalSec) * time.Second,
+			Workers:        workers,
 			LeaderElection: leaderElection,
 			OnRetry: func(ctx context.Context, source string, success bool, attempt int) {
 				telemetry.QueuePublishCounter.Add(ctx, 1,
@@ -539,13 +678,13 @@ func run() int {
 	webhookMux.HandleFunc("GET /assets/admin.js", admin.AdminUIScript)
 
 	adminHandlers := map[string]http.HandlerFunc{
-		"configz":             admin.Configz,
-		"events/failed":       admin.FailedEvents,
-		"events/replay-audit": admin.ReplayAudit,
+		"configz":               admin.Configz,
+		"events/failed":         admin.FailedEvents,
+		"events/replay-audit":   admin.ReplayAudit,
 		"events/security-audit": admin.SecurityAudit,
-		"flags":               admin.FeatureFlags,
-		"events/replay/batch": admin.ReplayFailedEventsBatch,
-		"events/replay":       admin.ReplayFailedEvent,
+		"flags":                 admin.FeatureFlags,
+		"events/replay/batch":   admin.ReplayFailedEventsBatch,
+		"events/replay":         admin.ReplayFailedEvent,
 	}
 
 	for path, handler := range adminHandlers {
@@ -569,6 +708,7 @@ func run() int {
 
 	var requestLimiter httpx.RateLimiter
 	var stopRequestLimiter func()
+	var redisLimiter *httpx.RedisRateLimiter
 	if cfg.RateLimitBackend == "redis" {
 		if redisClient == nil {
 			logger.Error("redis client not initialized but RATE_LIMIT_BACKEND=redis; falling back to in-memory rate limiting")
@@ -577,8 +717,9 @@ func run() int {
 			stopRequestLimiter = memoryLimiter.Stop
 			logger.Warn("using in-memory request rate limiting (redis client was nil)")
 		} else {
-			requestLimiter = httpx.NewRedisRateLimiter(redisClient, cfg.RateLimitRedisPrefix, time.Minute)
-			logger.Info("using redis-backed request rate limiting", "addr", cfg.RedisAddr, "prefix", cfg.RateLimitRedisPrefix)
+			redisLimiter = httpx.NewRedisRateLimiterWithTimeout(redisClient, cfg.RateLimitRedisPrefix, time.Minute, 50*time.Millisecond)
+			requestLimiter = redisLimiter
+			logger.Info("using redis-backed request rate limiting", "addr", cfg.RedisAddr, "cluster", cfg.RedisClusterAddrs, "prefix", cfg.RateLimitRedisPrefix, "timeout_ms", 50)
 		}
 	} else {
 		memoryLimiter := httpx.NewIPRateLimiter(nil, time.Minute, 1024)
@@ -588,6 +729,14 @@ func run() int {
 	}
 
 	handlerBuilder := NewHandlerBuilderWithLimiter(logger, &cfg, securityRejectFn, requestLimiter, stopRequestLimiter)
+	if cfg.RateLimitCombined && redisLimiter != nil {
+		gate := httpx.NewCombinedGate(redisLimiter, cfg.DedupRedisPrefix, dedupTTL)
+		handlerBuilder.WithCombinedGate(gate)
+		logger.Info("combined 1-RTT rate-limit+dedup gate enabled",
+			"dedup_prefix", cfg.DedupRedisPrefix, "dedup_ttl", dedupTTL.String())
+	} else if cfg.RateLimitCombined {
+		logger.Warn("RATE_LIMIT_COMBINED=true but no redis limiter; falling back to 3-RTT path")
+	}
 
 	if configFile := os.Getenv("CONFIG_FILE"); configFile != "" {
 		watcher, err := config.NewWatcher(cfg, logger.Logger, func(newCfg config.Config) {
@@ -618,13 +767,25 @@ func run() int {
 	handler := handlerBuilder.Build(publicMux, telemetry.HTTPDurationHistogram)
 	handlerWrapper.set(handler)
 
+	maxHeaderBytes := cfg.HTTPMaxHeaderBytes
+	if maxHeaderBytes <= 0 {
+		maxHeaderBytes = 8192
+	}
+	httpHandler := handler
+	if cfg.HTTPH2CEnabled {
+		// H2C (HTTP/2 cleartext) for internal mesh multiplexing. HTTP/1 stays
+		// default for edge compat; enable via HTTP_H2C_ENABLED=true.
+		httpHandler = newH2CHandler(handler)
+		logger.Info("h2c enabled", "max_concurrent_streams", 250)
+	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
+		Handler:           httpHandler,
+		ReadHeaderTimeout: 3 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    maxHeaderBytes,
 	}
 
 	serverErr := make(chan error, 1)
@@ -656,7 +817,8 @@ func run() int {
 		logger.Error("server error triggered shutdown", "error", err)
 	}
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// 30s drain (was 10s < Read/Write 15s + PubSub 5s, truncating in-flight).
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {

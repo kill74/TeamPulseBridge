@@ -39,6 +39,23 @@ services:
       PORT: 8080
       REQUIRE_SECRETS: 'true'
       QUEUE_BACKEND: ${QUEUE_BACKEND:-log}
+      # Perf-tuned local defaults (see docs/performance.md).
+      QUEUE_WORKERS: ${QUEUE_WORKERS:-16}
+      QUEUE_BULKHEAD_ENABLED: ${QUEUE_BULKHEAD_ENABLED:-true}
+      QUEUE_BULKHEAD_MAX_SOURCES: ${QUEUE_BULKHEAD_MAX_SOURCES:-8}
+      QUEUE_BUFFER: ${QUEUE_BUFFER:-4096}
+      PUBSUB_PUBLISH_GOROUTINES: ${PUBSUB_PUBLISH_GOROUTINES:-16}
+      PUBSUB_BATCH_DELAY_MS: ${PUBSUB_BATCH_DELAY_MS:-20}
+      PUBSUB_MAX_OUTSTANDING_MESSAGES: ${PUBSUB_MAX_OUTSTANDING_MESSAGES:-2000}
+      PUBSUB_FLOW_CONTROL_BEHAVIOR: ${PUBSUB_FLOW_CONTROL_BEHAVIOR:-signal_error}
+      PII_SCRUB_ASYNC: ${PII_SCRUB_ASYNC:-true}
+      REDIS_POOL_SIZE: ${REDIS_POOL_SIZE:-32}
+      REDIS_MIN_IDLE_CONNS: ${REDIS_MIN_IDLE_CONNS:-8}
+      REDIS_IO_TIMEOUT_MS: ${REDIS_IO_TIMEOUT_MS:-100}
+      HTTP_MAX_INFLIGHT: ${HTTP_MAX_INFLIGHT:-512}
+      OTEL_TRACES_SAMPLER_RATIO: ${OTEL_TRACES_SAMPLER_RATIO:-0.02}
+      GOMEMLIMIT: 512MiB
+      GOMAXPROCS: 4
       ADMIN_AUTH_ENABLED: 'true'
       ENVIRONMENT: local
       REDIS_ADDR: redis:6379
@@ -58,6 +75,20 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:8080/healthz | grep -q healthy || exit 1']
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
 
   event-store:
     build:
@@ -72,13 +103,22 @@ services:
       PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
       PUBSUB_PROJECT_ID: test-project
       EVENTSTORE_PUBSUB_SUBSCRIPTION_ID: webhook-events-store
-      EVENTSTORE_MAX_OUTSTANDING_MESSAGES: 100
-      EVENTSTORE_RECEIVE_GOROUTINES: 1
+      EVENTSTORE_MAX_OUTSTANDING_MESSAGES: ${EVENTSTORE_MAX_OUTSTANDING_MESSAGES:-2000}
+      EVENTSTORE_MAX_OUTSTANDING_BYTES: ${EVENTSTORE_MAX_OUTSTANDING_BYTES:-268435456}
+      EVENTSTORE_RECEIVE_GOROUTINES: ${EVENTSTORE_RECEIVE_GOROUTINES:-16}
+      EVENTSTORE_MAX_EXTENSION_SEC: ${EVENTSTORE_MAX_EXTENSION_SEC:-600}
+      EVENTSTORE_DB_MAX_CONNS: ${EVENTSTORE_DB_MAX_CONNS:-32}
+      EVENTSTORE_DB_MIN_CONNS: ${EVENTSTORE_DB_MIN_CONNS:-8}
     depends_on:
       postgres:
         condition: service_healthy
       pubsub-init:
         condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
 
   redis:
     image: redis:7-alpine

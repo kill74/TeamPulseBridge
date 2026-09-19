@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"teampulsebridge/services/ingestion-gateway/internal/apperr"
@@ -19,6 +20,7 @@ import (
 )
 
 type adminStoreStub struct {
+	mu      sync.Mutex
 	events  map[string]failstore.FailedEvent
 	recent  []failstore.FailedEvent
 	getErr  error
@@ -26,6 +28,8 @@ type adminStoreStub struct {
 }
 
 func (s *adminStoreStub) Save(_ context.Context, in failstore.SaveInput) (failstore.FailedEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	event := failstore.FailedEvent{
 		EventID: in.EventID,
 		Source:  in.Source,
@@ -41,6 +45,8 @@ func (s *adminStoreStub) Save(_ context.Context, in failstore.SaveInput) (failst
 }
 
 func (s *adminStoreStub) GetByID(_ context.Context, eventID string) (failstore.FailedEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.getErr != nil {
 		return failstore.FailedEvent{}, s.getErr
 	}
@@ -51,6 +57,8 @@ func (s *adminStoreStub) GetByID(_ context.Context, eventID string) (failstore.F
 }
 
 func (s *adminStoreStub) ListRecent(_ context.Context, limit int) ([]failstore.FailedEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.listErr != nil {
 		return nil, s.listErr
 	}
@@ -66,6 +74,8 @@ func (s *adminStoreStub) ListRecent(_ context.Context, limit int) ([]failstore.F
 }
 
 func (s *adminStoreStub) Delete(_ context.Context, eventID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.events, eventID)
 	recent := make([]failstore.FailedEvent, 0, len(s.recent))
 	for _, e := range s.recent {
@@ -78,6 +88,8 @@ func (s *adminStoreStub) Delete(_ context.Context, eventID string) error {
 }
 
 func (s *adminStoreStub) UpdateRetryCount(_ context.Context, eventID string, retryCount int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if e, ok := s.events[eventID]; ok {
 		e.RetryCount = retryCount
 		s.events[eventID] = e
@@ -93,6 +105,7 @@ func (s *adminStoreStub) UpdateRetryCount(_ context.Context, eventID string, ret
 }
 
 type adminPublisherStub struct {
+	mu    sync.Mutex
 	calls int
 	last  struct {
 		source  string
@@ -103,6 +116,8 @@ type adminPublisherStub struct {
 }
 
 func (s *adminPublisherStub) Publish(_ context.Context, source string, body []byte, headers map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.calls++
 	s.last.source = source
 	s.last.body = append([]byte(nil), body...)
@@ -118,6 +133,7 @@ func (s *adminPublisherStub) Close() error { return nil }
 func (s *adminPublisherStub) HealthCheck(_ context.Context) error { return s.err }
 
 type adminAuditStub struct {
+	mu        sync.Mutex
 	calls     int
 	saved     []replayaudit.SaveInput
 	recent    []replayaudit.Record
@@ -127,6 +143,8 @@ type adminAuditStub struct {
 }
 
 func (s *adminAuditStub) Save(_ context.Context, in replayaudit.SaveInput) (replayaudit.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.saveErr != nil {
 		return replayaudit.Record{}, s.saveErr
 	}

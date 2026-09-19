@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -41,6 +42,14 @@ type AdminHandler struct {
 	audit     replayaudit.Store
 	security  securityaudit.Store
 	flags     *config.FeatureFlags
+	// 2s memoize for hot admin lists (Grafana scrapes + UI polling).
+	listMu    sync.Mutex
+	listCache map[string]cachedList
+}
+
+type cachedList struct {
+	at   time.Time
+	body []byte
 }
 
 func NewAdminHandler(cfg config.Config, publisher queue.Publisher, logger *slog.Logger) *AdminHandler {
@@ -75,6 +84,7 @@ func (h *AdminHandler) Configz(w http.ResponseWriter, _ *http.Request) {
 		"queue_workers":                         h.cfg.QueueWorkers,
 		"queue_bulkhead_enabled":                h.cfg.QueueBulkheadEnabled,
 		"queue_bulkhead_buffer_per_source":      h.cfg.QueueBulkheadBufferPerSource,
+		"queue_bulkhead_max_sources":            h.cfg.QueueBulkheadMaxSources,
 		"queue_backpressure_enabled":            h.cfg.QueueBackpressureEnabled,
 		"queue_backpressure_soft_limit_percent": h.cfg.QueueBackpressureSoftLimitPercent,
 		"queue_backpressure_hard_limit_percent": h.cfg.QueueBackpressureHardLimitPercent,
@@ -94,6 +104,14 @@ func (h *AdminHandler) Configz(w http.ResponseWriter, _ *http.Request) {
 		"pubsub_max_outstanding_messages":       h.cfg.PubSubMaxOutstandingMessages,
 		"pubsub_max_outstanding_bytes":          h.cfg.PubSubMaxOutstandingBytes,
 		"pubsub_flow_control_behavior":          h.cfg.PubSubFlowControlBehavior,
+		"pubsub_batch_delay_ms":                 h.cfg.PubSubBatchDelayMs,
+		"pubsub_batch_count_threshold":          h.cfg.PubSubBatchCountThreshold,
+		"pubsub_batch_byte_threshold":           h.cfg.PubSubBatchByteThreshold,
+		"circuit_breaker_threshold":             h.cfg.CircuitBreakerThreshold,
+		"circuit_breaker_recovery_sec":          h.cfg.CircuitBreakerRecoverySec,
+		"pii_scrub_async":                       h.cfg.PIIScrubAsync,
+		"http_max_inflight":                     h.cfg.HTTPMaxInflight,
+		"otel_traces_sampler_ratio":             h.cfg.OTELTracesSamplerRatio,
 		"security_audit_enabled":                h.cfg.SecurityAuditEnabled,
 		"security_audit_path":                   h.cfg.SecurityAuditPath,
 		"security_audit_retention_days":         h.cfg.SecurityAuditRetentionDays,
@@ -144,10 +162,62 @@ func (h *AdminHandler) FailedEvents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	respBody, _ := json.Marshal(map[string]any{
 		"enabled": true,
 		"events":  summaries,
 	})
+	// 2s memoize + ETag: Grafana/UI poll this hot path.
+	h.listMu.Lock()
+	if h.listCache == nil {
+		h.listCache = make(map[string]cachedList)
+	}
+	cacheKey := "failed:" + strconv.Itoa(limit)
+	if eTag := r.Header.Get("If-None-Match"); eTag != "" {
+		if cached, ok := h.listCache[cacheKey]; ok && time.Since(cached.at) < 2*time.Second {
+			if etagFor(cached.body) == eTag {
+				h.listMu.Unlock()
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+	}
+	h.listCache[cacheKey] = cachedList{at: time.Now(), body: respBody}
+	h.listMu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("ETag", etagFor(respBody))
+	w.Header().Set("Cache-Control", "private, max-age=2")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(respBody)
+}
+
+func etagFor(body []byte) string {
+	// Cheap weak ETag: length + first/last 8 bytes hashed via FNV in caller?
+	// Use hex of length + crc-like prefix to avoid SHA over full list.
+	if len(body) == 0 {
+		return `"0"`
+	}
+	return strconv.Quote(fmt.Sprintf("%d-%d", len(body), hashBodyPrefix(body)))
+}
+
+func hashBodyPrefix(body []byte) uint32 {
+	const (
+		offset32 = 2166136261
+		prime32  = 16777619
+	)
+	h := uint32(offset32)
+	n := len(body)
+	if n > 64 {
+		n = 64
+	}
+	for i := 0; i < n; i++ {
+		h ^= uint32(body[i])
+		h *= prime32
+	}
+	for i := len(body) - 1; i >= 0 && i >= len(body)-8; i-- {
+		h ^= uint32(body[i])
+		h *= prime32
+	}
+	return h
 }
 
 type replayFailedEventRequest struct {
@@ -285,55 +355,79 @@ func (h *AdminHandler) ReplayFailedEventsBatch(w http.ResponseWriter, r *http.Re
 
 	actor := replayActorFromRequest(r, h.cfg.AdminJWTSecret)
 	requestID := httpx.RequestIDFromContext(r.Context())
-	results := make([]replayExecutionResult, 0, len(eventIDs))
+	results := make([]replayExecutionResult, len(eventIDs))
 	summary := replayBatchSummary{
 		Requested: len(req.EventIDs),
 	}
-	for _, eventID := range eventIDs {
+	// Bounded worker pool (5 concurrent): previously sequential up-to-25x
+	// GetByID+Publish+AuditSave held the admin request for 10s of seconds.
+	const batchWorkers = 5
+	sem := make(chan struct{}, batchWorkers)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	cancelled := false
+	for i, eventID := range eventIDs {
 		select {
 		case <-r.Context().Done():
+			mu.Lock()
+			cancelled = true
+			mu.Unlock()
 			h.logger.Warn("batch replay cancelled",
-				"processed", summary.Processed,
-				"remaining", len(eventIDs)-summary.Processed,
+				"processed", i,
+				"remaining", len(eventIDs)-i,
 			)
 			goto writeResponse
 		default:
 		}
-
-		result, err := h.executeReplay(r.Context(), replayExecutionInput{
-			EventID:         eventID,
-			DryRun:          req.DryRun,
-			HeaderOverrides: req.HeaderOverrides,
-			Actor:           actor,
-			RequestID:       requestID,
-		})
-		if err != nil {
-			h.logger.Warn("batch replay event failed",
-				"event_id", eventID,
-				"error", err,
-			)
-		}
-		results = append(results, result)
-		summary.Processed++
-		switch result.Status {
-		case "validated":
-			summary.Validated++
-			summary.Succeeded++
-		case "accepted":
-			summary.Accepted++
-			summary.Published++
-			summary.Succeeded++
-		default:
-			summary.Failed++
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, eid string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			result, err := h.executeReplay(r.Context(), replayExecutionInput{
+				EventID:         eid,
+				DryRun:          req.DryRun,
+				HeaderOverrides: req.HeaderOverrides,
+				Actor:           actor,
+				RequestID:       requestID,
+			})
+			if err != nil {
+				h.logger.Warn("batch replay event failed",
+					"event_id", eid,
+					"error", err,
+				)
+			}
+			mu.Lock()
+			results[idx] = result
+			summary.Processed++
+			switch result.Status {
+			case "validated":
+				summary.Validated++
+				summary.Succeeded++
+			case "accepted":
+				summary.Accepted++
+				summary.Published++
+				summary.Succeeded++
+			default:
+				summary.Failed++
+			}
+			mu.Unlock()
+		}(i, eventID)
 	}
+	wg.Wait()
+	_ = cancelled
 
 writeResponse:
+	// Preserve input order (results indexed); filter zero-values on cancel.
+	ordered := results
+	if summary.Processed < len(results) {
+		ordered = results[:summary.Processed]
+	}
 	writeJSON(w, batchReplayHTTPStatus(req.DryRun, summary), map[string]any{
 		"status":  batchReplayStatus(summary),
 		"dry_run": req.DryRun,
 		"summary": summary,
-		"results": results,
+		"results": ordered,
 	})
 }
 
@@ -638,7 +732,13 @@ func bodyPreview(body []byte, limit int) string {
 	if len(body) == 0 || limit <= 0 {
 		return ""
 	}
-	clean := strings.TrimSpace(string(body))
+	// Truncate BEFORE lowercasing/redacting: old code did string(body) +
+	// ToLower + 18x Index scans over up-to-100 bodies per request (O(100*N)).
+	trunc := body
+	if len(trunc) > limit+512 {
+		trunc = trunc[:limit+512]
+	}
+	clean := strings.TrimSpace(string(trunc))
 	clean = redactSecrets(clean)
 	if len(clean) <= limit {
 		return clean
@@ -727,17 +827,17 @@ func decodeAdminJSONRequest(w http.ResponseWriter, r *http.Request, maxBytes int
 }
 
 var replayHeaderDenylist = map[string]struct{}{
-	"authorization":  {},
-	"cookie":         {},
-	"x-event-id":     {},
-	"traceparent":    {},
-	"x-operator":     {},
-	"x-user":         {},
-	"x-replay-source": {},
-	"x-replay-event-id": {},
-	"x-replay-timestamp": {},
+	"authorization":       {},
+	"cookie":              {},
+	"x-event-id":          {},
+	"traceparent":         {},
+	"x-operator":          {},
+	"x-user":              {},
+	"x-replay-source":     {},
+	"x-replay-event-id":   {},
+	"x-replay-timestamp":  {},
 	"x-replay-request-id": {},
-	"x-replay-actor": {},
+	"x-replay-actor":      {},
 }
 
 func cloneReplayHeaders(base, overrides map[string]string) (map[string]string, error) {

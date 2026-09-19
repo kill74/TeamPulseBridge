@@ -17,7 +17,7 @@ func TestNewLogger(t *testing.T) {
 
 	logger := NewLogger("test-service", "test-env", "v1.0.0")
 	assert.NotNil(t, logger)
-	
+
 	// We can't easily capture stdout here without more complex setup,
 	// but we can verify it doesn't panic and is configured.
 	logger.Info("test message")
@@ -26,14 +26,14 @@ func TestNewLogger(t *testing.T) {
 func TestSetup(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	
+
 	// Clear OTEL env vars to ensure predictable behavior
 	os.Unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	
+
 	tel, err := Setup(ctx, logger, "test-service")
 	require.NoError(t, err)
 	defer tel.Shutdown(ctx)
-	
+
 	assert.NotNil(t, tel.MetricsHandler)
 	assert.NotNil(t, tel.WebhookCounter)
 	assert.NotNil(t, tel.HTTPDurationHistogram)

@@ -33,6 +33,8 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 			occurred_at TIMESTAMP WITH TIME ZONE NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_security_audit_occurred_at ON security_audit(occurred_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_security_audit_category_occurred_at ON security_audit(category, occurred_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_security_audit_source_occurred_at ON security_audit(source, occurred_at DESC);
 	`
 	if _, err := pool.Exec(ctx, query); err != nil {
 		return nil, fmt.Errorf("create security audit tables: %w", err)

@@ -89,6 +89,51 @@ func NewAsyncPublisherWithOptions(inner Publisher, buffer int, logger *slog.Logg
 }
 
 func (p *AsyncPublisher) Publish(ctx context.Context, source string, body []byte, headers map[string]string) error {
+	p.mu.RLock()
+	if p.closed {
+		p.mu.RUnlock()
+		return ErrQueueClosed
+	}
+	p.mu.RUnlock()
+
+	// Fast path: when backpressure is disabled, skip Snapshot locks entirely.
+	if !p.options.Backpressure.Enabled {
+		e := queuedEvent{
+			source:    source,
+			body:      append([]byte(nil), body...),
+			headers:   cloneHeaders(headers),
+			createdAt: time.Now(),
+		}
+		if deadline, ok := ctx.Deadline(); ok {
+			e.deadline = deadline
+		}
+		select {
+		case p.ch <- e:
+			return nil
+		default:
+			p.emitBackpressure(ctx, source, "full", p.Snapshot())
+			return ErrQueueFull
+		}
+	}
+
+	// Lock-free depth check first; only take statsMu for failure ratio when near limits.
+	depth, capacity := len(p.ch), cap(p.ch)
+	usage := 0.0
+	if capacity > 0 {
+		usage = float64(depth) / float64(capacity)
+	}
+	if usage >= p.options.Backpressure.HardLimitRatio {
+		snapshot := p.Snapshot()
+		p.emitBackpressure(ctx, source, "full", snapshot)
+		return ErrQueueFull
+	}
+	if usage > p.options.Backpressure.SoftLimitRatio {
+		if snapshot := p.Snapshot(); p.shouldThrottle(snapshot) {
+			p.emitBackpressure(ctx, source, "throttled", snapshot)
+			return ErrQueueThrottled
+		}
+	}
+
 	e := queuedEvent{
 		source:    source,
 		body:      append([]byte(nil), body...),
@@ -97,21 +142,6 @@ func (p *AsyncPublisher) Publish(ctx context.Context, source string, body []byte
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		e.deadline = deadline
-	}
-	p.mu.RLock()
-	if p.closed {
-		p.mu.RUnlock()
-		return ErrQueueClosed
-	}
-	snapshot := p.Snapshot()
-	p.mu.RUnlock()
-	if p.isHardLimited(snapshot) {
-		p.emitBackpressure(ctx, source, "full", snapshot)
-		return ErrQueueFull
-	}
-	if p.shouldThrottle(snapshot) {
-		p.emitBackpressure(ctx, source, "throttled", snapshot)
-		return ErrQueueThrottled
 	}
 	select {
 	case p.ch <- e:
@@ -139,11 +169,13 @@ func (p *AsyncPublisher) HealthCheck(_ context.Context) error {
 	if p.closed {
 		return errors.New("publisher is closed")
 	}
+	// Readiness must not flap under burst: fail only when truly full or the
+	// failure budget is badly blown. Soft pressure is exposed via metrics.
 	snapshot := p.Snapshot()
-	if snapshot.UsageRatio >= p.options.Backpressure.HardLimitRatio {
-		return fmt.Errorf("queue buffer usage critical: %.2f%%", snapshot.UsageRatio*100)
+	if snapshot.UsageRatio >= 1.0 {
+		return fmt.Errorf("queue buffer full: depth %d/%d", snapshot.Depth, snapshot.Capacity)
 	}
-	if snapshot.FailureRatio > p.options.Backpressure.FailureRatioThreshold && snapshot.RecentSamples >= p.options.Backpressure.MinSamples {
+	if snapshot.FailureRatio > 0.25 && snapshot.RecentSamples >= p.options.Backpressure.MinSamples {
 		return fmt.Errorf("queue failure ratio high: %.2f%%", snapshot.FailureRatio*100)
 	}
 	return nil
@@ -164,13 +196,18 @@ func (p *AsyncPublisher) run(workerID int) {
 }
 
 func (p *AsyncPublisher) processQueuedEvent(workerID int, e queuedEvent) {
+	// Background budget, not the (possibly near-expired) request deadline:
+	// floor stale deadlines to 1s so bursts don't instantly DLQ.
 	ctx := context.Background()
 	if !e.deadline.IsZero() {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, e.deadline)
-		defer cancel()
+		if remaining := time.Until(e.deadline); remaining > time.Second {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, e.deadline)
+			defer cancel()
+		}
 	}
-	publishCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// 10s worker budget (was 30s) to avoid head-of-line blocking on stuck RPCs.
+	publishCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	start := time.Now()
 	err := p.safePublish(publishCtx, workerID, e)
@@ -273,7 +310,7 @@ func (p *AsyncPublisher) emitPublish(ctx context.Context, source, result string,
 
 func (o AsyncPublisherOptions) withDefaults() AsyncPublisherOptions {
 	if o.WorkerCount <= 0 {
-		o.WorkerCount = 1
+		o.WorkerCount = 16
 	}
 	if o.Backpressure.SoftLimitRatio <= 0 {
 		o.Backpressure.SoftLimitRatio = 0.70

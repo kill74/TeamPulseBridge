@@ -46,6 +46,23 @@ func NewRawWebhookEnvelope(source string, body []byte, headers map[string]string
 	}
 }
 
+// NewRawWebhookEnvelopeNoCopy takes ownership of body/headers without copying.
+// Callers must not mutate body/headers after calling (async workers already own
+// their clone, so Pub/Sub publish can use this to save 1×1MiB copy).
+func NewRawWebhookEnvelopeNoCopy(source string, body []byte, headers map[string]string, receivedAt time.Time) RawWebhookEnvelope {
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	return RawWebhookEnvelope{
+		Source:      source,
+		Headers:     headers,
+		Body:        json.RawMessage(body),
+		ReceivedAt:  receivedAt.UTC(),
+		Schema:      RawWebhookEnvelopeSchema,
+		SchemaValue: RawWebhookEnvelopeSchemaVersion,
+	}
+}
+
 // DecodeRawWebhookEnvelope unmarshals and validates a durable queue envelope.
 func DecodeRawWebhookEnvelope(payload []byte) (RawWebhookEnvelope, error) {
 	var envelope RawWebhookEnvelope

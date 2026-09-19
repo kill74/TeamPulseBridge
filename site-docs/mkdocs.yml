@@ -26,6 +26,7 @@ nav:
       - ADR Index: adr/index.md
   - Runbooks:
       - Local Development: runbooks/local-development.md
+      - Performance Tuning: runbooks/performance.md
       - Multi-Region Active-Active: runbooks/multi-region-active-active.md
       - Release Process: runbooks/release.md
       - SLO and Observability: runbooks/slo-observability.md

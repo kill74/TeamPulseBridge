@@ -90,7 +90,7 @@ func TestValidator_NoSchemaPath(t *testing.T) {
 	v, err := NewValidator("")
 	require.NoError(t, err)
 	assert.NotNil(t, v)
-	
+
 	err = v.Validate("any", []byte(`{"a":1}`))
 	assert.NoError(t, err)
 }

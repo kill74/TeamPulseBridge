@@ -33,6 +33,9 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 			replayed_at TIMESTAMP WITH TIME ZONE NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_replay_audit_replayed_at ON replay_audit(replayed_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_replay_audit_actor_replayed_at ON replay_audit(actor, replayed_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_replay_audit_result_replayed_at ON replay_audit(result, replayed_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_replay_audit_event_id ON replay_audit(event_id);
 	`
 	if _, err := pool.Exec(ctx, query); err != nil {
 		return nil, fmt.Errorf("create replay audit tables: %w", err)
