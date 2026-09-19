@@ -9,7 +9,7 @@ import (
 
 func TestError_Error(t *testing.T) {
 	inner := errors.New("inner error")
-	
+
 	tests := []struct {
 		name     string
 		err      *Error

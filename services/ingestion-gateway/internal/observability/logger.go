@@ -15,9 +15,14 @@ func NewLogger(serviceName, environment, version string) *Logger {
 	lVar := &slog.LevelVar{}
 	lVar.Set(logLevelFromEnv())
 
+	// AddSource costs runtime.Callers per line; disable in prod for hot-path logs.
+	addSource := true
+	if env := strings.ToLower(strings.TrimSpace(environment)); env == "prod" || env == "production" {
+		addSource = false
+	}
 	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level:     lVar,
-		AddSource: true,
+		AddSource: addSource,
 	})
 	l := slog.New(h).With(
 		"service", serviceName,

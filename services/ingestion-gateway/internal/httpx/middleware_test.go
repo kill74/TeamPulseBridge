@@ -21,7 +21,7 @@ func TestRateLimitGeneralExceeded(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "10.0.0.1:12345"
 
 	rr1 := httptest.NewRecorder()
@@ -80,7 +80,7 @@ func TestRateLimitResetsOnNextWindow(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "10.0.0.3:1111"
 
 	rr1 := httptest.NewRecorder()
@@ -112,7 +112,7 @@ func TestRateLimitDoesNotTrustXFFWithoutTrustedProxy(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	reqA := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	reqA := httptest.NewRequest(http.MethodGet, "/", nil)
 	reqA.RemoteAddr = "198.51.100.10:1234"
 	reqA.Header.Set("X-Forwarded-For", "10.1.1.1")
 	rrA := httptest.NewRecorder()
@@ -121,7 +121,7 @@ func TestRateLimitDoesNotTrustXFFWithoutTrustedProxy(t *testing.T) {
 		t.Fatalf("expected first request 200, got %d", rrA.Code)
 	}
 
-	reqB := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	reqB := httptest.NewRequest(http.MethodGet, "/", nil)
 	reqB.RemoteAddr = "198.51.100.10:5678"
 	reqB.Header.Set("X-Forwarded-For", "10.1.1.2")
 	rrB := httptest.NewRecorder()
@@ -201,7 +201,7 @@ func TestRateLimitTrustsXFFFromTrustedProxy(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	reqA := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	reqA := httptest.NewRequest(http.MethodGet, "/", nil)
 	reqA.RemoteAddr = "198.51.100.10:1234"
 	reqA.Header.Set("X-Forwarded-For", "10.1.1.1")
 	rrA := httptest.NewRecorder()
@@ -210,7 +210,7 @@ func TestRateLimitTrustsXFFFromTrustedProxy(t *testing.T) {
 		t.Fatalf("expected first request 200, got %d", rrA.Code)
 	}
 
-	reqB := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	reqB := httptest.NewRequest(http.MethodGet, "/", nil)
 	reqB.RemoteAddr = "198.51.100.10:5678"
 	reqB.Header.Set("X-Forwarded-For", "10.1.1.2")
 	rrB := httptest.NewRecorder()
@@ -222,6 +222,27 @@ func TestRateLimitTrustsXFFFromTrustedProxy(t *testing.T) {
 
 func fixedNow(t time.Time) func() time.Time {
 	return func() time.Time { return t }
+}
+
+func TestRateLimitBypassesProbes(t *testing.T) {
+	now := fixedNow(time.Unix(1700000500, 0))
+	limiter := NewIPRateLimiter(now, time.Minute, 1024)
+	defer limiter.Stop()
+	h := RateLimit(RateLimitConfig{Enabled: true, General: 1, Admin: 1, Now: now, Window: time.Minute, Limiter: limiter})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
+		for i := 0; i < 3; i++ {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.RemoteAddr = "10.0.0.9:1234"
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected probe %s bypass (200), got %d on iter %d", path, rr.Code, i)
+			}
+		}
+	}
 }
 
 func TestRecovererReturnsStructuredError(t *testing.T) {

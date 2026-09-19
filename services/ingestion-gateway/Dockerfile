@@ -16,6 +16,14 @@ COPY --from=builder /out/ingestion-gateway /app/ingestion-gateway
 COPY --from=builder /out/eventstore /app/eventstore
 COPY --from=builder /src/internal/schema/schemas /app/internal/schema/schemas
 
+# Runtime performance defaults: GOMEMLIMIT + GOMAXPROCS aware via cgroups,
+# single-stack traces to keep crash logs small.
+# NOTE: no HEALTHCHECK here (distroless has no shell/wget); orchestrate via
+# Kubernetes liveness/readiness probes on /healthz and /readyz instead.
+ENV GOTRACEBACK=single \
+    GOMEMLIMIT=512MiB \
+    GOMAXPROCS=4
 EXPOSE 8080
 USER nonroot:nonroot
+# Exec form preserves signals for graceful 30s drain.
 ENTRYPOINT ["/app/ingestion-gateway"]

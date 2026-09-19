@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	promclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -104,7 +107,7 @@ func Setup(ctx context.Context, logger *slog.Logger, serviceName string) (*Telem
 	durationHistogram, err := meterProvider.Meter(serviceName).Float64Histogram(
 		"http_request_duration_seconds",
 		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
+		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.5, 1, 5),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create http duration histogram: %w", err)
@@ -114,7 +117,7 @@ func Setup(ctx context.Context, logger *slog.Logger, serviceName string) (*Telem
 	queuePublishLatency, err := meterProvider.Meter(serviceName).Float64Histogram(
 		"queue_publish_latency_seconds",
 		metric.WithUnit("s"),
-		metric.WithExplicitBucketBoundaries(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1),
+		metric.WithExplicitBucketBoundaries(0.01, 0.05, 0.1, 0.5, 1, 5),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create queue publish latency histogram: %w", err)
@@ -163,11 +166,17 @@ func (t *Telemetry) BindQueueMetrics(serviceName string, provider queue.Snapshot
 		observer.ObserveFloat64(failureGauge, snapshot.FailureRatio)
 		observer.ObserveInt64(depthGauge, int64(snapshot.Depth))
 		if sourceProvider != nil {
+			// Cap cardinality: top-8 sources only, drop "other" overflow.
+			n := 0
 			for source, sourceSnapshot := range sourceProvider.SourceSnapshots() {
+				if n >= 8 {
+					break
+				}
 				attrs := metric.WithAttributes(attribute.String("source", source))
 				observer.ObserveFloat64(sourceUsageGauge, sourceSnapshot.UsageRatio, attrs)
 				observer.ObserveFloat64(sourceFailureGauge, sourceSnapshot.FailureRatio, attrs)
 				observer.ObserveInt64(sourceDepthGauge, int64(sourceSnapshot.Depth), attrs)
+				n++
 			}
 		}
 		return nil
@@ -245,16 +254,37 @@ func (t *Telemetry) BindRedisPoolMetrics(serviceName string, client *redis.Clien
 
 func HTTPMiddleware(serviceName string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return otelhttp.NewHandler(next, serviceName)
+		return otelhttp.NewHandler(next, serviceName,
+			// Don't create spans for probes; they dominate scrape traffic.
+			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+				if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
+					return "probe"
+				}
+				return serviceName
+			}),
+		)
 	}
 }
 
+func samplerRatio() float64 {
+	// OTEL_TRACES_SAMPLER_RATIO env (0.02 default) keeps export costs bounded
+	// at high webhook RPS. Previously hardcoded 0.1 both branches.
+	if v := os.Getenv("OTEL_TRACES_SAMPLER_RATIO"); v != "" {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil && f >= 0 && f <= 1 {
+			return f
+		}
+	}
+	return 0.02
+}
+
 func setupTracing(ctx context.Context, res *resource.Resource) (*sdktrace.TracerProvider, func(context.Context) error, error) {
+	ratio := samplerRatio()
+	sampler := sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {
 		tp := sdktrace.NewTracerProvider(
 			sdktrace.WithResource(res),
-			sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(0.1))),
+			sdktrace.WithSampler(sampler),
 		)
 		return tp, tp.Shutdown, nil
 	}
@@ -265,8 +295,11 @@ func setupTracing(ctx context.Context, res *resource.Resource) (*sdktrace.Tracer
 	}
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithResource(res),
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(0.1))),
+		sdktrace.WithBatcher(exporter,
+			sdktrace.WithBatchTimeout(2*time.Second),
+			sdktrace.WithMaxExportBatchSize(256),
+		),
+		sdktrace.WithSampler(sampler),
 	)
 	return tp, tp.Shutdown, nil
 }

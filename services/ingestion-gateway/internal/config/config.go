@@ -11,6 +11,13 @@ import (
 )
 
 // Config contains runtime values for webhook signature validation.
+//
+// Performance tuning notes (see docs/performance.md):
+//   - QUEUE_WORKERS defaults to 16 so Pub/Sub publish does not serialize on 1 worker.
+//   - QUEUE_BULKHEAD_ENABLED defaults to true to isolate hot sources.
+//   - Pub/Sub flow-control defaults to signal_error with sane outstanding limits
+//     to fail fast instead of OOMing under spikes.
+//   - PII scrubbing runs in queue workers (PII_SCRUB_ASYNC=true) to keep p50 low.
 type Config struct {
 	Environment                       string
 	Port                              string
@@ -22,6 +29,7 @@ type Config struct {
 	QueueWorkers                      int
 	QueueBulkheadEnabled              bool
 	QueueBulkheadBufferPerSource      int
+	QueueBulkheadMaxSources           int
 	RequestTimeoutSec                 int
 	RequireSecrets                    bool
 	QueueBackend                      string
@@ -41,6 +49,11 @@ type Config struct {
 	RedisAddr                         string
 	RedisPassword                     string
 	RedisDB                           int
+	RedisPoolSize                     int
+	RedisMinIdleConns                 int
+	RedisIOTimeoutMs                  int
+	RedisClusterAddrs                 []string
+	RateLimitCombined                 bool
 	DedupRedisPrefix                  string
 	FailedStoreEnabled                bool
 	FailedStorePath                   string
@@ -57,6 +70,8 @@ type Config struct {
 	QueueFailureBudgetWindow          int
 	QueueFailureBudgetMinSamples      int
 	QueueThrottleRetryAfterSec        int
+	QueueBatchSize                    int
+	QueueBatchFlushMs                 int
 	SourceRateLimitEnabled            bool
 	SourceRateLimits                  map[string]int
 	SourceRateLimitDefault            int
@@ -65,15 +80,27 @@ type Config struct {
 	RetryEnabled                      bool
 	RetryMaxAttempts                  int
 	RetryIntervalSec                  int
+	RetryWorkers                      int
 	PubSubPublishTimeoutSec           int
 	PubSubPublishGoroutines           int
 	PubSubMaxOutstandingMessages      int
 	PubSubMaxOutstandingBytes         int
 	PubSubFlowControlBehavior         string
+	PubSubBatchDelayMs                int
+	PubSubBatchCountThreshold         int
+	PubSubBatchByteThreshold          int
+	CircuitBreakerThreshold           int
+	CircuitBreakerRecoverySec         int
 	RateLimitBackend                  string
 	RateLimitRedisPrefix              string
 	PIIScrubbingEnabled               bool
+	PIIScrubAsync                     bool
+	PIIMaxScrubBytes                  int
 	LogLevel                          string
+	HTTPMaxInflight                   int
+	HTTPMaxHeaderBytes                int
+	HTTPH2CEnabled                    bool
+	OTELTracesSamplerRatio            float64
 	ChaosEnabled                      bool
 	ChaosErrorRate                    float64
 	ChaosLatencyRate                  float64
@@ -90,9 +117,12 @@ func LoadFromEnv() Config {
 		GitLabWebhookToken:                os.Getenv("GITLAB_WEBHOOK_TOKEN"),
 		TeamsClientState:                  os.Getenv("TEAMS_CLIENT_STATE"),
 		QueueBuffer:                       intOrDefault("QUEUE_BUFFER", 4096),
-		QueueWorkers:                      intOrDefault("QUEUE_WORKERS", 1),
-		QueueBulkheadEnabled:              boolOrDefault("QUEUE_BULKHEAD_ENABLED", false),
+		QueueWorkers:                      intOrDefault("QUEUE_WORKERS", 16),
+		QueueBulkheadEnabled:              boolOrDefault("QUEUE_BULKHEAD_ENABLED", true),
 		QueueBulkheadBufferPerSource:      intOrDefault("QUEUE_BULKHEAD_BUFFER_PER_SOURCE", 1024),
+		QueueBulkheadMaxSources:           intOrDefault("QUEUE_BULKHEAD_MAX_SOURCES", 8),
+		QueueBatchSize:                    intOrDefault("QUEUE_BATCH_SIZE", 100),
+		QueueBatchFlushMs:                 intOrDefault("QUEUE_BATCH_FLUSH_MS", 50),
 		RequestTimeoutSec:                 intOrDefault("REQUEST_TIMEOUT_SEC", 15),
 		RequireSecrets:                    boolOrDefault("REQUIRE_SECRETS", true),
 		QueueBackend:                      envOrDefault("QUEUE_BACKEND", "log"),
@@ -112,6 +142,11 @@ func LoadFromEnv() Config {
 		RedisAddr:                         os.Getenv("REDIS_ADDR"),
 		RedisPassword:                     os.Getenv("REDIS_PASSWORD"),
 		RedisDB:                           intOrDefault("REDIS_DB", 0),
+		RedisPoolSize:                     intOrDefault("REDIS_POOL_SIZE", 32),
+		RedisMinIdleConns:                 intOrDefault("REDIS_MIN_IDLE_CONNS", 8),
+		RedisIOTimeoutMs:                  intOrDefault("REDIS_IO_TIMEOUT_MS", 100),
+		RedisClusterAddrs:                 splitCSVEnv("REDIS_CLUSTER_ADDRS"),
+		RateLimitCombined:                 boolOrDefault("RATE_LIMIT_COMBINED", false),
 		DedupRedisPrefix:                  envOrDefault("DEDUP_REDIS_PREFIX", "webhook_dedup"),
 		FailedStoreEnabled:                boolOrDefault("FAILED_EVENT_STORE_ENABLED", true),
 		FailedStorePath:                   envOrDefault("FAILED_EVENT_STORE_PATH", "data/failed-events.jsonl"),
@@ -127,7 +162,7 @@ func LoadFromEnv() Config {
 		QueueFailureBudgetPercent:         intOrDefault("QUEUE_FAILURE_BUDGET_PERCENT", 15),
 		QueueFailureBudgetWindow:          intOrDefault("QUEUE_FAILURE_BUDGET_WINDOW", 100),
 		QueueFailureBudgetMinSamples:      intOrDefault("QUEUE_FAILURE_BUDGET_MIN_SAMPLES", 20),
-		QueueThrottleRetryAfterSec:        intOrDefault("QUEUE_THROTTLE_RETRY_AFTER_SEC", 5),
+		QueueThrottleRetryAfterSec:        intOrDefault("QUEUE_THROTTLE_RETRY_AFTER_SEC", 2),
 		SourceRateLimitEnabled:            boolOrDefault("SOURCE_RATE_LIMIT_ENABLED", true),
 		SourceRateLimits:                  parseSourceRateLimits(os.Getenv("SOURCE_RATE_LIMITS")),
 		SourceRateLimitDefault:            intOrDefault("SOURCE_RATE_LIMIT_DEFAULT", 100),
@@ -136,15 +171,27 @@ func LoadFromEnv() Config {
 		RetryEnabled:                      boolOrDefault("RETRY_ENABLED", false),
 		RetryMaxAttempts:                  intOrDefault("RETRY_MAX_ATTEMPTS", 3),
 		RetryIntervalSec:                  intOrDefault("RETRY_INTERVAL_SEC", 10),
+		RetryWorkers:                      intOrDefault("RETRY_WORKERS", 8),
 		PubSubPublishTimeoutSec:           intOrDefault("PUBSUB_PUBLISH_TIMEOUT_SEC", 5),
-		PubSubPublishGoroutines:           intOrDefault("PUBSUB_PUBLISH_GOROUTINES", 0),
-		PubSubMaxOutstandingMessages:      intOrDefault("PUBSUB_MAX_OUTSTANDING_MESSAGES", 0),
-		PubSubMaxOutstandingBytes:         intOrDefault("PUBSUB_MAX_OUTSTANDING_BYTES", 0),
-		PubSubFlowControlBehavior:         envOrDefault("PUBSUB_FLOW_CONTROL_BEHAVIOR", "ignore"),
+		PubSubPublishGoroutines:           intOrDefault("PUBSUB_PUBLISH_GOROUTINES", 16),
+		PubSubMaxOutstandingMessages:      intOrDefault("PUBSUB_MAX_OUTSTANDING_MESSAGES", 2000),
+		PubSubMaxOutstandingBytes:         intOrDefault("PUBSUB_MAX_OUTSTANDING_BYTES", 104857600),
+		PubSubFlowControlBehavior:         envOrDefault("PUBSUB_FLOW_CONTROL_BEHAVIOR", "signal_error"),
+		PubSubBatchDelayMs:                intOrDefault("PUBSUB_BATCH_DELAY_MS", 20),
+		PubSubBatchCountThreshold:         intOrDefault("PUBSUB_BATCH_COUNT_THRESHOLD", 500),
+		PubSubBatchByteThreshold:          intOrDefault("PUBSUB_BATCH_BYTE_THRESHOLD", 1048576),
+		CircuitBreakerThreshold:           intOrDefault("CIRCUIT_BREAKER_THRESHOLD", 25),
+		CircuitBreakerRecoverySec:         intOrDefault("CIRCUIT_BREAKER_RECOVERY_SEC", 8),
 		RateLimitBackend:                  envOrDefault("RATE_LIMIT_BACKEND", "memory"),
 		RateLimitRedisPrefix:              envOrDefault("RATE_LIMIT_REDIS_PREFIX", "rate_limit"),
 		PIIScrubbingEnabled:               boolOrDefault("PII_SCRUBBING_ENABLED", false),
+		PIIScrubAsync:                     boolOrDefault("PII_SCRUB_ASYNC", true),
+		PIIMaxScrubBytes:                  intOrDefault("PII_MAX_SCRUB_BYTES", 262144),
 		LogLevel:                          envOrDefault("LOG_LEVEL", "info"),
+		HTTPMaxInflight:                   intOrDefault("HTTP_MAX_INFLIGHT", 512),
+		HTTPMaxHeaderBytes:                intOrDefault("HTTP_MAX_HEADER_BYTES", 8192),
+		HTTPH2CEnabled:                    boolOrDefault("HTTP_H2C_ENABLED", false),
+		OTELTracesSamplerRatio:            floatOrDefault("OTEL_TRACES_SAMPLER_RATIO", 0.02),
 		ChaosEnabled:                      boolOrDefault("CHAOS_ENABLED", false),
 		ChaosErrorRate:                    floatOrDefault("CHAOS_ERROR_RATE", 0.0),
 		ChaosLatencyRate:                  floatOrDefault("CHAOS_LATENCY_RATE", 0.0),
@@ -181,7 +228,7 @@ func (c Config) Validate() error {
 	}
 	queueWorkers := c.QueueWorkers
 	if queueWorkers == 0 {
-		queueWorkers = 1
+		queueWorkers = 16
 	}
 	if queueWorkers < 1 || queueWorkers > 1024 {
 		return fmt.Errorf("QUEUE_WORKERS must be between 1 and 1024, got %d", queueWorkers)
@@ -192,6 +239,54 @@ func (c Config) Validate() error {
 	}
 	if bulkheadBufferPerSource < 1 || bulkheadBufferPerSource > 1_000_000 {
 		return fmt.Errorf("QUEUE_BULKHEAD_BUFFER_PER_SOURCE must be between 1 and 1000000, got %d", bulkheadBufferPerSource)
+	}
+	if c.QueueBulkheadMaxSources < 0 || c.QueueBulkheadMaxSources > 64 {
+		return fmt.Errorf("QUEUE_BULKHEAD_MAX_SOURCES must be between 0 and 64, got %d", c.QueueBulkheadMaxSources)
+	}
+	if c.QueueBatchSize < 0 || c.QueueBatchSize > 10000 {
+		return fmt.Errorf("QUEUE_BATCH_SIZE must be between 0 and 10000, got %d", c.QueueBatchSize)
+	}
+	if c.QueueBatchFlushMs < 0 || c.QueueBatchFlushMs > 5000 {
+		return fmt.Errorf("QUEUE_BATCH_FLUSH_MS must be between 0 and 5000, got %d", c.QueueBatchFlushMs)
+	}
+	if c.RetryWorkers < 0 || c.RetryWorkers > 64 {
+		return fmt.Errorf("RETRY_WORKERS must be between 0 and 64, got %d", c.RetryWorkers)
+	}
+	if c.CircuitBreakerThreshold < 0 || c.CircuitBreakerThreshold > 1000 {
+		return fmt.Errorf("CIRCUIT_BREAKER_THRESHOLD must be between 0 and 1000, got %d", c.CircuitBreakerThreshold)
+	}
+	if c.CircuitBreakerRecoverySec < 0 || c.CircuitBreakerRecoverySec > 300 {
+		return fmt.Errorf("CIRCUIT_BREAKER_RECOVERY_SEC must be between 0 and 300, got %d", c.CircuitBreakerRecoverySec)
+	}
+	if c.RedisPoolSize < 0 || c.RedisPoolSize > 512 {
+		return fmt.Errorf("REDIS_POOL_SIZE must be between 0 and 512, got %d", c.RedisPoolSize)
+	}
+	if c.RedisMinIdleConns < 0 || c.RedisMinIdleConns > 512 {
+		return fmt.Errorf("REDIS_MIN_IDLE_CONNS must be between 0 and 512, got %d", c.RedisMinIdleConns)
+	}
+	if c.RedisIOTimeoutMs < 0 || c.RedisIOTimeoutMs > 5000 {
+		return fmt.Errorf("REDIS_IO_TIMEOUT_MS must be between 0 and 5000, got %d", c.RedisIOTimeoutMs)
+	}
+	if c.PIIMaxScrubBytes < 0 || c.PIIMaxScrubBytes > 4_194_304 {
+		return fmt.Errorf("PII_MAX_SCRUB_BYTES must be between 0 and 4194304, got %d", c.PIIMaxScrubBytes)
+	}
+	if c.HTTPMaxInflight < 0 || c.HTTPMaxInflight > 100000 {
+		return fmt.Errorf("HTTP_MAX_INFLIGHT must be between 0 and 100000, got %d", c.HTTPMaxInflight)
+	}
+	if c.HTTPMaxHeaderBytes < 0 || c.HTTPMaxHeaderBytes > 1_048_576 {
+		return fmt.Errorf("HTTP_MAX_HEADER_BYTES must be between 0 and 1048576, got %d", c.HTTPMaxHeaderBytes)
+	}
+	if c.OTELTracesSamplerRatio < 0 || c.OTELTracesSamplerRatio > 1 {
+		return fmt.Errorf("OTEL_TRACES_SAMPLER_RATIO must be between 0 and 1, got %f", c.OTELTracesSamplerRatio)
+	}
+	if c.PubSubBatchDelayMs < 0 || c.PubSubBatchDelayMs > 1000 {
+		return fmt.Errorf("PUBSUB_BATCH_DELAY_MS must be between 0 and 1000, got %d", c.PubSubBatchDelayMs)
+	}
+	if c.PubSubBatchCountThreshold < 0 || c.PubSubBatchCountThreshold > 100000 {
+		return fmt.Errorf("PUBSUB_BATCH_COUNT_THRESHOLD must be between 0 and 100000, got %d", c.PubSubBatchCountThreshold)
+	}
+	if c.PubSubBatchByteThreshold < 0 || c.PubSubBatchByteThreshold > 100_000_000 {
+		return fmt.Errorf("PUBSUB_BATCH_BYTE_THRESHOLD must be between 0 and 100000000, got %d", c.PubSubBatchByteThreshold)
 	}
 	if c.RequestTimeoutSec <= 0 {
 		return fmt.Errorf("REQUEST_TIMEOUT_SEC must be > 0, got %d", c.RequestTimeoutSec)
@@ -298,7 +393,7 @@ func (c Config) Validate() error {
 	}
 	pubsubFlowControlBehavior := strings.TrimSpace(c.PubSubFlowControlBehavior)
 	if pubsubFlowControlBehavior == "" {
-		pubsubFlowControlBehavior = "ignore"
+		pubsubFlowControlBehavior = "signal_error"
 	}
 	if pubsubFlowControlBehavior != "ignore" && pubsubFlowControlBehavior != "block" && pubsubFlowControlBehavior != "signal_error" {
 		return fmt.Errorf("PUBSUB_FLOW_CONTROL_BEHAVIOR must be one of ignore|block|signal_error, got %q", c.PubSubFlowControlBehavior)
@@ -500,24 +595,24 @@ func isWeakSecret(secret string) bool {
 		return true
 	}
 	weakValues := map[string]struct{}{
-		"change-me": {},
-		"changeme":  {},
-		"secret":    {},
-		"password":  {},
-		"admin":     {},
-		"test":      {},
-		"default":   {},
-		"12345678":  {},
-		"123456789": {},
+		"change-me":  {},
+		"changeme":   {},
+		"secret":     {},
+		"password":   {},
+		"admin":      {},
+		"test":       {},
+		"default":    {},
+		"12345678":   {},
+		"123456789":  {},
 		"1234567890": {},
-		"qwerty":    {},
-		"abc123":    {},
-		"password1": {},
-		"letmein":   {},
-		"welcome":   {},
-		"monkey":    {},
-		"master":    {},
-		"dragon":    {},
+		"qwerty":     {},
+		"abc123":     {},
+		"password1":  {},
+		"letmein":    {},
+		"welcome":    {},
+		"monkey":     {},
+		"master":     {},
+		"dragon":     {},
 	}
 	if _, ok := weakValues[v]; ok {
 		return true

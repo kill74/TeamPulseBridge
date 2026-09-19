@@ -318,13 +318,23 @@ If you are running this somewhere shared or production-like, these defaults are 
 - keep `REQUIRE_SECRETS=true`
 - keep `ADMIN_AUTH_ENABLED=true`
 - prefer `QUEUE_BACKEND=pubsub` for durability
-- increase `QUEUE_WORKERS` and `PUBSUB_PUBLISH_GOROUTINES` together when a pod needs higher publish throughput
-- enable `QUEUE_BULKHEAD_ENABLED=true` to isolate noisy providers behind per-source queue buffers
-- use `RATE_LIMIT_BACKEND=redis` when multiple gateway replicas need shared rate-limit counters
+- `QUEUE_WORKERS=16` and `PUBSUB_PUBLISH_GOROUTINES=16` are tuned together; raise both for higher publish throughput (see `docs/performance.md`)
+- keep `QUEUE_BULKHEAD_ENABLED=true` (default) to isolate noisy providers behind per-source queue buffers (`QUEUE_BULKHEAD_MAX_SOURCES=8`)
+- Pub/Sub bundling (`PUBSUB_BATCH_DELAY_MS=20`, `COUNT=500`) packs envelopes per RPC; flow-control `signal_error/2000/100MiB` fails fast with `Retry-After` instead of OOMing
+- PII scrubbing runs in queue workers (`PII_SCRUB_ASYNC=true`, `PII_MAX_SCRUB_BYTES=256KiB`) so the hot path only enqueues
+- use `RATE_LIMIT_BACKEND=redis` when multiple gateway replicas need shared rate-limit counters (`REDIS_POOL_SIZE=32`, `REDIS_IO_TIMEOUT_MS=100`); opt in to single-RTT `RATE_LIMIT_COMBINED=true` + `REDIS_CLUSTER_ADDRS` for 1 Lua (general+source+dedup)
+- envelopes use no-copy publish + `body_hash/event_id` attrs so event-store skips SHA recompute; `CopyFromEvents` for backfills, `SaveBatch` for live
+- gateway PG uses `statement_cache_mode=prepare`; run `*/migrations/002_perf_indexes.sql` `CONCURRENTLY` on existing large tables
+- `HTTP_H2C_ENABLED=true` for mesh H2C (250 streams); admin `FailedEvents` has 2s memoize + `ETag` → 304; `Healthz` 2s memoize + singleflight
 - prefer Postgres-backed failed-event, replay-audit, and security-audit stores in multi-replica production by setting `DATABASE_URL`
+- audit writes are async (background fsync, fail-open drops) — monitor drop counters, not request latency
+- event-store runs `2000 msgs/16 goroutines/10m extension` with pg pool `32/8`; watch `num_undelivered` + `pg_stat_activity`
+- keep `HTTP_MAX_INFLIGHT=512`, `OTEL_TRACES_SAMPLER_RATIO=0.02`; probes (`/healthz|/readyz|/metrics`) bypass rate limits and use route-template metrics
 - monitor `5xx` responses and publish failures
 - treat the failed-event store and replay audit log as operational data, not temporary debug output
 - treat the security audit stream as retained incident-response evidence, not debug-only logs
+
+Full tuning rationale, before/after numbers, and k6 suites: [../../docs/performance.md](../../docs/performance.md).
 
 ## Troubleshooting
 

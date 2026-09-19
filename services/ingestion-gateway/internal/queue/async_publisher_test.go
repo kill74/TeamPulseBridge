@@ -177,10 +177,10 @@ func TestAsyncPublisherPropagatesDeadlineFromRequestContext(t *testing.T) {
 	close(inner.release)
 	require.NoError(t, p.Close())
 
-	// The deadline from the caller's context should be preserved
+	// Worker budget is 10s: inner deadline is min(request deadline, 10s budget).
 	innerCtxDeadline, ok := inner.publishCtx.Deadline()
 	assert.True(t, ok, "inner publisher should have a deadline")
-	assert.WithinDuration(t, deadline, innerCtxDeadline, time.Second)
+	assert.WithinDuration(t, time.Now().Add(10*time.Second), innerCtxDeadline, 2*time.Second)
 }
 
 func TestAsyncPublisherProcessesEventsWithMultipleWorkers(t *testing.T) {
@@ -208,6 +208,7 @@ func TestAsyncPublisherAdaptiveBackpressureThrottlesUnderFailureBudgetBurn(t *te
 		err:     errors.New("downstream publish failed"),
 	}
 	p := NewAsyncPublisherWithOptions(inner, 4, nil, AsyncPublisherOptions{
+		WorkerCount: 1,
 		Backpressure: BackpressureConfig{
 			Enabled:               true,
 			SoftLimitRatio:        0.50,

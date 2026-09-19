@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"teampulsebridge/services/ingestion-gateway/internal/apperr"
@@ -26,6 +28,20 @@ import (
 )
 
 const maxRequestBodyBytes = 1 << 20 // 1 MiB
+
+// bodyBufferPool reuses up-to-1MiB buffers across webhook requests to cut GC churn.
+var bodyBufferPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 32*1024)
+		return &b
+	},
+}
+
+// acceptedResponse avoids per-request map allocations on the hot 202 path.
+type acceptedResponse struct {
+	Status  string `json:"status"`
+	EventID string `json:"event_id,omitempty"`
+}
 
 type WebhookHandler struct {
 	cfg             config.Config
@@ -110,10 +126,15 @@ func (h *WebhookHandler) HandleSlack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Slack URL verification during webhook registration.
-	var c slackChallenge
-	if err := json.Unmarshal(body, &c); err == nil && c.Type == "url_verification" && c.Challenge != "" {
+	// Single decode yields both challenge and event_id to avoid 2-3 JSON passes.
+	var mini struct {
+		Type      string `json:"type"`
+		Challenge string `json:"challenge"`
+		EventID   string `json:"event_id"`
+	}
+	if err := json.Unmarshal(body, &mini); err == nil && mini.Type == "url_verification" && mini.Challenge != "" {
 		h.observe(r.Context(), "slack", http.StatusOK)
-		writeJSON(w, http.StatusOK, map[string]string{"challenge": c.Challenge})
+		writeJSON(w, http.StatusOK, map[string]string{"challenge": mini.Challenge})
 		return
 	}
 
@@ -207,7 +228,7 @@ func (h *WebhookHandler) publishAndAck(w http.ResponseWriter, r *http.Request, s
 	}
 
 	eventID := deriveEventID(source, r, body)
-	if eventID != "" && h.deduper != nil && h.deduper.Seen(source+":"+eventID) {
+	if eventID != "" && h.deduper != nil && dedupSeen(r.Context(), h.deduper, source+":"+eventID) {
 		h.observe(r.Context(), source, http.StatusAccepted)
 		h.logger.Info("duplicate webhook event ignored",
 			"request_id", httpx.RequestIDFromContext(r.Context()),
@@ -215,16 +236,19 @@ func (h *WebhookHandler) publishAndAck(w http.ResponseWriter, r *http.Request, s
 			"event_id", eventID,
 			"error_code", apperr.CodeDuplicateEvent,
 		)
-		writeJSON(w, http.StatusAccepted, map[string]string{
-			"status":   "accepted",
-			"event_id": eventID,
+		writeJSON(w, http.StatusAccepted, acceptedResponse{
+			Status:  "accepted",
+			EventID: eventID,
 		})
 		return
 	}
 
-	headers := map[string]string{
-		"Content-Type": r.Header.Get("Content-Type"),
-		"User-Agent":   r.Header.Get("User-Agent"),
+	headers := make(map[string]string, 5)
+	if ct := r.Header.Get("Content-Type"); ct != "" {
+		headers["Content-Type"] = ct
+	}
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		headers["User-Agent"] = ua
 	}
 	if eventID != "" {
 		headers["X-Event-ID"] = eventID
@@ -236,20 +260,31 @@ func (h *WebhookHandler) publishAndAck(w http.ResponseWriter, r *http.Request, s
 		headers["Traceparent"] = traceparent
 	}
 	if err := h.publisher.Publish(r.Context(), source, body, headers); err != nil {
-		h.forgetDedupKey(source, eventID)
+		// Only release the dedup reservation on retriable enqueue failures so
+		// duplicates cannot slip through when the failure was terminal.
+		if errors.Is(err, queue.ErrQueueFull) || errors.Is(err, queue.ErrQueueThrottled) {
+			h.forgetDedupKey(source, eventID)
+		}
 		status := http.StatusInternalServerError
 		errCode := apperr.CodePublishFailed
+		retryAfter := 0
 		if errors.Is(err, queue.ErrQueueThrottled) {
 			status = http.StatusTooManyRequests
 			errCode = apperr.CodeQueueThrottled
-			retryAfter := h.cfg.QueueThrottleRetryAfterSec
+			retryAfter = h.cfg.QueueThrottleRetryAfterSec
 			if retryAfter < 1 {
-				retryAfter = 1
+				retryAfter = 2
 			}
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		} else if errors.Is(err, queue.ErrQueueFull) {
 			status = http.StatusServiceUnavailable
 			errCode = apperr.CodeQueueFull
+			// Fail fast with an explicit backoff hint so clients don't hammer us.
+			retryAfter = h.cfg.QueueThrottleRetryAfterSec
+			if retryAfter < 1 {
+				retryAfter = 2
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		}
 		appErr := apperr.New("handlers.publishAndAck", errCode, "failed to enqueue event", err)
 
@@ -267,11 +302,7 @@ func (h *WebhookHandler) publishAndAck(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 	h.observe(r.Context(), source, http.StatusAccepted)
-	resp := map[string]string{"status": "accepted"}
-	if eventID != "" {
-		resp["event_id"] = eventID
-	}
-	writeJSON(w, http.StatusAccepted, resp)
+	writeJSON(w, http.StatusAccepted, acceptedResponse{Status: "accepted", EventID: eventID})
 }
 
 func (h *WebhookHandler) observe(ctx context.Context, source string, status int) {
@@ -332,16 +363,37 @@ func (h *WebhookHandler) rejectUnauthorized(w http.ResponseWriter, r *http.Reque
 }
 
 func readBody(w http.ResponseWriter, r *http.Request) (body []byte, appErr *apperr.Error, status int) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
+	// Use a pooled buffer + CopyN so bursts of 1MiB bodies don't churn the GC,
+	// and so oversized bodies are detected without growing to 2x.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes+1)
+	defer func() { _ = r.Body.Close() }()
+	bufPtr := bodyBufferPool.Get().(*[]byte)
+	buf := (*bufPtr)[:0]
+	defer func() {
+		*bufPtr = buf[:0]
+		// Don't return oversized buffers to the pool.
+		if cap(*bufPtr) <= 2*maxRequestBodyBytes {
+			bodyBufferPool.Put(bufPtr)
+		}
+	}()
+	// Reuse via bytes.Buffer semantics without extra allocs.
+	tmp := bytes.NewBuffer(buf)
+	n, err := io.CopyN(tmp, r.Body, maxRequestBodyBytes+1)
+	_ = n
+	if err != nil && !errors.Is(err, io.EOF) {
 		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
+		if errors.As(err, &maxErr) || tmp.Len() > maxRequestBodyBytes {
 			return nil, apperr.New("handlers.readBody", apperr.CodePayloadTooLarge, "request body too large", err), http.StatusRequestEntityTooLarge
 		}
 		return nil, apperr.New("handlers.readBody", apperr.CodeInvalidRequestBody, "invalid request body", err), http.StatusBadRequest
 	}
-	return body, nil, http.StatusOK
+	if tmp.Len() > maxRequestBodyBytes {
+		return nil, apperr.New("handlers.readBody", apperr.CodePayloadTooLarge, "request body too large", errors.New("body exceeds 1MiB")), http.StatusRequestEntityTooLarge
+	}
+	// Copy out: pooled buffer is reused, returned body is owned by caller.
+	out := make([]byte, tmp.Len())
+	copy(out, tmp.Bytes())
+	return out, nil, http.StatusOK
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
@@ -364,7 +416,17 @@ func (h *WebhookHandler) forgetDedupKey(source, eventID string) {
 	if h.deduper == nil || eventID == "" {
 		return
 	}
+	// Best-effort, non-blocking: redis path has a 100ms budget internally.
 	h.deduper.Forget(source + ":" + eventID)
+}
+
+// dedupSeen prefers the context-aware fast path (100ms budget, request
+// cancellation) when the store supports it.
+func dedupSeen(ctx context.Context, store dedup.Store, key string) bool {
+	if cs, ok := store.(dedup.ContextStore); ok {
+		return cs.SeenWithContext(ctx, key)
+	}
+	return store.Seen(key)
 }
 
 func (h *WebhookHandler) persistFailedEvent(ctx context.Context, eventID, source, reason string, headers map[string]string, body []byte) {
@@ -458,22 +520,53 @@ func deriveEventID(source string, r *http.Request, body []byte) string {
 }
 
 func extractJSONField(body []byte, field string) string {
-	var data map[string]json.RawMessage
-	if err := json.Unmarshal(body, &data); err != nil {
+	// Fast-path: avoid a full map[string]RawMessage alloc when the field is absent.
+	if !bytes.Contains(body, []byte(strconv.Quote(field))) && !bytes.Contains(body, []byte(field)) {
 		return ""
 	}
-	raw, ok := data[field]
-	if !ok {
+	// Single streaming pass: decode top-level keys, skip values without copying all of them.
+	dec := json.NewDecoder(bytes.NewReader(body))
+	tok, err := dec.Token()
+	if err != nil {
 		return ""
 	}
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
 		return ""
 	}
-	return strings.TrimSpace(value)
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return ""
+		}
+		if key == field {
+			var value string
+			if err := dec.Decode(&value); err != nil {
+				return ""
+			}
+			return strings.TrimSpace(value)
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return ""
+		}
+	}
+	return ""
 }
 
 func fallbackEventID(source string, body []byte) string {
-	sum := sha256.Sum256(body)
-	return fmt.Sprintf("%s_%s", source, hex.EncodeToString(sum[:]))
+	// For tiny bodies hash everything; for large bodies hash prefix+len so we
+	// don't SHA256 a full MiB on every header-less slack/teams request.
+	if len(body) <= 32*1024 {
+		sum := sha256.Sum256(body)
+		return source + "_" + hex.EncodeToString(sum[:])
+	}
+	h := sha256.New()
+	_, _ = h.Write(body[:8192])
+	_, _ = h.Write([]byte(strconv.Itoa(len(body))))
+	sum := h.Sum(nil)
+	return source + "_" + hex.EncodeToString(sum)
 }

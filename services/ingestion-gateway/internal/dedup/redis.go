@@ -2,7 +2,6 @@ package dedup
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -11,12 +10,12 @@ import (
 
 type Redis struct {
 	enabled atomic.Bool
-	client  *redis.Client
+	client  redis.UniversalClient
 	prefix  string
 	ttl     time.Duration
 }
 
-func NewRedis(enabled bool, client *redis.Client, prefix string, ttl time.Duration) *Redis {
+func NewRedis(enabled bool, client redis.UniversalClient, prefix string, ttl time.Duration) *Redis {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
@@ -30,17 +29,24 @@ func NewRedis(enabled bool, client *redis.Client, prefix string, ttl time.Durati
 }
 
 // Seen returns true if key has already been observed within the dedup window.
+// Uses a short 100ms budget and fail-open semantics so a Redis brownout
+// cannot stall the webhook hot path.
 func (r *Redis) Seen(key string) bool {
+	return r.SeenWithContext(context.Background(), key)
+}
+
+// SeenWithContext respects request cancellation and caps latency at 100ms.
+func (r *Redis) SeenWithContext(ctx context.Context, key string) bool {
 	if !r.enabled.Load() || key == "" || r.client == nil {
 		return false
 	}
 
-	fullKey := fmt.Sprintf("%s:%s", r.prefix, key)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	fullKey := r.prefix + ":" + key
+	timeoutCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 
 	// SETNX + EXPIRE atomically
-	wasSet, err := r.client.SetNX(ctx, fullKey, "1", r.ttl).Result()
+	wasSet, err := r.client.SetNX(timeoutCtx, fullKey, "1", r.ttl).Result()
 	if err != nil {
 		// Fallback: allow event if Redis is down (fail-open)
 		return false
@@ -49,13 +55,19 @@ func (r *Redis) Seen(key string) bool {
 }
 
 func (r *Redis) Forget(key string) {
+	r.ForgetWithContext(context.Background(), key)
+}
+
+// ForgetWithContext only forgets on retriable paths; callers should avoid
+// calling it on terminal validation failures.
+func (r *Redis) ForgetWithContext(ctx context.Context, key string) {
 	if !r.enabled.Load() || key == "" || r.client == nil {
 		return
 	}
-	fullKey := fmt.Sprintf("%s:%s", r.prefix, key)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	fullKey := r.prefix + ":" + key
+	timeoutCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
-	_ = r.client.Del(ctx, fullKey).Err()
+	_ = r.client.Del(timeoutCtx, fullKey).Err()
 }
 
 // Stop disables the dedup store without closing the shared Redis client.
