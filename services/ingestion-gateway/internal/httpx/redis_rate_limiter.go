@@ -162,40 +162,11 @@ func (l *RedisRateLimiter) CombinedCheckWithContext(ctx context.Context, general
 	}
 }
 
+// AllowWithInfo is the non-cancellable fallback (no request ctx available).
+// Prefer AllowWithContext in request paths so client disconnect cancels the
+// Redis wait instead of stalling the full timeout.
 func (l *RedisRateLimiter) AllowWithInfo(key string, limit int, now time.Time) RateLimitResult {
-	if limit <= 0 {
-		return RateLimitResult{Allowed: false, Limit: limit}
-	}
-	if l.client == nil || strings.TrimSpace(key) == "" {
-		return RateLimitResult{Allowed: true, Limit: limit, Remaining: limit}
-	}
-
-	windowStart := l.windowStart(now.UTC())
-	redisKey := l.redisKey(windowStart, key)
-	resetAt := time.Unix(windowStart+int64(l.window/time.Second), 0).UTC()
-	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
-	defer cancel()
-
-	count, err := incrWithExpireScript.Run(ctx, l.client, []string{redisKey}, int64(l.window/time.Second)).Int()
-	if err != nil {
-		return RateLimitResult{
-			Allowed:   true,
-			Remaining: limit,
-			ResetAt:   resetAt,
-			Limit:     limit,
-		}
-	}
-
-	remaining := limit - count
-	if remaining < 0 {
-		remaining = 0
-	}
-	return RateLimitResult{
-		Allowed:   count <= limit,
-		Remaining: remaining,
-		ResetAt:   resetAt,
-		Limit:     limit,
-	}
+	return l.allowWithContext(context.Background(), key, limit, now)
 }
 
 func (l *RedisRateLimiter) windowStart(t time.Time) int64 {

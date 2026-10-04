@@ -206,7 +206,7 @@ func (p *PubSubPublisher) Publish(ctx context.Context, source string, body []byt
 			timeout = remaining
 		}
 	}
-	publishCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	publishCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	res := p.topic.Publish(publishCtx, msg)
 	msgID, err := res.Get(publishCtx)

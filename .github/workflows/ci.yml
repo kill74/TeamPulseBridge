@@ -61,7 +61,7 @@ jobs:
         with:
           version: v2.12.2
           working-directory: services/ingestion-gateway
-          args: --timeout=5m
+          args: --config ../../.golangci.yml --timeout=5m
 
   contracts:
     runs-on: ubuntu-latest

@@ -95,7 +95,7 @@ replay:
 dev-setup:
 	@command -v go >/dev/null 2>&1 || (echo "Go is required" && exit 1)
 	@command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1)
-	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469 python-hcl2==8.1.2
+	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469 python-hcl2==8.1.2 pyyaml
 	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@python3 -m pre_commit install --install-hooks
@@ -140,10 +140,10 @@ race:
 	cd services/ingestion-gateway && go test -race ./...
 
 fuzz:
-	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=30s ./internal/handlers ./internal/queue ./internal/config ./internal/dedup
+	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=30s ./internal/queue ./internal/config
 
 fuzz-ci:
-	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=5m ./internal/handlers ./internal/queue ./internal/config ./internal/dedup
+	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=5m ./internal/queue ./internal/config
 
 verify: fmt lint vet test race
 

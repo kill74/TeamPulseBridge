@@ -176,17 +176,17 @@ module "monitoring" {
   app_domain                 = var.app_domain
   health_check_path          = var.health_check_path
   health_check_port          = var.health_check_port
-  log_retention_days         = var.log_retention_days
+  log_retention_days                = var.log_retention_days
   security_audit_log_retention_days = var.security_audit_log_retention_days
-  pod_restart_threshold      = var.pod_restart_threshold
-  memory_threshold           = var.memory_threshold
-  cpu_threshold              = var.cpu_threshold
-  error_rate_threshold       = var.error_rate_threshold
-  enable_email_notifications = var.enable_email_notifications
-  alert_email                = var.alert_email
-  enable_slack_notifications = var.enable_slack_notifications
-  slack_channel              = var.slack_channel
-  slack_webhook_url          = var.slack_webhook_url
+  pod_restart_threshold             = var.pod_restart_threshold
+  memory_threshold                  = var.memory_threshold
+  cpu_threshold                     = var.cpu_threshold
+  error_rate_threshold              = var.error_rate_threshold
+  enable_email_notifications        = var.enable_email_notifications
+  alert_email                       = var.alert_email
+  enable_slack_notifications        = var.enable_slack_notifications
+  slack_channel                     = var.slack_channel
+  slack_webhook_url                 = var.slack_webhook_url
 
   depends_on = [module.gke]
 }
@@ -341,17 +341,17 @@ module "monitoring_secondary" {
   app_domain                 = local.secondary_app_domain
   health_check_path          = var.health_check_path
   health_check_port          = var.health_check_port
-  log_retention_days         = var.log_retention_days
+  log_retention_days                = var.log_retention_days
   security_audit_log_retention_days = var.security_audit_log_retention_days
-  pod_restart_threshold      = var.pod_restart_threshold
-  memory_threshold           = var.memory_threshold
-  cpu_threshold              = var.cpu_threshold
-  error_rate_threshold       = var.error_rate_threshold
-  enable_email_notifications = var.enable_email_notifications
-  alert_email                = var.alert_email
-  enable_slack_notifications = var.enable_slack_notifications
-  slack_channel              = var.slack_channel
-  slack_webhook_url          = var.slack_webhook_url
+  pod_restart_threshold             = var.pod_restart_threshold
+  memory_threshold                  = var.memory_threshold
+  cpu_threshold                     = var.cpu_threshold
+  error_rate_threshold              = var.error_rate_threshold
+  enable_email_notifications        = var.enable_email_notifications
+  alert_email                       = var.alert_email
+  enable_slack_notifications        = var.enable_slack_notifications
+  slack_channel                     = var.slack_channel
+  slack_webhook_url                 = var.slack_webhook_url
 
   depends_on = [module.gke_secondary]
 }

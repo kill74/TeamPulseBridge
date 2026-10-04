@@ -6,7 +6,7 @@ terraform {
     }
     google-beta = {
       source  = "hashicorp/google-beta"
-      version = "~> 8.0"
+      version = "~> 7.35"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
@@ -22,5 +22,5 @@ terraform {
     }
   }
 
-  required_version = ">= 1.0"
+  required_version = ">= 1.9, < 2.0"
 }

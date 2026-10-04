@@ -35,6 +35,11 @@ jobs:
       - name: Install policy tools
         run: pip install checkov==3.2.469 python-hcl2==8.1.2 pyyaml
 
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.30.0"
+
       - name: Run Checkov on Terraform
         run: checkov --config-file .checkov.yaml --framework terraform --directory infrastructure/terraform
 
