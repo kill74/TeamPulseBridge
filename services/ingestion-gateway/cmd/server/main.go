@@ -55,9 +55,10 @@ func (d *deferredHandler) set(h http.Handler) {
 
 func (d *deferredHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.mu.RLock()
-	defer d.mu.RUnlock()
-	if d.handler != nil {
-		d.handler.ServeHTTP(w, r)
+	h := d.handler
+	d.mu.RUnlock()
+	if h != nil {
+		h.ServeHTTP(w, r)
 	}
 }
 
@@ -827,6 +828,16 @@ func run() int {
 
 	deduper.Stop()
 	handlerBuilder.Stop()
+	// Drain async audit/fail stores so buffered records persist on shutdown.
+	if c, ok := failedStore.(interface{ Close() }); ok && c != nil {
+		c.Close()
+	}
+	if c, ok := replayAuditStore.(interface{ Close() }); ok && c != nil {
+		c.Close()
+	}
+	if c, ok := securityAuditStore.(interface{ Close() }); ok && c != nil {
+		c.Close()
+	}
 	if redisClient != nil {
 		if closeErr := redisClient.Close(); closeErr != nil {
 			logger.Error("redis client close failed", "error", closeErr)

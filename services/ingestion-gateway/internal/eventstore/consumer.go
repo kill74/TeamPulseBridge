@@ -97,8 +97,9 @@ func (c *Consumer) handleMessage(ctx context.Context, msg *pubsub.Message) {
 	})
 	if err != nil {
 		c.nacked.Add(1)
-		// Exponential backoff hint: Nack with a small sleep so a DB stall
-		// doesn't become a tight redelivery loop.
+		// Nack immediately without sleeping: sleeping here blocks the Pub/Sub
+		// receive callback goroutine (head-of-line blocking + lease expiry).
+		// Redelivery backoff is handled by the subscription retry policy.
 		backoff := 100 * time.Millisecond
 		if msg.DeliveryAttempt != nil && *msg.DeliveryAttempt > 1 {
 			backoff = time.Duration(*msg.DeliveryAttempt) * 200 * time.Millisecond
@@ -107,7 +108,6 @@ func (c *Consumer) handleMessage(ctx context.Context, msg *pubsub.Message) {
 			}
 		}
 		c.logger.Error("failed to store webhook event", "message_id", msg.ID, "source", envelope.Source, "error", err, "backoff_ms", backoff.Milliseconds())
-		time.Sleep(backoff)
 		msg.Nack()
 		return
 	}

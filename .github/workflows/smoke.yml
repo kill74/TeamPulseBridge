@@ -29,6 +29,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Validate root compose config
+        run: docker compose -f docker-compose.yml config --quiet
+
       - name: Build and start stack
         run: docker compose -f services/ingestion-gateway/docker-compose.integration.yml up -d --build
 

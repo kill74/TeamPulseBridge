@@ -438,29 +438,6 @@ func (c Config) Validate() error {
 			return errors.New("ADMIN_ALLOW_CIDRS is required when ADMIN_AUTH_ENABLED=true in production-like environments")
 		}
 	}
-	if !c.RequireSecrets {
-		if !IsNonProdEnvironment(c.Environment) {
-			return fmt.Errorf("REQUIRE_SECRETS=false is only allowed in non-prod environments, got ENVIRONMENT=%q", c.Environment)
-		}
-		return nil
-	}
-
-	missing := make([]string, 0, 4)
-	if c.SlackSigningSecret == "" {
-		missing = append(missing, "SLACK_SIGNING_SECRET")
-	}
-	if c.GitHubWebhookSecret == "" {
-		missing = append(missing, "GITHUB_WEBHOOK_SECRET")
-	}
-	if c.GitLabWebhookToken == "" {
-		missing = append(missing, "GITLAB_WEBHOOK_TOKEN")
-	}
-	if c.TeamsClientState == "" {
-		missing = append(missing, "TEAMS_CLIENT_STATE")
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("missing required secrets: %s", strings.Join(missing, ", "))
-	}
 	if c.ChaosEnabled {
 		if c.ChaosErrorRate < 0 || c.ChaosErrorRate > 1 {
 			return fmt.Errorf("CHAOS_ERROR_RATE must be between 0.0 and 1.0, got %f", c.ChaosErrorRate)
@@ -491,6 +468,29 @@ func (c Config) Validate() error {
 				return fmt.Errorf("source rate limit for %q must be between 1 and 1000000, got %d", src, limit)
 			}
 		}
+	}
+	if !c.RequireSecrets {
+		if !IsNonProdEnvironment(c.Environment) {
+			return fmt.Errorf("REQUIRE_SECRETS=false is only allowed in non-prod environments, got ENVIRONMENT=%q", c.Environment)
+		}
+		return nil
+	}
+
+	missing := make([]string, 0, 4)
+	if c.SlackSigningSecret == "" {
+		missing = append(missing, "SLACK_SIGNING_SECRET")
+	}
+	if c.GitHubWebhookSecret == "" {
+		missing = append(missing, "GITHUB_WEBHOOK_SECRET")
+	}
+	if c.GitLabWebhookToken == "" {
+		missing = append(missing, "GITLAB_WEBHOOK_TOKEN")
+	}
+	if c.TeamsClientState == "" {
+		missing = append(missing, "TEAMS_CLIENT_STATE")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required secrets: %s", strings.Join(missing, ", "))
 	}
 	return nil
 }

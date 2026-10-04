@@ -365,8 +365,12 @@ func (h *AdminHandler) ReplayFailedEventsBatch(w http.ResponseWriter, r *http.Re
 	sem := make(chan struct{}, batchWorkers)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	done := make([]bool, len(eventIDs))
 	cancelled := false
+launch:
 	for i, eventID := range eventIDs {
+		// Cancellable semaphore acquire: don't block with 5 busy workers
+		// after the client has gone away.
 		select {
 		case <-r.Context().Done():
 			mu.Lock()
@@ -376,11 +380,10 @@ func (h *AdminHandler) ReplayFailedEventsBatch(w http.ResponseWriter, r *http.Re
 				"processed", i,
 				"remaining", len(eventIDs)-i,
 			)
-			goto writeResponse
-		default:
+			break launch
+		case sem <- struct{}{}:
 		}
 		wg.Add(1)
-		sem <- struct{}{}
 		go func(idx int, eid string) {
 			defer wg.Done()
 			defer func() { <-sem }()
@@ -399,6 +402,7 @@ func (h *AdminHandler) ReplayFailedEventsBatch(w http.ResponseWriter, r *http.Re
 			}
 			mu.Lock()
 			results[idx] = result
+			done[idx] = true
 			summary.Processed++
 			switch result.Status {
 			case "validated":
@@ -414,14 +418,26 @@ func (h *AdminHandler) ReplayFailedEventsBatch(w http.ResponseWriter, r *http.Re
 			mu.Unlock()
 		}(i, eventID)
 	}
+	// Always wait for in-flight workers before encoding: no concurrent
+	// write to results[idx] while w.Write serializes the response.
 	wg.Wait()
-	_ = cancelled
+	mu.Lock()
+	isCancelled := cancelled
+	mu.Unlock()
 
-writeResponse:
-	// Preserve input order (results indexed); filter zero-values on cancel.
-	ordered := results
-	if summary.Processed < len(results) {
-		ordered = results[:summary.Processed]
+	// Preserve input order but drop never-started / never-completed slots
+	// (out-of-order completion means prefix truncation would leak zero-values).
+	ordered := make([]replayExecutionResult, 0, summary.Processed)
+	for idx, completed := range done {
+		if completed {
+			ordered = append(ordered, results[idx])
+		}
+	}
+	if isCancelled {
+		h.logger.Warn("batch replay partial response after cancel",
+			"processed", summary.Processed,
+			"requested", summary.Requested,
+		)
 	}
 	writeJSON(w, batchReplayHTTPStatus(req.DryRun, summary), map[string]any{
 		"status":  batchReplayStatus(summary),
