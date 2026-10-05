@@ -2,15 +2,26 @@ name: docs
 
 on:
   pull_request:
+    paths:
+      - "site-docs/**"
+      - ".github/workflows/docs.yml"
   push:
     branches: ['main', 'master']
+    paths:
+      - "site-docs/**"
+      - ".github/workflows/docs.yml"
 
 permissions:
   contents: read
 
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docs-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: site-docs

@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -60,7 +60,7 @@ jobs:
           fi
 
       - name: Validate automated release readiness gates
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const owner = context.repo.owner;
@@ -71,6 +71,9 @@ jobs:
               { file: "smoke.yml", name: "smoke" },
               { file: "docs.yml", name: "docs" },
               { file: "integration.yml", name: "integration" },
+              { file: "policy.yml", name: "policy" },
+              { file: "terraform.yml", name: "terraform" },
+              { file: "security-scan.yml", name: "security-scan" },
             ];
 
             const branchInfo = await github.rest.repos.getBranch({ owner, repo, branch });
@@ -88,15 +91,28 @@ jobs:
               });
 
               const matchingRun = runs.data.workflow_runs.find((run) => run.head_sha === headSha && run.status === "completed");
-              if (!matchingRun) {
-                failures.push(`No completed ${workflow.name} workflow run was found for ${branch}@${headSha}.`);
-                summaryLines.push(`- ${workflow.name}: missing for ${headSha}`);
+              if (matchingRun) {
+                summaryLines.push(`- ${workflow.name}: ${matchingRun.conclusion} (${matchingRun.html_url})`);
+                if (matchingRun.conclusion !== "success") {
+                  failures.push(`${workflow.name} workflow for ${branch}@${headSha} concluded ${matchingRun.conclusion}.`);
+                }
                 continue;
               }
 
-              summaryLines.push(`- ${workflow.name}: ${matchingRun.conclusion} (${matchingRun.html_url})`);
-              if (matchingRun.conclusion !== "success") {
-                failures.push(`${workflow.name} workflow for ${branch}@${headSha} concluded ${matchingRun.conclusion}.`);
+              // No run for this SHA: path-filtered workflows (ci, smoke,
+              // integration, policy, ...) legitimately skip commits that
+              // don't touch their paths. Fall back to the newest completed
+              // run on the branch so unaffected code doesn't block releases;
+              // a missing or non-success latest run still fails closed.
+              const latest = runs.data.workflow_runs.find((run) => run.status === "completed");
+              if (!latest) {
+                failures.push(`No completed ${workflow.name} workflow run was found for ${branch}@${headSha} (and no prior run on ${branch}).`);
+                summaryLines.push(`- ${workflow.name}: missing for ${headSha} (no prior run)`);
+                continue;
+              }
+              summaryLines.push(`- ${workflow.name}: ${latest.conclusion} (latest on ${branch}, HEAD unaffected: ${latest.html_url})`);
+              if (latest.conclusion !== "success") {
+                failures.push(`${workflow.name} workflow has no run for ${branch}@${headSha} and latest concluded ${latest.conclusion}.`);
               }
             }
 
@@ -155,5 +171,5 @@ jobs:
           VERSION="${{ github.event.inputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$VERSION"
+          git tag -a "$VERSION" -m "Release $VERSION"
           git push origin "$VERSION"

@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  actions: read
 
 concurrency:
   group: release-${{ github.ref_name }}
@@ -19,16 +20,53 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+
+      - name: Advisory pre-release gate check (tag-release is the enforced gate)
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            // Tag pushes bypass tag-release gates by design; surface the gate
+            // state in the release summary without failing closed on timing
+            // races (workflows may still be running for this SHA).
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = context.payload.repository.default_branch;
+            const commitSha = context.sha;
+            const requiredWorkflows = [
+              "ci.yml", "smoke.yml", "docs.yml", "integration.yml",
+              "policy.yml", "terraform.yml", "security-scan.yml",
+            ];
+            const lines = [];
+            for (const file of requiredWorkflows) {
+              const runs = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id: file, branch, per_page: 5,
+              });
+              const match = runs.data.workflow_runs.find(
+                (r) => r.head_sha === commitSha && r.status === "completed",
+              );
+              if (match) {
+                lines.push(`- ${file}: ${match.conclusion}`);
+                if (match.conclusion !== "success") {
+                  core.warning(`${file} concluded ${match.conclusion} for ${commitSha}.`);
+                }
+              } else {
+                lines.push(`- ${file}: no completed run for ${commitSha} (still running or path-skipped)`);
+              }
+            }
+            await core.summary
+              .addHeading("Pre-release gate state (advisory)")
+              .addRaw(lines.join("\n") + "\n")
+              .write();
 
       - name: Build changelog entry
         id: changelog
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME}"
-          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -n 1 || true)
+          PREV_TAG=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -v "^${TAG}$" | head -n 1 || true)
           {
             echo "## ${TAG} - $(date +%Y-%m-%d)"
             echo
@@ -41,7 +79,7 @@ jobs:
           } > release-notes.md
 
       - name: Preserve release notes across checkout
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-notes
           path: release-notes.md
@@ -56,7 +94,7 @@ jobs:
           bash ./scripts/release/build-release-artifacts.sh "${GITHUB_REF_NAME}"
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.9.1
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
       - name: Sign release artifacts (keyless)
         shell: bash
@@ -100,7 +138,7 @@ jobs:
             echo "- Signed artifacts: yes"
             echo "- Checksums verified: yes"
             echo "- Changelog update automation: enabled"
-            echo "- Automated pre-tag workflow gates: ci, smoke, docs, integration"
+            echo "- Automated pre-tag workflow gates: ci, smoke, docs, integration, policy, terraform, security-scan"
             echo
             echo "## Published Artifacts"
             while read -r artifact; do
@@ -122,13 +160,13 @@ jobs:
             release-checklist.md
 
       - name: Checkout default branch for changelog update
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
 
       - name: Restore release notes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-notes
 
@@ -158,4 +196,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
           git commit -m "chore(release): update changelog for ${GITHUB_REF_NAME}"
-          git push origin HEAD:${{ github.event.repository.default_branch }}
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${DEFAULT_BRANCH}"; then
+              exit 0
+            fi
+            echo "Changelog push failed (attempt ${attempt}); rebasing on latest ${DEFAULT_BRANCH}..."
+            git fetch origin "${DEFAULT_BRANCH}"
+            git rebase "origin/${DEFAULT_BRANCH}" || git rebase --abort
+          done
+          echo "Changelog push failed after 3 attempts"
+          exit 1
