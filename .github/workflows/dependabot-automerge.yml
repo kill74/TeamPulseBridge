@@ -2,7 +2,7 @@ name: dependabot-automerge
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: write
@@ -20,13 +20,17 @@ jobs:
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Precondition note: enabling auto-merge does NOT bypass CI. Merge is
+      # still blocked until the branch-protection required checks pass (see
+      # site-docs/docs/runbooks/branch-protection.md). This step only queues
+      # the merge for patch updates that clear those gates.
       - name: Enable auto-merge for safe patch updates
         if: steps.metadata.outputs.update-type == 'version-update:semver-patch'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const prNumber = context.payload.pull_request.number;

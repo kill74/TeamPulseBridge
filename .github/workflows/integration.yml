@@ -26,6 +26,7 @@ jobs:
 
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - name: Checkout code
@@ -72,11 +73,12 @@ jobs:
           go test -v -race -coverpkg=./... -coverprofile=coverage.out -timeout 120s ./...
 
       - name: Upload Coverage
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           files: ./services/ingestion-gateway/coverage.out
           flags: integration-tests
           fail_ci_if_error: false
+          use_oidc: true
 
       - name: Stop Pub/Sub Emulator
         if: always()
