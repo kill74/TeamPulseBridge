@@ -25,7 +25,11 @@ type runtimeConfig struct {
 	PubSubProjectID        string
 	PubSubSubscriptionID   string
 	MaxOutstandingMessages int
+	MaxOutstandingBytes    int
 	ReceiveGoroutines      int
+	MaxExtension           time.Duration
+	DBMaxConns             int32
+	DBMinConns             int32
 }
 
 func main() {
@@ -44,7 +48,27 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("parse postgres config: %w", err)
+	}
+	// Tuned pool: default 4 conns starved under burst (pool starvation =>
+	// PubSub lease expiry => duplicate Nack storm).
+	if cfg.DBMaxConns > 0 {
+		poolCfg.MaxConns = cfg.DBMaxConns
+	} else {
+		poolCfg.MaxConns = 32
+	}
+	if cfg.DBMinConns > 0 {
+		poolCfg.MinConns = cfg.DBMinConns
+	} else {
+		poolCfg.MinConns = 8
+	}
+	poolCfg.MaxConnLifetime = 5 * time.Minute
+	poolCfg.MaxConnIdleTime = time.Minute
+	poolCfg.HealthCheckPeriod = 30 * time.Second
+	poolCfg.ConnConfig.RuntimeParams["statement_cache_mode"] = "prepare"
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return fmt.Errorf("create postgres pool: %w", err)
 	}
@@ -57,9 +81,9 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("initialize event store: %w", err)
 	}
 
-	client, err := pubsub.NewClient(ctx, cfg.PubSubProjectID)
+	client, err := newPubSubClientWithRetry(ctx, cfg.PubSubProjectID, logger)
 	if err != nil {
-		return fmt.Errorf("create pubsub client: %w", err)
+		return err
 	}
 	defer func() {
 		if err := client.Close(); err != nil {
@@ -77,14 +101,24 @@ func run(logger *slog.Logger) error {
 
 	subscriber := client.Subscriber(cfg.PubSubSubscriptionID)
 	subscriber.ReceiveSettings.MaxOutstandingMessages = cfg.MaxOutstandingMessages
+	subscriber.ReceiveSettings.MaxOutstandingBytes = cfg.MaxOutstandingBytes
 	subscriber.ReceiveSettings.NumGoroutines = cfg.ReceiveGoroutines
+	if cfg.MaxExtension > 0 {
+		subscriber.ReceiveSettings.MaxExtension = cfg.MaxExtension
+	} else {
+		subscriber.ReceiveSettings.MaxExtension = 10 * time.Minute
+	}
 
 	consumer := eventstore.NewConsumer(subscriber, store, logger)
 	logger.Info("starting event store consumer",
 		"project_id", cfg.PubSubProjectID,
 		"subscription_id", cfg.PubSubSubscriptionID,
 		"max_outstanding_messages", cfg.MaxOutstandingMessages,
+		"max_outstanding_bytes", cfg.MaxOutstandingBytes,
 		"receive_goroutines", cfg.ReceiveGoroutines,
+		"max_extension", subscriber.ReceiveSettings.MaxExtension.String(),
+		"db_max_conns", poolCfg.MaxConns,
+		"db_min_conns", poolCfg.MinConns,
 	)
 	if err := consumer.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -93,13 +127,40 @@ func run(logger *slog.Logger) error {
 	return nil
 }
 
+func newPubSubClientWithRetry(ctx context.Context, projectID string, logger *slog.Logger) (*pubsub.Client, error) {
+	var client *pubsub.Client
+	var err error
+	backoff := 500 * time.Millisecond
+	for attempt := 1; attempt <= 5; attempt++ {
+		client, err = pubsub.NewClient(ctx, projectID)
+		if err == nil {
+			return client, nil
+		}
+		logger.Warn("pubsub client init failed, retrying", "attempt", attempt, "error", err, "backoff_ms", backoff.Milliseconds())
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+			backoff *= 2
+			if backoff > 8*time.Second {
+				backoff = 8 * time.Second
+			}
+		}
+	}
+	return nil, fmt.Errorf("create pubsub client after retries: %w", err)
+}
+
 func loadConfig() runtimeConfig {
 	return runtimeConfig{
 		DatabaseURL:            os.Getenv("DATABASE_URL"),
 		PubSubProjectID:        os.Getenv("PUBSUB_PROJECT_ID"),
 		PubSubSubscriptionID:   envOrDefault("EVENTSTORE_PUBSUB_SUBSCRIPTION_ID", "webhook-events-store"),
-		MaxOutstandingMessages: intOrDefault("EVENTSTORE_MAX_OUTSTANDING_MESSAGES", 100),
-		ReceiveGoroutines:      intOrDefault("EVENTSTORE_RECEIVE_GOROUTINES", 1),
+		MaxOutstandingMessages: intOrDefault("EVENTSTORE_MAX_OUTSTANDING_MESSAGES", 2000),
+		MaxOutstandingBytes:    intOrDefault("EVENTSTORE_MAX_OUTSTANDING_BYTES", 256<<20),
+		ReceiveGoroutines:      intOrDefault("EVENTSTORE_RECEIVE_GOROUTINES", 16),
+		MaxExtension:           time.Duration(intOrDefault("EVENTSTORE_MAX_EXTENSION_SEC", 600)) * time.Second,
+		DBMaxConns:             int32(intOrDefault("EVENTSTORE_DB_MAX_CONNS", 32)),
+		DBMinConns:             int32(intOrDefault("EVENTSTORE_DB_MIN_CONNS", 8)),
 	}
 }
 
@@ -125,6 +186,9 @@ func (c runtimeConfig) Validate() error {
 	}
 	if c.MaxOutstandingMessages < 1 || c.MaxOutstandingMessages > 100000 {
 		return fmt.Errorf("EVENTSTORE_MAX_OUTSTANDING_MESSAGES must be between 1 and 100000, got %d", c.MaxOutstandingMessages)
+	}
+	if c.MaxOutstandingBytes < 0 || c.MaxOutstandingBytes > 4<<30 {
+		return fmt.Errorf("EVENTSTORE_MAX_OUTSTANDING_BYTES must be between 0 and 4GiB, got %d", c.MaxOutstandingBytes)
 	}
 	if c.ReceiveGoroutines < 1 || c.ReceiveGoroutines > 128 {
 		return fmt.Errorf("EVENTSTORE_RECEIVE_GOROUTINES must be between 1 and 128, got %d", c.ReceiveGoroutines)

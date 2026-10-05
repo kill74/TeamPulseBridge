@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -31,6 +32,12 @@ func (p *CircuitBreakerPublisher) Publish(ctx context.Context, source string, bo
 	}
 	err := p.wrapped.Publish(ctx, source, body, headers)
 	if err != nil {
+		// Backpressure (full/throttled) is a load signal, not a downstream
+		// fault — don't trip the breaker on it or a burst amplifies into
+		// a 30s outage.
+		if errors.Is(err, ErrQueueFull) || errors.Is(err, ErrQueueThrottled) || errors.Is(err, ErrCircuitOpen) {
+			return fmt.Errorf("circuit breaker wrapped publish: %w", err)
+		}
 		p.breaker.RecordFailure()
 		return fmt.Errorf("circuit breaker wrapped publish: %w", err)
 	}

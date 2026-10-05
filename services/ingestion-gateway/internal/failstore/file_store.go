@@ -47,13 +47,17 @@ type Store interface {
 
 type FileStore struct {
 	path string
-	mu   sync.Mutex
+	mu   sync.RWMutex
 }
 
 func NewFileStore(path string) (*FileStore, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, errors.New("failed event store path must not be empty")
+	}
+	// MkdirAll once at construction, not on every Save (hot path).
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create failed event store dir: %w", err)
 	}
 	return &FileStore{path: path}, nil
 }
@@ -99,10 +103,6 @@ func (s *FileStore) Save(_ context.Context, in SaveInput) (FailedEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return FailedEvent{}, fmt.Errorf("create failed event store dir: %w", err)
-	}
-
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return FailedEvent{}, fmt.Errorf("open failed event store: %w", err)
@@ -127,8 +127,8 @@ func (s *FileStore) GetByID(ctx context.Context, eventID string) (FailedEvent, e
 		return FailedEvent{}, errors.New("event id must not be empty")
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	f, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -172,9 +172,12 @@ func (s *FileStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, e
 	if limit <= 0 {
 		return nil, errors.New("limit must be > 0")
 	}
+	if limit > 1000 {
+		limit = 1000
+	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	f, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {

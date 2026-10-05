@@ -148,14 +148,22 @@ func RequireAdminJWT(cfg JWTConfig) Middleware {
 		if !cfg.Enabled {
 			return next
 		}
+		// Pre-derive secret bytes once; previously []byte(cfg.Secret) per request.
+		secret := []byte(cfg.Secret)
+		parser := jwt.NewParser(
+			jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+			jwt.WithIssuer(cfg.Issuer),
+			jwt.WithAudience(cfg.Audience),
+		)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !isAdminPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			authz := strings.TrimSpace(r.Header.Get("Authorization"))
-			if authz == "" || !strings.HasPrefix(strings.ToLower(authz), "bearer ") {
+			// Strict "Bearer " (no ToLower alloc per request).
+			authz := r.Header.Get("Authorization")
+			if authz == "" || !strings.HasPrefix(authz, "Bearer ") {
 				rejectSecurity(w, r, http.StatusUnauthorized, "admin_jwt_missing", cfg.OnReject, apperr.New(
 					"httpx.RequireAdminJWT",
 					apperr.CodeMissingBearerToken,
@@ -175,7 +183,7 @@ func RequireAdminJWT(cfg JWTConfig) Middleware {
 				return
 			}
 
-			if err := validateToken(tokenString, cfg); err != nil {
+			if err := validateTokenWithParser(parser, tokenString, secret); err != nil {
 				rejectSecurity(w, r, http.StatusUnauthorized, "admin_jwt_invalid", cfg.OnReject, apperr.New(
 					"httpx.RequireAdminJWT",
 					apperr.CodeInvalidToken,
@@ -191,6 +199,24 @@ func RequireAdminJWT(cfg JWTConfig) Middleware {
 
 func isAdminPath(path string) bool {
 	return strings.HasPrefix(path, "/admin") || strings.HasPrefix(path, "/api/v1/admin")
+}
+
+func validateTokenWithParser(parser *jwt.Parser, tokenString string, secret []byte) error {
+	token, err := parser.Parse(tokenString,
+		func(t *jwt.Token) (interface{}, error) {
+			if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+				return nil, fmt.Errorf("unexpected signing method %s", t.Method.Alg())
+			}
+			return secret, nil
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("parse token: %w", err)
+	}
+	if !token.Valid {
+		return fmt.Errorf("token invalid")
+	}
+	return nil
 }
 
 func validateToken(tokenString string, cfg JWTConfig) error {

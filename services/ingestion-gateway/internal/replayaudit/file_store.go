@@ -74,13 +74,16 @@ type Store interface {
 
 type FileStore struct {
 	path string
-	mu   sync.Mutex
+	mu   sync.RWMutex
 }
 
 func NewFileStore(path string) (*FileStore, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, errors.New("replay audit store path must not be empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create replay audit dir: %w", err)
 	}
 	return &FileStore{path: path}, nil
 }
@@ -124,10 +127,6 @@ func (s *FileStore) Save(_ context.Context, in SaveInput) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return Record{}, fmt.Errorf("create replay audit dir: %w", err)
-	}
-
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return Record{}, fmt.Errorf("open replay audit store: %w", err)
@@ -151,8 +150,8 @@ func (s *FileStore) List(ctx context.Context, q ListQuery) (ListResult, error) {
 		return ListResult{}, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	f, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {

@@ -67,5 +67,3 @@ func (s *CircuitBreakerStore) UpdateRetryCount(ctx context.Context, eventID stri
 	}
 	return nil
 }
-
-

@@ -50,11 +50,15 @@ func (s *PipelineSpy) Save(ctx context.Context, in failstore.SaveInput) (failsto
 }
 
 // Implement required interface methods for the mock
-func (s *PipelineSpy) Close() error { return nil }
+func (s *PipelineSpy) Close() error                        { return nil }
 func (s *PipelineSpy) HealthCheck(_ context.Context) error { return nil }
-func (s *PipelineSpy) GetByID(_ context.Context, _ string) (failstore.FailedEvent, error) { return failstore.FailedEvent{}, nil }
-func (s *PipelineSpy) ListRecent(_ context.Context, _ int) ([]failstore.FailedEvent, error) { return nil, nil }
-func (s *PipelineSpy) Delete(_ context.Context, _ string) error { return nil }
+func (s *PipelineSpy) GetByID(_ context.Context, _ string) (failstore.FailedEvent, error) {
+	return failstore.FailedEvent{}, nil
+}
+func (s *PipelineSpy) ListRecent(_ context.Context, _ int) ([]failstore.FailedEvent, error) {
+	return nil, nil
+}
+func (s *PipelineSpy) Delete(_ context.Context, _ string) error                  { return nil }
 func (s *PipelineSpy) UpdateRetryCount(_ context.Context, _ string, _ int) error { return nil }
 
 func TestSeniorIntegration_FullIngestionPipeline(t *testing.T) {
@@ -73,7 +77,7 @@ func TestSeniorIntegration_FullIngestionPipeline(t *testing.T) {
 		spy.mu.Lock()
 		defer spy.mu.Unlock()
 		spy.security = append(spy.security, securityaudit.SaveInput{
-			Reason: event.Reason,
+			Reason:     event.Reason,
 			HTTPStatus: event.Status,
 		})
 	}
@@ -113,7 +117,7 @@ func TestSeniorIntegration_FullIngestionPipeline(t *testing.T) {
 		h.HandleGitHub(rr, req)
 
 		assert.Equal(t, http.StatusUnauthorized, rr.Code)
-		
+
 		spy.mu.Lock()
 		assert.GreaterOrEqual(t, len(spy.security), 1, "security event should have been recorded")
 		spy.mu.Unlock()
@@ -124,13 +128,13 @@ func TestSeniorIntegration_QueueSaturation(t *testing.T) {
 	spy := &PipelineSpy{}
 	fullPub := &fullPublisher{}
 	secret := "webhook-secret"
-	
+
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
 	cfg := config.Config{
 		RequireSecrets:      true,
 		GitHubWebhookSecret: secret,
 	}
-	
+
 	h := NewWebhookHandlerWithDependencies(cfg, fullPub, logger, nil, nil, spy, nil, nil)
 
 	// Helper to sign GitHub webhooks
@@ -149,7 +153,7 @@ func TestSeniorIntegration_QueueSaturation(t *testing.T) {
 
 	// Circuit breakers typically map to Internal Server Error 500 when they trigger
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-	
+
 	assert.Eventually(t, func() bool {
 		spy.mu.Lock()
 		defer spy.mu.Unlock()
@@ -158,8 +162,9 @@ func TestSeniorIntegration_QueueSaturation(t *testing.T) {
 }
 
 type fullPublisher struct{}
+
 func (f *fullPublisher) Publish(_ context.Context, _ string, _ []byte, _ map[string]string) error {
 	return resilience.ErrCircuitOpen
 }
-func (f *fullPublisher) Close() error { return nil }
+func (f *fullPublisher) Close() error                        { return nil }
 func (f *fullPublisher) HealthCheck(_ context.Context) error { return nil }

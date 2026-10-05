@@ -1,0 +1,74 @@
+name: Terraform
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "infrastructure/terraform/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    paths:
+      - "infrastructure/terraform/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init and validate (no backend)
+        run: |
+          set -e
+          tf_data_dir="$(pwd)/.terraform.ci"
+          trap 'rm -rf "$tf_data_dir"' EXIT
+          TF_DATA_DIR="$tf_data_dir" terraform init -backend=false
+          TF_DATA_DIR="$tf_data_dir" terraform validate
+
+  # Live plan needs GCP credentials + backend access, so it runs only on
+  # manual dispatch (never blocks PRs). Validates tfvars-level wiring for
+  # staging/prod the same way `make infra-plan-*` does locally.
+  terraform-plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Plan staging
+        run: terraform plan -input=false -var-file=environments/staging/terraform.tfvars
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+
+      - name: Plan prod
+        run: terraform plan -input=false -var-file=environments/prod/terraform.tfvars
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}

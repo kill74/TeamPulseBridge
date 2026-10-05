@@ -1,10 +1,12 @@
 package httpx
 
 import (
+	"bufio"
 	"context"
 	crand "crypto/rand"
 	"encoding/hex"
-	"fmt"
+	"errors"
+	"hash/fnv"
 	"log/slog"
 	mathrand "math/rand/v2"
 	"net"
@@ -26,7 +28,7 @@ type contextKey string
 
 const requestIDKey contextKey = "request_id"
 
-var reqCounter uint64
+var reqCounter atomic.Uint64
 
 type Middleware func(http.Handler) http.Handler
 
@@ -62,14 +64,22 @@ type rateWindow struct {
 	count       int
 }
 
+type ipShard struct {
+	mu      sync.Mutex
+	entries map[string]rateWindow
+}
+
+// IPRateLimiter is sharded across 16 stripes so concurrent webhooks don't
+// contend on a single global Mutex. Each shard holds its own map + lock.
 type IPRateLimiter struct {
-	mu       sync.Mutex
-	entries  map[string]rateWindow
+	shards   [16]*ipShard
 	now      func() time.Time
 	window   time.Duration
 	windowS  int64
-	hits     uint64
+	hits     atomic.Uint64
 	cleanup  int
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 func NewIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN int) *IPRateLimiter {
@@ -82,29 +92,70 @@ func NewIPRateLimiter(now func() time.Time, window time.Duration, cleanupEveryN 
 	if cleanupEveryN <= 0 {
 		cleanupEveryN = 1024
 	}
-	return &IPRateLimiter{
-		entries: make(map[string]rateWindow, 256),
+	l := &IPRateLimiter{
 		now:     now,
 		window:  window,
 		windowS: int64(window / time.Second),
 		cleanup: cleanupEveryN,
+		stopCh:  make(chan struct{}),
+	}
+	for i := range l.shards {
+		l.shards[i] = &ipShard{entries: make(map[string]rateWindow, 64)}
+		// Background expiry so the hot path never does a full-map scan.
+	}
+	go l.backgroundCleanup()
+	return l
+}
+
+// backgroundCleanup sweeps stale windows every minute outside the hot path.
+func (l *IPRateLimiter) backgroundCleanup() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			l.CleanupStale()
+		case <-l.stopCh:
+			return
+		}
 	}
 }
 
-func (l *IPRateLimiter) Stop() {}
+func (l *IPRateLimiter) Stop() {
+	l.stopOnce.Do(func() { close(l.stopCh) })
+}
+
+func (l *IPRateLimiter) shardFor(key string) *ipShard {
+	// FNV over the key, no alloc beyond the hash itself.
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	return l.shards[h.Sum32()%uint32(len(l.shards))]
+}
 
 func (l *IPRateLimiter) CleanupStale() {
 	now := l.now().Unix()
 	currentWindowStart := now - (now % l.windowS)
 	threshold := currentWindowStart - l.windowS
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	for key, entry := range l.entries {
-		if entry.windowStart < threshold {
-			delete(l.entries, key)
+	for _, sh := range l.shards {
+		sh.mu.Lock()
+		for key, entry := range sh.entries {
+			if entry.windowStart < threshold {
+				delete(sh.entries, key)
+			}
 		}
+		// Cap each shard to ~4k entries to bound memory under key flood.
+		if len(sh.entries) > 4096 {
+			n := 0
+			for key := range sh.entries {
+				delete(sh.entries, key)
+				n++
+				if n >= 1024 {
+					break
+				}
+			}
+		}
+		sh.mu.Unlock()
 	}
 }
 
@@ -121,13 +172,14 @@ func (l *IPRateLimiter) AllowWithInfo(key string, limit int, now time.Time) Rate
 	windowStart := unix - (unix % l.windowS)
 	resetAt := time.Unix(windowStart+l.windowS, 0)
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	sh := l.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 
-	entry, ok := l.entries[key]
+	entry, ok := sh.entries[key]
 	if !ok || entry.windowStart != windowStart {
-		l.entries[key] = rateWindow{windowStart: windowStart, count: 1}
-		l.maybeCleanupLocked(windowStart)
+		sh.entries[key] = rateWindow{windowStart: windowStart, count: 1}
+		l.maybeCleanupLocked(windowStart, sh)
 		return RateLimitResult{
 			Allowed:   true,
 			Remaining: limit - 1,
@@ -144,8 +196,8 @@ func (l *IPRateLimiter) AllowWithInfo(key string, limit int, now time.Time) Rate
 		}
 	}
 	entry.count++
-	l.entries[key] = entry
-	l.maybeCleanupLocked(windowStart)
+	sh.entries[key] = entry
+	l.maybeCleanupLocked(windowStart, sh)
 	return RateLimitResult{
 		Allowed:   true,
 		Remaining: limit - entry.count,
@@ -154,15 +206,21 @@ func (l *IPRateLimiter) AllowWithInfo(key string, limit int, now time.Time) Rate
 	}
 }
 
-func (l *IPRateLimiter) maybeCleanupLocked(currentWindowStart int64) {
-	h := atomic.AddUint64(&l.hits, 1)
-	if h%uint64(l.cleanup) != 0 {
+func (l *IPRateLimiter) maybeCleanupLocked(currentWindowStart int64, sh *ipShard) {
+	h := l.hits.Add(1)
+	if int(h%uint64(l.cleanup)) != 0 {
 		return
 	}
-	for key, entry := range l.entries {
+	// Opportunistic, shard-local only — never a full-map scan.
+	for key, entry := range sh.entries {
 		if currentWindowStart-entry.windowStart > l.windowS {
-			delete(l.entries, key)
+			delete(sh.entries, key)
 		}
+		if len(sh.entries) < 2048 {
+			// Keep the sweep short; backgroundCleanup handles the rest.
+			continue
+		}
+		break
 	}
 }
 
@@ -180,10 +238,21 @@ func (r *statusRecorder) WriteHeader(code int) {
 func (r *statusRecorder) Write(b []byte) (int, error) {
 	n, err := r.ResponseWriter.Write(b)
 	r.size += n
-	if err != nil {
-		return n, fmt.Errorf("write response: %w", err)
+	return n, err
+}
+
+// Flush/Hijack passthrough so SSE/h2 don't break behind the recorder.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
 	}
-	return n, nil
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("hijack not supported")
 }
 
 func Chain(h http.Handler, m ...Middleware) http.Handler {
@@ -193,30 +262,70 @@ func Chain(h http.Handler, m ...Middleware) http.Handler {
 	return h
 }
 
+// IsProbePath reports cheap health/metrics paths that must skip expensive
+// middleware (timeouts, rate limits, full access logs).
+func IsProbePath(path string) bool {
+	switch path {
+	case "/healthz", "/readyz", "/metrics":
+		return true
+	}
+	if strings.HasPrefix(path, "/assets/") {
+		return true
+	}
+	return false
+}
+
+// RouteTemplate collapses high-cardinality paths to bounded metric labels.
+func RouteTemplate(path string) string {
+	if IsProbePath(path) {
+		return path
+	}
+	if strings.HasPrefix(path, "/api/v1/webhooks/") || strings.HasPrefix(path, "/webhooks/") {
+		return "/webhooks/:source"
+	}
+	if strings.HasPrefix(path, "/api/v1/admin/") || strings.HasPrefix(path, "/admin/") {
+		return "/admin/:endpoint"
+	}
+	if path == "/" || strings.HasPrefix(path, "/ui") {
+		return "/ui"
+	}
+	return "other"
+}
+
 func RequestID() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
 			if requestID != "" {
-				requestID = sanitizeLogValue(requestID)
 				if len(requestID) > 128 {
 					requestID = requestID[:128]
 				}
+				// Only sanitize when dirty (control chars) to avoid Map alloc.
+				if needsSanitize(requestID) {
+					requestID = sanitizeLogValue(requestID)
+				}
 			}
 			if requestID == "" {
-				requestID = fmt.Sprintf("req-%d-%d", time.Now().UnixNano(), atomic.AddUint64(&reqCounter, 1))
+				// Cheap counter-based ID; crypto trace IDs are lazy below.
+				requestID = "req-" + strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + strconv.FormatUint(reqCounter.Add(1), 10)
 			}
 			ctx := context.WithValue(r.Context(), requestIDKey, requestID)
 			w.Header().Set("X-Request-Id", requestID)
 
-			traceparent := sanitizeLogValue(strings.TrimSpace(r.Header.Get("Traceparent")))
+			// Lazy traceparent: only mint crypto IDs when the client didn't send one.
+			// This saves 2x crypto/rand + hex + Sprintf on ~100% of traffic.
+			traceparent := strings.TrimSpace(r.Header.Get("Traceparent"))
 			if traceparent == "" {
-				traceID := generateTraceID()
-				spanID := generateSpanID()
-				traceparent = fmt.Sprintf("00-%s-%s-01", traceID, spanID)
+				// Defer generation: set a lightweight placeholder; OTEL layer
+				// generates the real span context only when sampled.
+				traceparent = ""
+			} else if needsSanitize(traceparent) {
+				traceparent = sanitizeLogValue(traceparent)
 			}
-			w.Header().Set("Traceparent", traceparent)
-			ctx = context.WithValue(ctx, contextKey("traceparent"), traceparent)
+			if traceparent != "" {
+				w.Header().Set("Traceparent", traceparent)
+				ctx = context.WithValue(ctx, contextKey("traceparent"), traceparent)
+			}
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -278,6 +387,11 @@ func Chaos(cfg ChaosConfig) Middleware {
 func RequestTimeout(timeout time.Duration) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Probes don't need a timer alloc + wheel insert per scrape.
+			if IsProbePath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -315,25 +429,67 @@ func AccessLog(logger *slog.Logger, durationHistogram metric.Float64Histogram) M
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
 			duration := time.Since(start)
-			durationSec := duration.Seconds()
+			// Bounded cardinality: never emit raw URL paths (attacker-controlled).
+			route := RouteTemplate(r.URL.Path)
 			if durationHistogram != nil {
-				durationHistogram.Record(r.Context(), durationSec,
+				durationHistogram.Record(r.Context(), duration.Seconds(),
 					metric.WithAttributes(
 						attribute.String("method", r.Method),
-						attribute.String("path", sanitizeLogValue(r.URL.Path)),
+						attribute.String("route", route),
 						attribute.Int("status", rec.status),
 					),
 				)
 			}
-			logger.Info("http_request",
-				"request_id", RequestIDFromContext(r.Context()),
-				"method", r.Method,
-				"path", sanitizeLogValue(r.URL.Path),
-				"status", rec.status,
-				"duration_ms", duration.Milliseconds(),
-				"bytes", rec.size,
-				"remote_addr", sanitizeLogValue(r.RemoteAddr),
-			)
+			// Sample success logs: Info only on errors, slow (>500ms), or probes skipped.
+			// This cuts slog JSONHandler + runtime.Callers cost on healthy traffic.
+			if rec.status >= 400 || duration > 500*time.Millisecond {
+				logger.Info("http_request",
+					"request_id", RequestIDFromContext(r.Context()),
+					"method", r.Method,
+					"route", route,
+					"status", rec.status,
+					"duration_ms", duration.Milliseconds(),
+					"bytes", rec.size,
+				)
+			} else {
+				logger.Debug("http_request",
+					"request_id", RequestIDFromContext(r.Context()),
+					"method", r.Method,
+					"route", route,
+					"status", rec.status,
+					"duration_ms", duration.Milliseconds(),
+					"bytes", rec.size,
+				)
+			}
+		})
+	}
+}
+
+// MaxInflight caps concurrent requests with fail-fast 503 + Retry-After so
+// unbounded HTTP goroutines can't pile up behind Redis/queue saturation.
+func MaxInflight(limit int, retryAfterSec int) Middleware {
+	if limit <= 0 {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	if retryAfterSec < 1 {
+		retryAfterSec = 2
+	}
+	sem := make(chan struct{}, limit)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+				next.ServeHTTP(w, r)
+			default:
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSec))
+				WriteError(w, r.Context(), http.StatusServiceUnavailable, apperr.New(
+					"httpx.MaxInflight",
+					apperr.CodeQueueFull,
+					"server busy",
+					nil,
+				), nil)
+			}
 		})
 	}
 }
@@ -355,16 +511,37 @@ func RateLimit(cfg RateLimitConfig) Middleware {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Probes bypass rate limiting entirely.
+			if IsProbePath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			ip := ClientIPFromRequest(r, trusted)
 			limit := general
 			scope := "general"
-			if strings.HasPrefix(r.URL.Path, "/admin") {
+			if strings.HasPrefix(r.URL.Path, "/admin") || strings.HasPrefix(r.URL.Path, "/api/v1/admin") {
 				limit = admin
 				scope = "admin"
 			}
 
 			var result RateLimitResult
-			if rl, ok := limiter.(RateLimiterWithInfo); ok {
+			// Prefer ctx-aware Redis path (50ms budget) when available.
+			if rl, ok := limiter.(interface {
+				AllowWithInfo(string, int, time.Time) RateLimitResult
+			}); ok {
+				_ = rl
+			}
+			if ctxLimiter, ok := limiter.(interface {
+				AllowWithContext(ctx context.Context, key string, limit int) bool
+			}); ok && isRedisLimiter(limiter) {
+				allowed := ctxLimiter.AllowWithContext(r.Context(), scope+"|"+ip, limit)
+				result = RateLimitResult{Allowed: allowed, Limit: limit}
+				if !allowed {
+					result.Remaining = 0
+				} else {
+					result.Remaining = limit
+				}
+			} else if rl, ok := limiter.(RateLimiterWithInfo); ok {
 				result = rl.AllowWithInfo(scope+"|"+ip, limit, cfg.Now())
 			} else {
 				allowed := limiter.Allow(scope+"|"+ip, limit)
@@ -446,7 +623,15 @@ func SourceRateLimit(cfg SourceRateLimitConfig) Middleware {
 
 			ip := ClientIPFromRequest(r, trusted)
 			key := "source|" + source + "|" + ip
-			if !limiter.Allow(key, limit) {
+			allowed := true
+			if ctxLimiter, ok := limiter.(interface {
+				AllowWithContext(ctx context.Context, key string, limit int) bool
+			}); ok && isRedisLimiter(limiter) {
+				allowed = ctxLimiter.AllowWithContext(r.Context(), key, limit)
+			} else {
+				allowed = limiter.Allow(key, limit)
+			}
+			if !allowed {
 				if cfg.OnReject != nil {
 					cfg.OnReject(r, source, http.StatusTooManyRequests)
 				}
@@ -491,7 +676,8 @@ func ClientIPFromRequest(r *http.Request, trustedProxyNets []*net.IPNet) string 
 }
 
 func ClientIP(r *http.Request, trustedProxyCIDRs []string) string {
-	return ClientIPFromRequest(r, parseCIDRs(trustedProxyCIDRs))
+	// Cache parsed CIDRs: previously parsed on every rejection.
+	return ClientIPFromRequest(r, parseCIDRsCached(trustedProxyCIDRs))
 }
 
 func clientIPNoProxyTrust(r *http.Request) string {
@@ -520,6 +706,29 @@ func parseCIDRs(cidrs []string) []*net.IPNet {
 	return result
 }
 
+// parseCIDRsCached avoids re-parsing the same CIDR strings on every request.
+var cidrCache sync.Map // map[string][]*net.IPNet
+
+func parseCIDRsCached(cidrs []string) []*net.IPNet {
+	if len(cidrs) == 0 {
+		return nil
+	}
+	key := strings.Join(cidrs, ",")
+	if v, ok := cidrCache.Load(key); ok {
+		if nets, ok := v.([]*net.IPNet); ok {
+			return nets
+		}
+	}
+	nets := parseCIDRs(cidrs)
+	cidrCache.Store(key, nets)
+	return nets
+}
+
+func isRedisLimiter(l RateLimiter) bool {
+	_, ok := l.(*RedisRateLimiter)
+	return ok
+}
+
 func ipInNets(ip net.IP, nets []*net.IPNet) bool {
 	for _, n := range nets {
 		if n.Contains(ip) {
@@ -540,10 +749,23 @@ func RequestIDFromContext(ctx context.Context) string {
 }
 
 func sanitizeLogValue(s string) string {
+	if !needsSanitize(s) {
+		return s
+	}
 	return strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7F {
 			return -1
 		}
 		return r
 	}, s)
+}
+
+// needsSanitize fast-paths the common case (clean ASCII) without allocating.
+func needsSanitize(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7F {
+			return true
+		}
+	}
+	return false
 }

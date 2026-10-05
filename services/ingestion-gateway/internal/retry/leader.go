@@ -8,13 +8,13 @@ import (
 )
 
 type LeaderElection struct {
-	client *redis.Client
+	client redis.UniversalClient
 	key    string
 	ttl    time.Duration
 	id     string // unique instance ID
 }
 
-func NewLeaderElection(client *redis.Client, key, id string, ttl time.Duration) *LeaderElection {
+func NewLeaderElection(client redis.UniversalClient, key, id string, ttl time.Duration) *LeaderElection {
 	return &LeaderElection{
 		client: client,
 		key:    key,
