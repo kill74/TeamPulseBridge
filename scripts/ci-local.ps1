@@ -25,6 +25,26 @@ function Invoke-NativeCommand([string]$FilePath, [string[]]$Arguments) {
     }
 }
 
+function Resolve-GoToolchain() {
+    foreach ($candidate in @("go", "go.exe")) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($command) {
+            return $command.Source
+        }
+    }
+
+    foreach ($candidate in @(
+        (Join-Path $env:ProgramFiles "Go\bin\go.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Go\bin\go.exe")
+    )) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    throw "Go was not found on PATH. Install Go 1.25.x and ensure C:\Program Files\Go\bin is available in PATH."
+}
+
 function Resolve-CommandPath([string[]]$Candidates, [string]$InstallHint) {
     foreach ($candidate in $Candidates) {
         $command = Get-Command $candidate -ErrorAction SilentlyContinue
@@ -34,7 +54,8 @@ function Resolve-CommandPath([string[]]$Candidates, [string]$InstallHint) {
     }
 
     if ($Candidates -contains "golangci-lint" -or $Candidates -contains "govulncheck") {
-        $goBin = Join-Path ((& go env GOPATH).Trim()) "bin"
+        $goExe = Resolve-GoToolchain
+        $goBin = Join-Path ((& $goExe env GOPATH).Trim()) "bin"
         foreach ($candidate in $Candidates) {
             $exe = Join-Path $goBin "$candidate.exe"
             if (Test-Path $exe) {
@@ -82,7 +103,7 @@ function Invoke-PythonScript([string]$ScriptPath, [string[]]$Arguments, [string]
 function Invoke-GoCheck([string[]]$Arguments) {
     Push-Location $serviceRoot
     try {
-        Invoke-NativeCommand "go" $Arguments
+        Invoke-NativeCommand $goExe $Arguments
     }
     finally {
         Pop-Location
@@ -105,6 +126,12 @@ function Invoke-TerraformCheck([string[]]$Arguments, [hashtable]$Environment = @
     }
 }
 
+$goExe = Resolve-GoToolchain
+$gofmtExe = Join-Path (Split-Path $goExe -Parent) "gofmt.exe"
+if (-not (Test-Path $gofmtExe)) {
+    $gofmtExe = Join-Path (Split-Path $goExe -Parent) "gofmt"
+}
+
 $golangciLintExe = Resolve-CommandPath @("golangci-lint") "golangci-lint was not found. Run 'make dev-setup' or 'go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2'."
 $govulncheckExe = Resolve-CommandPath @("govulncheck") "govulncheck was not found. Run 'make dev-setup' or 'go install golang.org/x/vuln/cmd/govulncheck@latest'."
 $terraformExe = if (-not $SkipTerraform) { Resolve-CommandPath @("terraform") "terraform was not found. Install Terraform to run local CI parity." } else { $null }
@@ -115,7 +142,7 @@ $kubectlExe = if (-not $SkipPolicy) { Resolve-CommandPath @("kubectl") "kubectl 
 Write-Step "Go fmt check"
 Push-Location $serviceRoot
 try {
-    $unformatted = @(& gofmt -l ./cmd ./internal | Where-Object { $_ -and $_.Trim() -ne "" })
+    $unformatted = @(& $gofmtExe -l ./cmd ./internal | Where-Object { $_ -and $_.Trim() -ne "" })
     if ($LASTEXITCODE -ne 0) {
         throw "gofmt failed while checking the repository."
     }

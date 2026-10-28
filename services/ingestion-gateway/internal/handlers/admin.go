@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -100,6 +101,152 @@ func (h *AdminHandler) Configz(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+func (h *AdminHandler) HealthSummary(w http.ResponseWriter, _ *http.Request) {
+	payload := map[string]any{
+		"status":      "healthy",
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"queue":       map[string]any{},
+		"sources":     []map[string]any{},
+	}
+
+	if snapshotProvider, ok := h.publisher.(queue.SnapshotProvider); ok {
+		snapshot := snapshotProvider.Snapshot()
+		payload["queue"] = map[string]any{
+			"depth":         snapshot.Depth,
+			"capacity":      snapshot.Capacity,
+			"usage_ratio":   snapshot.UsageRatio,
+			"failure_ratio": snapshot.FailureRatio,
+			"recent_samples": snapshot.RecentSamples,
+			"status":        healthStatusFromSnapshot(snapshot),
+		}
+		if payload["queue"].(map[string]any)["status"] == "degraded" {
+			payload["status"] = "degraded"
+		}
+	}
+
+	if sourceProvider, ok := h.publisher.(queue.SourceSnapshotProvider); ok {
+		sources := []map[string]any{}
+		for source, snapshot := range sourceProvider.SourceSnapshots() {
+			status := healthStatusFromSnapshot(snapshot)
+			if status == "degraded" {
+				payload["status"] = "degraded"
+			}
+			sources = append(sources, map[string]any{
+				"source":         source,
+				"depth":          snapshot.Depth,
+				"capacity":       snapshot.Capacity,
+				"usage_ratio":    snapshot.UsageRatio,
+				"failure_ratio":  snapshot.FailureRatio,
+				"recent_samples": snapshot.RecentSamples,
+				"status":         status,
+			})
+		}
+		payload["sources"] = sources
+	}
+
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func healthStatusFromSnapshot(snapshot queue.PublisherSnapshot) string {
+	if snapshot.Capacity > 0 && snapshot.UsageRatio >= 0.8 {
+		return "degraded"
+	}
+	if snapshot.FailureRatio >= 0.1 {
+		return "degraded"
+	}
+	if snapshot.Depth > 0 {
+		return "warning"
+	}
+	return "healthy"
+}
+
+func providerHealthSeverity(snapshot queue.PublisherSnapshot) string {
+	if snapshot.Capacity > 0 && snapshot.UsageRatio >= 0.8 {
+		return "critical"
+	}
+	if snapshot.FailureRatio >= 0.1 {
+		return "critical"
+	}
+	if snapshot.Depth > 0 || snapshot.UsageRatio > 0.5 {
+		return "warning"
+	}
+	return "healthy"
+}
+
+func providerRecommendationForSnapshot(snapshot queue.PublisherSnapshot) string {
+	switch {
+	case snapshot.Capacity > 0 && snapshot.UsageRatio >= 0.8:
+		return "scale this provider or increase backpressure safeguards"
+	case snapshot.FailureRatio >= 0.1:
+		return "investigate provider failures and validate upstream connectivity"
+	case snapshot.Depth > 0:
+		return "monitor queue pressure and review retry behavior"
+	default:
+		return "healthy; continue monitoring"
+	}
+}
+
+func (h *AdminHandler) ProviderHealthSummary(w http.ResponseWriter, _ *http.Request) {
+	payload := map[string]any{
+		"status":      "healthy",
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"summary": map[string]any{
+			"total":    0,
+			"healthy":  0,
+			"warning":  0,
+			"degraded": 0,
+		},
+		"providers": []map[string]any{},
+	}
+
+	sourceProvider, ok := h.publisher.(queue.SourceSnapshotProvider)
+	if !ok {
+		writeJSON(w, http.StatusOK, payload)
+		return
+	}
+
+	names := make([]string, 0, len(sourceProvider.SourceSnapshots()))
+	for source := range sourceProvider.SourceSnapshots() {
+		names = append(names, source)
+	}
+	sort.Strings(names)
+
+	providers := make([]map[string]any, 0, len(names))
+	for _, source := range names {
+		snapshot := sourceProvider.SourceSnapshots()[source]
+		status := healthStatusFromSnapshot(snapshot)
+		summary := payload["summary"].(map[string]any)
+		summary["total"] = summary["total"].(int) + 1
+		switch status {
+		case "healthy":
+			summary["healthy"] = summary["healthy"].(int) + 1
+		case "warning":
+			summary["warning"] = summary["warning"].(int) + 1
+		case "degraded":
+			summary["degraded"] = summary["degraded"].(int) + 1
+		}
+		if status == "warning" && payload["status"] == "healthy" {
+			payload["status"] = "warning"
+		}
+		if status == "degraded" {
+			payload["status"] = "degraded"
+		}
+		providers = append(providers, map[string]any{
+			"source":         source,
+			"depth":          snapshot.Depth,
+			"capacity":       snapshot.Capacity,
+			"usage_ratio":    snapshot.UsageRatio,
+			"failure_ratio":  snapshot.FailureRatio,
+			"recent_samples": snapshot.RecentSamples,
+			"status":         status,
+			"severity":       providerHealthSeverity(snapshot),
+			"recommendation": providerRecommendationForSnapshot(snapshot),
+		})
+	}
+	payload["providers"] = providers
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func (h *AdminHandler) FailedEvents(w http.ResponseWriter, r *http.Request) {
 	limit, err := parseFailedEventsLimit(r)
 	if err != nil {
@@ -116,6 +263,11 @@ func (h *AdminHandler) FailedEvents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"enabled": false,
 			"events":  []any{},
+			"summary": map[string]any{
+				"total_by_source": map[string]int{},
+				"total_by_reason": map[string]int{},
+				"last_24h":       0,
+			},
 		})
 		return
 	}
@@ -147,7 +299,35 @@ func (h *AdminHandler) FailedEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": true,
 		"events":  summaries,
+		"summary": failedEventSummary(events),
 	})
+}
+
+func failedEventSummary(events []failstore.FailedEvent) map[string]any {
+	totalBySource := make(map[string]int)
+	totalByReason := make(map[string]int)
+	last24h := 0
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+
+	for _, event := range events {
+		source := strings.TrimSpace(event.Source)
+		reason := strings.TrimSpace(event.Reason)
+		if source != "" {
+			totalBySource[source]++
+		}
+		if reason != "" {
+			totalByReason[reason]++
+		}
+		if !event.FailedAt.IsZero() && event.FailedAt.After(cutoff) {
+			last24h++
+		}
+	}
+
+	return map[string]any{
+		"total_by_source": totalBySource,
+		"total_by_reason": totalByReason,
+		"last_24h":       last24h,
+	}
 }
 
 type replayFailedEventRequest struct {

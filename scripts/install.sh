@@ -76,9 +76,12 @@ check_prerequisites() {
   log_step "Checking prerequisites"
 
   if (( DRY_RUN )); then
-    printf '[dry-run] would verify Docker CLI, Docker Compose plugin, and Docker daemon availability\n'
+    printf '[dry-run] would verify the Go toolchain, Docker CLI, Docker Compose plugin, and Docker daemon availability\n'
     return 0
   fi
+
+  have_command go || fail "Go 1.25.x is required. Install Go from https://go.dev/dl and ensure it is on PATH."
+  go version >/dev/null 2>&1 || fail "Go is installed but not usable in the current shell. Ensure the Go binary is on PATH."
 
   have_command docker || fail "docker was not found. Install Docker Desktop or Docker Engine first."
   docker compose version >/dev/null 2>&1 || fail "docker compose is not available. Install Docker Compose v2."

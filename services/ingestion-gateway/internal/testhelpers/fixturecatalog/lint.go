@@ -13,6 +13,82 @@ var (
 	fixturePathPattern = regexp.MustCompile(`^[a-z0-9]+(?:_[a-z0-9]+)*\.json$`)
 )
 
+type ProviderCoverage struct {
+	Fixtures   int
+	Families   int
+	Publishable int
+}
+
+type CatalogCoverageSummary struct {
+	TotalFixtures int
+	Publishable    int
+	Providers      int
+	Families       int
+	ByProvider     map[string]ProviderCoverage
+}
+
+func (c Catalog) CoverageSummary() CatalogCoverageSummary {
+	summary := CatalogCoverageSummary{
+		ByProvider: make(map[string]ProviderCoverage),
+	}
+	familySet := make(map[string]struct{})
+
+	for _, fixture := range c.Fixtures {
+		providerKey := strings.ToLower(strings.TrimSpace(fixture.Provider))
+		familyKey := strings.ToLower(strings.TrimSpace(fixture.EventFamily))
+		if providerKey == "" {
+			continue
+		}
+
+		summary.TotalFixtures++
+		if fixture.Publish {
+			summary.Publishable++
+		}
+
+		providerCoverage := summary.ByProvider[providerKey]
+		providerCoverage.Fixtures++
+		if fixture.Publish {
+			providerCoverage.Publishable++
+		}
+		summary.ByProvider[providerKey] = providerCoverage
+
+		if familyKey != "" {
+			familySet[providerKey+"|"+familyKey] = struct{}{}
+			providerFamilies := make(map[string]struct{})
+			if existing, ok := summary.ByProvider[providerKey]; ok {
+				_ = existing
+			}
+			for family := range familySet {
+				if strings.HasPrefix(family, providerKey+"|") {
+					providerFamilies[strings.TrimPrefix(family, providerKey+"|")] = struct{}{}
+				}
+			}
+			providerCoverage.Families = len(providerFamilies)
+			summary.ByProvider[providerKey] = providerCoverage
+		}
+	}
+
+	for providerKey, coverage := range summary.ByProvider {
+		providerFamilySet := make(map[string]struct{})
+		for _, fixture := range c.Fixtures {
+			if strings.ToLower(strings.TrimSpace(fixture.Provider)) != providerKey {
+				continue
+			}
+			family := strings.ToLower(strings.TrimSpace(fixture.EventFamily))
+			if family != "" {
+				providerFamilySet[family] = struct{}{}
+			}
+		}
+		coverage.Families = len(providerFamilySet)
+		summary.ByProvider[providerKey] = coverage
+	}
+
+	summary.Providers = len(summary.ByProvider)
+	summary.Families = len(familySet)
+
+	return summary
+}
+
 func (c Catalog) Lint() []error {
 	issues := make([]error, 0)
 	baselinesByFamily := make(map[string]int, len(c.Fixtures))

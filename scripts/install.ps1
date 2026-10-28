@@ -19,6 +19,26 @@ function Write-Step([string]$Message) {
     Write-Host "== $Message =="
 }
 
+function Resolve-GoCommandPath() {
+    foreach ($candidate in @("go", "go.exe")) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($command) {
+            return $command.Source
+        }
+    }
+
+    foreach ($candidate in @(
+        (Join-Path $env:ProgramFiles "Go\bin\go.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Go\bin\go.exe")
+    )) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    throw "Go was not found on PATH. Install Go 1.25.x and ensure C:\Program Files\Go\bin is available in PATH."
+}
+
 function Resolve-CommandPath([string]$Name, [string]$InstallHint) {
     if ($DryRun) {
         return $Name
@@ -75,8 +95,14 @@ function Test-DockerPrerequisites() {
     Write-Step "Checking prerequisites"
 
     if ($DryRun) {
-        Write-Host "[dry-run] would verify docker CLI, docker compose, and Docker daemon availability"
+        Write-Host "[dry-run] would verify the Go toolchain, Docker CLI, Docker Compose plugin, and Docker daemon availability"
         return
+    }
+
+    $goExe = Resolve-GoCommandPath
+    $goVersion = (& $goExe version 2>$null | Select-Object -First 1)
+    if (-not $goVersion) {
+        throw "Go 1.25.x is required for local contributing workflows. Install Go and ensure it is on PATH."
     }
 
     $dockerExe = Resolve-CommandPath "docker" "docker was not found. Install Docker Desktop first."

@@ -37,8 +37,18 @@ The ingestion gateway currently handles:
 - queue publishing through either a local log backend or Google Pub/Sub
 - failed-event capture so replay is possible
 - replay audit history for operational visibility
+- provider health summaries that flag queue pressure and failure spikes per source
 - a built-in operator UI for health checks, config visibility, smoke tests, and replay workflows
 - optional Pub/Sub-to-Postgres event storage through `cmd/eventstore`
+
+## Release Highlights
+
+This release focuses on production readiness for operators:
+
+- provider health cards make it obvious which upstream source is under pressure
+- queue depth and failure ratio data are surfaced in the admin dashboard
+- replay and failed-event workflows remain accessible from the same admin layer
+- health and provider summary endpoints support incident triage without digging through logs
 
 ## How It Works
 
@@ -114,7 +124,7 @@ For the installer path:
 
 For contributor setup:
 
-- Go 1.22+
+- Go 1.25.x (matches the version declared in the service module)
 - Docker and Docker Compose
 - Make
 
@@ -226,6 +236,8 @@ Important runtime endpoints include:
 - `POST /webhooks/github`
 - `POST /webhooks/gitlab`
 - `GET /admin/configz`
+- `GET /admin/health-summary`
+- `GET /admin/providers/health`
 - `GET /admin/events/failed`
 - `GET /admin/events/replay-audit`
 - `POST /admin/events/replay`

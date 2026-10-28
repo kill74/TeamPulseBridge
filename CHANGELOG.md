@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.0 - 2026-10-28
+
+- feat(admin): add provider health summary and remediation guidance for source-level queue pressure
+- feat(ui): add provider health cards and queue/failure ratio summaries to the admin dashboard
+- feat(ops): expose health and provider summary endpoints for operator incident triage
+- fix(admin): preserve queue snapshot and source snapshot data for live introspection
+- test: add regression coverage for health-summary and provider-health behavior
+- docs: publish release notes and improve operator-facing project documentation
+
 ## v1.1.0 - 2026-05-17
 
 - chore(release): bump version to v1.1.0 and update changelog (7ae7506)
