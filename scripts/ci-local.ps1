@@ -42,7 +42,7 @@ function Resolve-GoToolchain() {
         }
     }
 
-    throw "Go was not found on PATH. Install Go 1.25.x and ensure C:\Program Files\Go\bin is available in PATH."
+    throw "Go was not found on PATH. Install Go 1.26.x and ensure C:\Program Files\Go\bin is available in PATH."
 }
 
 function Resolve-CommandPath([string[]]$Candidates, [string]$InstallHint) {

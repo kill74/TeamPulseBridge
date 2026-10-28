@@ -36,7 +36,7 @@ function Resolve-GoCommandPath() {
         }
     }
 
-    throw "Go was not found on PATH. Install Go 1.25.x and ensure C:\Program Files\Go\bin is available in PATH."
+    throw "Go was not found on PATH. Install Go 1.26.x and ensure C:\Program Files\Go\bin is available in PATH."
 }
 
 function Resolve-CommandPath([string]$Name, [string]$InstallHint) {
@@ -102,7 +102,7 @@ function Test-DockerPrerequisites() {
     $goExe = Resolve-GoCommandPath
     $goVersion = (& $goExe version 2>$null | Select-Object -First 1)
     if (-not $goVersion) {
-        throw "Go 1.25.x is required for local contributing workflows. Install Go and ensure it is on PATH."
+        throw "Go 1.26.x is required for local contributing workflows. Install Go and ensure it is on PATH."
     }
 
     $dockerExe = Resolve-CommandPath "docker" "docker was not found. Install Docker Desktop first."

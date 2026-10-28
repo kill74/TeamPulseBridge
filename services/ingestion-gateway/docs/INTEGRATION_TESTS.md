@@ -58,7 +58,7 @@ End-to-end webhook tests:
 docker --version    # Docker 20.10+
 
 # Install Go
-go version         # Go 1.25.x
+go version         # Go 1.26.x
 
 # Install testify for assertions (automatic via go.mod)
 ```

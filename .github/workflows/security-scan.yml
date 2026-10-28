@@ -87,5 +87,5 @@ jobs:
       - name: Run govulncheck
         uses: golang/govulncheck-action@v1
         with:
-          go-version-input: "1.25.x"
+          go-version-input: "1.26.x"
           work-dir: services/ingestion-gateway

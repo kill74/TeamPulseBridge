@@ -80,7 +80,7 @@ check_prerequisites() {
     return 0
   fi
 
-  have_command go || fail "Go 1.25.x is required. Install Go from https://go.dev/dl and ensure it is on PATH."
+  have_command go || fail "Go 1.26.x is required. Install Go from https://go.dev/dl and ensure it is on PATH."
   go version >/dev/null 2>&1 || fail "Go is installed but not usable in the current shell. Ensure the Go binary is on PATH."
 
   have_command docker || fail "docker was not found. Install Docker Desktop or Docker Engine first."

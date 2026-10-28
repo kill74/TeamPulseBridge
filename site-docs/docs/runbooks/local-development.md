@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.25.x
+- Go 1.26.x
 - Docker and Docker Compose
 
 ## Commands

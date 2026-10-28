@@ -111,15 +111,16 @@ func (h *AdminHandler) HealthSummary(w http.ResponseWriter, _ *http.Request) {
 
 	if snapshotProvider, ok := h.publisher.(queue.SnapshotProvider); ok {
 		snapshot := snapshotProvider.Snapshot()
+		queueStatus := healthStatusFromSnapshot(snapshot)
 		payload["queue"] = map[string]any{
 			"depth":         snapshot.Depth,
 			"capacity":      snapshot.Capacity,
 			"usage_ratio":   snapshot.UsageRatio,
 			"failure_ratio": snapshot.FailureRatio,
 			"recent_samples": snapshot.RecentSamples,
-			"status":        healthStatusFromSnapshot(snapshot),
+			"status":        queueStatus,
 		}
-		if payload["queue"].(map[string]any)["status"] == "degraded" {
+		if queueStatus == "degraded" {
 			payload["status"] = "degraded"
 		}
 	}
@@ -187,15 +188,16 @@ func providerRecommendationForSnapshot(snapshot queue.PublisherSnapshot) string 
 }
 
 func (h *AdminHandler) ProviderHealthSummary(w http.ResponseWriter, _ *http.Request) {
+	summary := map[string]int{
+		"total":    0,
+		"healthy":  0,
+		"warning":  0,
+		"degraded": 0,
+	}
 	payload := map[string]any{
 		"status":      "healthy",
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
-		"summary": map[string]any{
-			"total":    0,
-			"healthy":  0,
-			"warning":  0,
-			"degraded": 0,
-		},
+		"summary":   summary,
 		"providers": []map[string]any{},
 	}
 
@@ -215,15 +217,14 @@ func (h *AdminHandler) ProviderHealthSummary(w http.ResponseWriter, _ *http.Requ
 	for _, source := range names {
 		snapshot := sourceProvider.SourceSnapshots()[source]
 		status := healthStatusFromSnapshot(snapshot)
-		summary := payload["summary"].(map[string]any)
-		summary["total"] = summary["total"].(int) + 1
+		summary["total"]++
 		switch status {
 		case "healthy":
-			summary["healthy"] = summary["healthy"].(int) + 1
+			summary["healthy"]++
 		case "warning":
-			summary["warning"] = summary["warning"].(int) + 1
+			summary["warning"]++
 		case "degraded":
-			summary["degraded"] = summary["degraded"].(int) + 1
+			summary["degraded"]++
 		}
 		if status == "warning" && payload["status"] == "healthy" {
 			payload["status"] = "warning"

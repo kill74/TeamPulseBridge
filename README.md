@@ -4,7 +4,7 @@
 [![Smoke](https://github.com/kill74/TeamPulseBridge/actions/workflows/smoke.yml/badge.svg)](https://github.com/kill74/TeamPulseBridge/actions/workflows/smoke.yml)
 [![Release](https://github.com/kill74/TeamPulseBridge/actions/workflows/release.yml/badge.svg)](https://github.com/kill74/TeamPulseBridge/actions/workflows/release.yml)
 [![Docs](https://github.com/kill74/TeamPulseBridge/actions/workflows/docs.yml/badge.svg)](https://github.com/kill74/TeamPulseBridge/actions/workflows/docs.yml)
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](./services/ingestion-gateway/go.mod)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](./services/ingestion-gateway/go.mod)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 TeamPulse Bridge is a Go codebase for receiving webhook events from developer tools, validating them safely, and forwarding them into a durable pipeline.
@@ -124,7 +124,7 @@ For the installer path:
 
 For contributor setup:
 
-- Go 1.25.x (matches the version declared in the service module)
+- Go 1.26.x (matches the version declared in the service module)
 - Docker and Docker Compose
 - Make
 
