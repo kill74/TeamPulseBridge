@@ -540,6 +540,8 @@ func run() int {
 
 	adminHandlers := map[string]http.HandlerFunc{
 		"configz":             admin.Configz,
+		"health-summary":      admin.HealthSummary,
+		"providers/health":    admin.ProviderHealthSummary,
 		"events/failed":       admin.FailedEvents,
 		"events/replay-audit": admin.ReplayAudit,
 		"events/security-audit": admin.SecurityAudit,

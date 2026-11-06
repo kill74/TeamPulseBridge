@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"teampulsebridge/services/ingestion-gateway/internal/apperr"
 	"teampulsebridge/services/ingestion-gateway/internal/config"
@@ -17,6 +18,143 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/replayaudit"
 	"teampulsebridge/services/ingestion-gateway/internal/securityaudit"
 )
+
+type adminSnapshotPublisherStub struct {
+	queueSnapshot      queue.PublisherSnapshot
+	sourceSnapshots    map[string]queue.PublisherSnapshot
+	healthCheckErr     error
+}
+
+func (s *adminSnapshotPublisherStub) Publish(_ context.Context, source string, body []byte, headers map[string]string) error { return nil }
+func (s *adminSnapshotPublisherStub) Close() error { return nil }
+func (s *adminSnapshotPublisherStub) HealthCheck(_ context.Context) error { return s.healthCheckErr }
+func (s *adminSnapshotPublisherStub) Snapshot() queue.PublisherSnapshot { return s.queueSnapshot }
+func (s *adminSnapshotPublisherStub) SourceSnapshots() map[string]queue.PublisherSnapshot { return s.sourceSnapshots }
+
+func TestUISmokeRateLimiterCleansExpiredEntriesWithoutBackgroundLoop(t *testing.T) {
+	limiter := newUISmokeRateLimiter()
+	now := time.Now().UTC()
+	ip := "203.0.113.9"
+
+	limiter.mu.Lock()
+	limiter.entries[ip] = &uiRateEntry{windowStart: now.Add(-3 * time.Minute), count: 1}
+	limiter.lastCleanup = now.Add(-2 * time.Minute)
+	limiter.mu.Unlock()
+
+	if !limiter.allow(ip, now) {
+		t.Fatal("expected stale entry to be cleaned and request allowed")
+	}
+	if _, ok := limiter.entries[ip]; !ok {
+		t.Fatal("expected key to be recreated after stale cleanup")
+	}
+	limiter.Stop()
+}
+
+func TestAdminHealthSummaryReturnsQueueAndSourceSnapshot(t *testing.T) {
+	pub := &adminSnapshotPublisherStub{
+		queueSnapshot: queue.PublisherSnapshot{Depth: 12, Capacity: 100, UsageRatio: 0.12, FailureRatio: 0.05, RecentSamples: 7},
+		sourceSnapshots: map[string]queue.PublisherSnapshot{
+			"github": {Depth: 6, Capacity: 50, UsageRatio: 0.12, FailureRatio: 0.03, RecentSamples: 2},
+			"gitlab": {Depth: 2, Capacity: 50, UsageRatio: 0.04, FailureRatio: 0.01, RecentSamples: 3},
+		},
+	}
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/health-summary", nil)
+	rr := httptest.NewRecorder()
+	h.HealthSummary(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var payload struct {
+		Status string `json:"status"`
+		Queue  struct {
+			Depth int `json:"depth"`
+		} `json:"queue"`
+		Sources []struct {
+			Source string `json:"source"`
+			Depth  int    `json:"depth"`
+		} `json:"sources"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Status == "" {
+		t.Fatal("expected health status to be populated")
+	}
+	if payload.Queue.Depth != 12 {
+		t.Fatalf("expected queue depth 12, got %d", payload.Queue.Depth)
+	}
+	if len(payload.Sources) != 2 {
+		t.Fatalf("expected 2 source summaries, got %d", len(payload.Sources))
+	}
+}
+
+func TestAdminProviderHealthSummaryReturnsPriorityRecommendations(t *testing.T) {
+	pub := &adminSnapshotPublisherStub{
+		sourceSnapshots: map[string]queue.PublisherSnapshot{
+			"github": {Depth: 18, Capacity: 25, UsageRatio: 0.72, FailureRatio: 0.18, RecentSamples: 6},
+			"gitlab": {Depth: 5, Capacity: 25, UsageRatio: 0.2, FailureRatio: 0.02, RecentSamples: 4},
+		},
+	}
+	h := NewAdminHandlerWithDependencies(config.Config{}, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/providers/health", nil)
+	rr := httptest.NewRecorder()
+	h.ProviderHealthSummary(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var payload struct {
+		Status  string `json:"status"`
+		Summary struct {
+			Total    int `json:"total"`
+			Healthy  int `json:"healthy"`
+			Warning  int `json:"warning"`
+			Degraded int `json:"degraded"`
+		} `json:"summary"`
+		Providers []struct {
+			Source         string `json:"source"`
+			Status         string `json:"status"`
+			Recommendation string `json:"recommendation"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Status != "degraded" {
+		t.Fatalf("expected overall degraded status, got %q", payload.Status)
+	}
+	if payload.Summary.Total != 2 {
+		t.Fatalf("expected 2 providers, got %d", payload.Summary.Total)
+	}
+	if payload.Summary.Degraded != 1 {
+		t.Fatalf("expected 1 degraded provider, got %d", payload.Summary.Degraded)
+	}
+	if len(payload.Providers) != 2 {
+		t.Fatalf("expected 2 provider entries, got %d", len(payload.Providers))
+	}
+	if got := providerRecommendationBySource(payload.Providers, "github"); got == "" {
+		t.Fatal("expected a recommendation for GitHub provider")
+	}
+}
+
+func providerRecommendationBySource(providers []struct {
+	Source         string `json:"source"`
+	Status         string `json:"status"`
+	Recommendation string `json:"recommendation"`
+}, source string) string {
+	for _, provider := range providers {
+		if provider.Source == source {
+			return provider.Recommendation
+		}
+	}
+	return ""
+}
 
 type adminStoreStub struct {
 	events  map[string]failstore.FailedEvent
@@ -226,6 +364,44 @@ func TestAdminFailedEventsReturnsRecent(t *testing.T) {
 	}
 	if len(payload.Events) != 1 || payload.Events[0].EventID != "evt_2" {
 		t.Fatalf("unexpected events payload: %+v", payload.Events)
+	}
+}
+
+func TestAdminFailedEventsIncludesOperationalSummary(t *testing.T) {
+	store := &adminStoreStub{
+		recent: []failstore.FailedEvent{
+			{EventID: "evt_1", Source: "github", Reason: "ERR_QUEUE_FULL", FailedAt: time.Now().UTC(), Body: json.RawMessage(`{"action":"opened"}`)},
+			{EventID: "evt_2", Source: "slack", Reason: "ERR_SIGNATURE_INVALID", FailedAt: time.Now().UTC(), Body: json.RawMessage(`{"type":"event_callback"}`)},
+		},
+	}
+	h := NewAdminHandlerWithDependencies(config.Config{}, &adminPublisherStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), store, &adminAuditStub{}, &adminSecurityAuditStub{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/events/failed?limit=10", nil)
+	rr := httptest.NewRecorder()
+	h.FailedEvents(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var payload struct {
+		Summary struct {
+			TotalBySource map[string]int `json:"total_by_source"`
+			TotalByReason map[string]int `json:"total_by_reason"`
+			Last24h       int            `json:"last_24h"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.Summary.Last24h != 2 {
+		t.Fatalf("expected last_24h=2, got %d", payload.Summary.Last24h)
+	}
+	if payload.Summary.TotalBySource["github"] != 1 || payload.Summary.TotalBySource["slack"] != 1 {
+		t.Fatalf("unexpected source totals: %+v", payload.Summary.TotalBySource)
+	}
+	if payload.Summary.TotalByReason["ERR_QUEUE_FULL"] != 1 || payload.Summary.TotalByReason["ERR_SIGNATURE_INVALID"] != 1 {
+		t.Fatalf("unexpected reason totals: %+v", payload.Summary.TotalByReason)
 	}
 }
 

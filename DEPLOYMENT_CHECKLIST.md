@@ -236,7 +236,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.25.0'
+          go-version: '1.26.0'
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -289,7 +289,7 @@ If neither applies, it's still recommended as security hardening.
 **A:** Unlikely. All upgrades maintain backward compatibility except the intentional v1→v2 Pub/Sub change, which has a documented migration guide.
 
 ### Q: How often should we update dependencies?
-**A:** 
+**A:**
 - Security updates: Immediately (within days)
 - Minor updates: Quarterly
 - Major updates: Evaluate case-by-case
@@ -353,7 +353,7 @@ Recommendation: ✅ APPROVED FOR PRODUCTION
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** May 3, 2026  
-**Created by:** Security Vulnerability Analysis  
+**Document Version:** 1.0
+**Last Updated:** May 3, 2026
+**Created by:** Security Vulnerability Analysis
 **Status:** Final - Ready for Implementation
