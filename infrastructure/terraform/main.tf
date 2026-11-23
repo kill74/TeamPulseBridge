@@ -165,17 +165,17 @@ module "redis" {
 module "monitoring" {
   source = "./modules/monitoring"
 
-  workspace_name             = "${var.project_name}-${var.environment}-monitoring"
-  app_name                   = var.app_name
-  environment                = var.environment
-  gcp_project                = var.gcp_project
-  region                     = var.region
-  namespace                  = var.kubernetes_namespace
-  enable_uptime_checks       = var.enable_uptime_checks
-  uptime_check_regions       = var.uptime_check_regions
-  app_domain                 = var.app_domain
-  health_check_path          = var.health_check_path
-  health_check_port          = var.health_check_port
+  workspace_name                    = "${var.project_name}-${var.environment}-monitoring"
+  app_name                          = var.app_name
+  environment                       = var.environment
+  gcp_project                       = var.gcp_project
+  region                            = var.region
+  namespace                         = var.kubernetes_namespace
+  enable_uptime_checks              = var.enable_uptime_checks
+  uptime_check_regions              = var.uptime_check_regions
+  app_domain                        = var.app_domain
+  health_check_path                 = var.health_check_path
+  health_check_port                 = var.health_check_port
   log_retention_days                = var.log_retention_days
   security_audit_log_retention_days = var.security_audit_log_retention_days
   pod_restart_threshold             = var.pod_restart_threshold
@@ -330,17 +330,17 @@ module "monitoring_secondary" {
   count  = local.secondary_enabled ? 1 : 0
   source = "./modules/monitoring"
 
-  workspace_name             = "${var.project_name}-${var.environment}-${local.secondary_region_slug}-monitoring"
-  app_name                   = local.secondary_app_name
-  environment                = local.secondary_environment
-  gcp_project                = var.gcp_project
-  region                     = var.secondary_region
-  namespace                  = var.kubernetes_namespace
-  enable_uptime_checks       = var.enable_uptime_checks
-  uptime_check_regions       = var.uptime_check_regions
-  app_domain                 = local.secondary_app_domain
-  health_check_path          = var.health_check_path
-  health_check_port          = var.health_check_port
+  workspace_name                    = "${var.project_name}-${var.environment}-${local.secondary_region_slug}-monitoring"
+  app_name                          = local.secondary_app_name
+  environment                       = local.secondary_environment
+  gcp_project                       = var.gcp_project
+  region                            = var.secondary_region
+  namespace                         = var.kubernetes_namespace
+  enable_uptime_checks              = var.enable_uptime_checks
+  uptime_check_regions              = var.uptime_check_regions
+  app_domain                        = local.secondary_app_domain
+  health_check_path                 = var.health_check_path
+  health_check_port                 = var.health_check_port
   log_retention_days                = var.log_retention_days
   security_audit_log_retention_days = var.security_audit_log_retention_days
   pod_restart_threshold             = var.pod_restart_threshold
