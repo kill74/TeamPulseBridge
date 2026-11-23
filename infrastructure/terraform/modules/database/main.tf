@@ -40,7 +40,8 @@ resource "google_sql_database_instance" "instance" {
       ipv4_enabled                                  = false
       private_network                               = var.network_id
       enable_private_path_for_google_cloud_services = true
-      require_ssl                                   = true
+      # require_ssl was removed in google provider v8; ssl_mode replaces it.
+      ssl_mode = "ENCRYPTED_ONLY"
     }
 
     database_flags {
