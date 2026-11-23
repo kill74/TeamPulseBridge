@@ -121,22 +121,22 @@ func (h *AdminHandler) Configz(w http.ResponseWriter, _ *http.Request) {
 
 func (h *AdminHandler) HealthSummary(w http.ResponseWriter, _ *http.Request) {
 	payload := map[string]any{
-		"status":      "healthy",
+		"status":       "healthy",
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
-		"queue":       map[string]any{},
-		"sources":     []map[string]any{},
+		"queue":        map[string]any{},
+		"sources":      []map[string]any{},
 	}
 
 	if snapshotProvider, ok := h.publisher.(queue.SnapshotProvider); ok {
 		snapshot := snapshotProvider.Snapshot()
 		queueStatus := healthStatusFromSnapshot(snapshot)
 		payload["queue"] = map[string]any{
-			"depth":         snapshot.Depth,
-			"capacity":      snapshot.Capacity,
-			"usage_ratio":   snapshot.UsageRatio,
-			"failure_ratio": snapshot.FailureRatio,
+			"depth":          snapshot.Depth,
+			"capacity":       snapshot.Capacity,
+			"usage_ratio":    snapshot.UsageRatio,
+			"failure_ratio":  snapshot.FailureRatio,
 			"recent_samples": snapshot.RecentSamples,
-			"status":        queueStatus,
+			"status":         queueStatus,
 		}
 		if queueStatus == "degraded" {
 			payload["status"] = "degraded"
@@ -213,10 +213,10 @@ func (h *AdminHandler) ProviderHealthSummary(w http.ResponseWriter, _ *http.Requ
 		"degraded": 0,
 	}
 	payload := map[string]any{
-		"status":      "healthy",
+		"status":       "healthy",
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
-		"summary":   summary,
-		"providers": []map[string]any{},
+		"summary":      summary,
+		"providers":    []map[string]any{},
 	}
 
 	sourceProvider, ok := h.publisher.(queue.SourceSnapshotProvider)
@@ -285,7 +285,7 @@ func (h *AdminHandler) FailedEvents(w http.ResponseWriter, r *http.Request) {
 			"summary": map[string]any{
 				"total_by_source": map[string]int{},
 				"total_by_reason": map[string]int{},
-				"last_24h":       0,
+				"last_24h":        0,
 			},
 		})
 		return
@@ -397,7 +397,7 @@ func failedEventSummary(events []failstore.FailedEvent) map[string]any {
 	return map[string]any{
 		"total_by_source": totalBySource,
 		"total_by_reason": totalByReason,
-		"last_24h":       last24h,
+		"last_24h":        last24h,
 	}
 }
 

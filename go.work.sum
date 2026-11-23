@@ -166,6 +166,7 @@ cloud.google.com/go/privatecatalog v0.9.11/go.mod h1:awEF2a8M6UgoqVJcF/MthkF8SSo
 cloud.google.com/go/privatecatalog v0.13.0/go.mod h1:av2b5Rv+oG5ORxUqGlCAYO9s4pXjgc6q2qO9nkTcqT8=
 cloud.google.com/go/pubsub v1.50.2 h1:54Up97HnThdP4H8jjWJSSQ/mnYG2EKon7ZSNETRq0tM=
 cloud.google.com/go/pubsub v1.50.2/go.mod h1:jyCWeZdGFqd4mitSsBERnJcpqaHBsxQoPkNvjj4sp0w=
+cloud.google.com/go/pubsub v1.51.0 h1:XOaCejsqX7EEtUdQz+WPag66wWsUUGliyCOfGPKfo90=
 cloud.google.com/go/pubsublite v1.8.2/go.mod h1:4r8GSa9NznExjuLPEJlF1VjOPOpgf3IT6k8x/YgaOPI=
 cloud.google.com/go/recaptchaenterprise/v2 v2.14.2/go.mod h1:MwPgdgvBkE46aWuuXeBTCB8hQJ88p+CpXInROZYCTkc=
 cloud.google.com/go/recaptchaenterprise/v2 v2.24.0/go.mod h1:+ntF70/j7qBa6G/pwmYA0mkBcDeTCXV6WDqUL7GObfs=

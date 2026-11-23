@@ -21,16 +21,20 @@ import (
 )
 
 type adminSnapshotPublisherStub struct {
-	queueSnapshot      queue.PublisherSnapshot
-	sourceSnapshots    map[string]queue.PublisherSnapshot
-	healthCheckErr     error
+	queueSnapshot   queue.PublisherSnapshot
+	sourceSnapshots map[string]queue.PublisherSnapshot
+	healthCheckErr  error
 }
 
-func (s *adminSnapshotPublisherStub) Publish(_ context.Context, source string, body []byte, headers map[string]string) error { return nil }
-func (s *adminSnapshotPublisherStub) Close() error { return nil }
+func (s *adminSnapshotPublisherStub) Publish(_ context.Context, source string, body []byte, headers map[string]string) error {
+	return nil
+}
+func (s *adminSnapshotPublisherStub) Close() error                        { return nil }
 func (s *adminSnapshotPublisherStub) HealthCheck(_ context.Context) error { return s.healthCheckErr }
-func (s *adminSnapshotPublisherStub) Snapshot() queue.PublisherSnapshot { return s.queueSnapshot }
-func (s *adminSnapshotPublisherStub) SourceSnapshots() map[string]queue.PublisherSnapshot { return s.sourceSnapshots }
+func (s *adminSnapshotPublisherStub) Snapshot() queue.PublisherSnapshot   { return s.queueSnapshot }
+func (s *adminSnapshotPublisherStub) SourceSnapshots() map[string]queue.PublisherSnapshot {
+	return s.sourceSnapshots
+}
 
 func TestUISmokeRateLimiterCleansExpiredEntriesWithoutBackgroundLoop(t *testing.T) {
 	limiter := newUISmokeRateLimiter()
