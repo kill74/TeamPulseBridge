@@ -15,6 +15,10 @@ import (
 // is dropped fail-open.
 var ErrAsyncDropped = errors.New("async store queue full, record dropped")
 
+// asyncSaveTimeout bounds how long a Save waits for the background writer.
+// Short timeouts (300ms) proved flaky under CI load and instrumented tests.
+const asyncSaveTimeout = 5 * time.Second
+
 // ErrStoreUnavailable is returned when the wrapped store is nil (including a
 // typed nil from a failed constructor), so the store is disabled.
 var ErrStoreUnavailable = errors.New("store unavailable")
@@ -118,7 +122,7 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 			return res.record, res.err
 		case <-ctx.Done():
 			return Record{}, fmt.Errorf("wait for security-audit save: %w", ctx.Err())
-		case <-time.After(300 * time.Millisecond):
+		case <-time.After(asyncSaveTimeout):
 			return Record{}, context.DeadlineExceeded
 		}
 	default:

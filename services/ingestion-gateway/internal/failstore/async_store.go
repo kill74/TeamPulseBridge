@@ -16,6 +16,10 @@ import (
 // failure (log + metrics), not success.
 var ErrAsyncDropped = errors.New("async store queue full, record dropped")
 
+// asyncSaveTimeout bounds how long a Save waits for the background writer.
+// Keep it consistent across async store wrappers and tolerant of CI load.
+const asyncSaveTimeout = 5 * time.Second
+
 // ErrStoreUnavailable is returned when the wrapped store is nil (including a
 // typed nil from a failed constructor), so the store is disabled.
 var ErrStoreUnavailable = errors.New("store unavailable")
@@ -139,7 +143,7 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (FailedEvent, error
 			// Caller gave up; worker will still persist in background
 			// via WithoutCancel. Report cancellation accurately.
 			return FailedEvent{}, fmt.Errorf("wait for async save: %w", ctx.Err())
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(asyncSaveTimeout):
 			// Worker is slow but will still persist in background;
 			// surface timeout so callers don't misreport success.
 			return FailedEvent{}, context.DeadlineExceeded
