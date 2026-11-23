@@ -1,0 +1,1286 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Engineering docs for TeamPulse Bridge">
+      
+      
+      
+        <link rel="canonical" href="https://guilhermesales.github.io/TeamPulseBridge/runbooks/performance/">
+      
+      
+        <link rel="prev" href="../local-development/">
+      
+      
+        <link rel="next" href="../multi-region-active-active/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Performance Tuning - TeamPulse Bridge</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#performance-guide-ingestion-gateway" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="TeamPulse Bridge" class="md-header__button md-logo" aria-label="TeamPulse Bridge" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            TeamPulse Bridge
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Performance Tuning
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="indigo"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/guilhermesales/TeamPulseBridge" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    guilhermesales/TeamPulseBridge
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="TeamPulse Bridge" class="md-nav__button md-logo" aria-label="TeamPulse Bridge" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    TeamPulse Bridge
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/guilhermesales/TeamPulseBridge" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    guilhermesales/TeamPulseBridge
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/ingestion-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ingestion Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADRs
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ADRs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ADR Index
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbooks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Runbooks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../local-development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Tuning
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#raw-speed-track-v2-single-rtt-zero-copy-prepared-pg-h2c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw-speed track (v2 — single RTT, zero-copy, prepared PG, H2C)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-was-slow-before-v1-track" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What was slow (before — v1 track)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-changed-after" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What changed (after)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What changed (after)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#request-hot-path-internalhandlerswebhooksgo-platformsignature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request hot path (internal/handlers/webhooks.go, platform/signature)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dedup-rate-limiting-dedup-httpxredis_rate_limitergo-httpxmiddlewarego" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup + rate limiting (dedup/, httpx/redis_rate_limiter.go, httpx/middleware.go)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#queue-internalqueue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Queue (internal/queue/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#persistence-failstore-replayaudit-securityaudit-eventstore-retry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Persistence (failstore/, replayaudit/, securityaudit/, eventstore/, retry/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#env-knobs-see-envexample" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Env knobs (see .env.example)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-like-a-senior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verify like a senior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trade-offs-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trade-offs accepted
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi-region-active-active/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Region Active-Active
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../slo-observability/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SLO and Observability
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security-incident-triage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security Incident Triage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gitops-argocd/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GitOps with Argo CD
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../branch-protection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Branch Protection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#raw-speed-track-v2-single-rtt-zero-copy-prepared-pg-h2c" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw-speed track (v2 — single RTT, zero-copy, prepared PG, H2C)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-was-slow-before-v1-track" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What was slow (before — v1 track)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-changed-after" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What changed (after)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What changed (after)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#request-hot-path-internalhandlerswebhooksgo-platformsignature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request hot path (internal/handlers/webhooks.go, platform/signature)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dedup-rate-limiting-dedup-httpxredis_rate_limitergo-httpxmiddlewarego" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dedup + rate limiting (dedup/, httpx/redis_rate_limiter.go, httpx/middleware.go)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#queue-internalqueue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Queue (internal/queue/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#persistence-failstore-replayaudit-securityaudit-eventstore-retry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Persistence (failstore/, replayaudit/, securityaudit/, eventstore/, retry/)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#env-knobs-see-envexample" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Env knobs (see .env.example)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-like-a-senior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verify like a senior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trade-offs-accepted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trade-offs accepted
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/guilhermesales/TeamPulseBridge/edit/master/docs/runbooks/performance.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="performance-guide-ingestion-gateway">Performance Guide — Ingestion Gateway<a class="headerlink" href="#performance-guide-ingestion-gateway" title="Permanent link">&para;</a></h1>
+<p>Senior-engineer tuning notes for making the gateway faster and more responsive.
+All defaults below are already applied; this doc explains <em>why</em> and how to verify.</p>
+<h2 id="raw-speed-track-v2-single-rtt-zero-copy-prepared-pg-h2c">Raw-speed track (v2 — single RTT, zero-copy, prepared PG, H2C)<a class="headerlink" href="#raw-speed-track-v2-single-rtt-zero-copy-prepared-pg-h2c" title="Permanent link">&para;</a></h2>
+<p>Opt-in single RTT gate (<code>RATE_LIMIT_COMBINED=true</code>, Redis only):</p>
+<ul>
+<li><code>internal/httpx/redis_rate_limiter.go:CombinedCheckWithContext</code> runs
+  <code>INCR general + INCR source + SETNX dedup</code> in one <code>EVALSHA</code> (1 RTT, 50ms
+  fail-open). <code>internal/httpx/combined.go:RateLimitAndDedupCombined</code> replaces
+  <code>RateLimit+SourceRateLimit+handler-Seen</code> when enabled; header-only event IDs
+  (<code>X-GitHub-Delivery</code>, <code>X-Gitlab-*</code>) short-circuit duplicates with 202.
+  Body-derived IDs (slack/teams) still use handler dedup. Default <code>false</code> for
+  backward compat; enable after Redis testing (<code>combined_test.go</code> covers
+  fail-open + path parsing).</li>
+<li><code>redis.UniversalClient</code> (<code>dedup/redis.go</code>, <code>httpx/redis_rate_limiter.go</code>) adds
+  <code>REDIS_CLUSTER_ADDRS</code> support; <code>cmd/server/main.go</code> builds single or cluster
+  clients with <code>PoolSize 32/MinIdle 8/100ms/MaxRetries 0</code>.</li>
+</ul>
+<p>Zero-copy + singleflight:</p>
+<ul>
+<li><code>queue/envelope.go:NewRawWebhookEnvelopeNoCopy</code> saves 1×1MiB copy on the
+  Pub/Sub worker (async already owns its clone). <code>pubsub_publisher.go</code> uses it
+  and sets <code>body_len/event_id/body_hash (≤256KiB)</code> attrs.</li>
+<li><code>eventstore/record.go:BuildRecord</code> references <code>envelope.Body</code> directly (no
+  <code>append(nil)</code>), honors <code>BodyHashHint/Attrs["body_hash"]</code>; <code>consumer.go</code> passes
+  through <code>msg.Attributes</code>. <code>providerEventID</code> also checks <code>X-Event-ID/event_id</code>.</li>
+<li><code>handlers/health.go</code>: 2s memoize + <code>singleflight</code> coalesces kube+prom stampedes;
+  <code>handlers/admin.go:FailedEvents</code> has 2s memoize + weak <code>ETag</code> (<code>If-None-Match</code>
+  → 304) with <code>Cache-Control: private, max-age=2</code>.</li>
+</ul>
+<p>Postgres prepared + bulk:</p>
+<ul>
+<li>Gateway pool sets <code>statement_cache_mode=prepare</code> (<code>cmd/server/main.go</code>);
+  <code>eventstore/postgres_store.go:CopyFromEvents</code> stages via <code>COPY</code> to temp table
+  then <code>INSERT ... ON CONFLICT DO NOTHING</code> for backfills &gt;500 rows (live path
+  keeps <code>pgx.Batch</code>). New composite indexes in <code>failstore/replayaudit/
+  securityaudit/postgres_store.go</code>; offline <code>CONCURRENTLY</code> SQL in each
+  <code>*/migrations/002_perf_indexes.sql</code>.</li>
+</ul>
+<p>HTTP/2 + K8s alignment:</p>
+<ul>
+<li><code>HTTP_H2C_ENABLED=true</code> wraps mux in <code>h2c</code> (<code>cmd/server/h2c.go</code>,
+  <code>MaxConcurrentStreams 250</code>) for mesh multiplexing; edge stays HTTP/1.</li>
+<li><code>deploy/k8s/base/configmap.yaml</code> aligned to code defaults (<code>WORKERS 16</code>,
+  <code>GOROUTINES 16</code>, <code>BATCH 20/500</code>, <code>CB 25/8s</code>, <code>POOL 32</code>, <code>INFLIGHT 512</code>,
+  <code>OTEL 0.02</code>); <code>base/rollout.yaml</code> <code>500m/512Mi → 2/1536Mi</code> fits 512 inflight;
+  prod overlay <code>WORKERS 16/GOROUTINES 16/RETRY_AFTER 2s</code>.</li>
+</ul>
+<p>Verify raw-speed:</p>
+<div class="highlight"><pre><span></span><code><span class="nv">RATE_LIMIT_COMBINED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="nv">REDIS_ADDR</span><span class="o">=</span>...<span class="w"> </span>go<span class="w"> </span>run<span class="w"> </span>./cmd/server
+k6<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span><span class="nv">TARGET_URL</span><span class="o">=</span>http://localhost:8080<span class="w"> </span>../../load-tests/webhook-all-sources.js
+psql<span class="w"> </span><span class="nv">$DATABASE_URL</span><span class="w"> </span>-f<span class="w"> </span>internal/eventstore/migrations/002_perf_indexes.sql
+h2load<span class="w"> </span>-n10000<span class="w"> </span>-c50<span class="w"> </span>-m10<span class="w"> </span>http://localhost:8080/healthz<span class="w">  </span><span class="c1"># with HTTP_H2C_ENABLED=true</span>
+</code></pre></div>
+<h2 id="what-was-slow-before-v1-track">What was slow (before — v1 track)<a class="headerlink" href="#what-was-slow-before-v1-track" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>QUEUE_WORKERS=1</code> + blocking <code>PubSub.Publish.Get()</code> serialized all publishes (~5–20 rps).</li>
+<li>3 serial Redis RTTs per webhook (2× rate-limit + dedup) with 250ms–2s budgets inflated p99.</li>
+<li>PII regex + structural scrub + 3× body copies + 4–5 JSON scans ran on the request goroutine.</li>
+<li><code>FileStore.Save</code> did <code>MkdirAll+Write+f.Sync()</code> (plus prune scan for security audit) under a global <code>Mutex</code> on error/reject paths.</li>
+<li>Event-store: 1 goroutine, 1 INSERT/row, <code>ON CONFLICT DO UPDATE</code> (WAL churn), 4 indexes, <code>Info</code> per row, tight <code>Nack</code> loop.</li>
+<li>Middleware: full chain on probes, raw <code>path</code> label cardinality, <code>slog JSON+Callers</code> per request, crypto trace IDs on 100% traffic.</li>
+<li>Server: <code>ReadHeader 5s</code>, no <code>MaxHeaderBytes</code>/inflight cap, <code>Shutdown 10s</code> truncated drains.</li>
+</ul>
+<h2 id="what-changed-after">What changed (after)<a class="headerlink" href="#what-changed-after" title="Permanent link">&para;</a></h2>
+<h3 id="request-hot-path-internalhandlerswebhooksgo-platformsignature">Request hot path (<code>internal/handlers/webhooks.go</code>, <code>platform/signature</code>)<a class="headerlink" href="#request-hot-path-internalhandlerswebhooksgo-platformsignature" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Pooled 32KiB→1MiB body buffers (<code>sync.Pool</code>), <code>CopyN(LimitReader, 1MiB+1)</code> overflow detect, <code>Close</code> always.</li>
+<li>Slack HMAC writes <code>v0:</code>/<code>ts</code>/<code>:</code>/body incrementally; <code>hmac.Equal</code> on raw bytes (no hex-string compare).</li>
+<li>Single JSON decode for Slack challenge+event_id; streaming <code>extractJSONField</code> with <code>bytes.Contains</code> fast-path.</li>
+<li><code>fallbackEventID</code> hashes full body ≤32KiB, else prefix+len (avoids SHA256 over 1MiB).</li>
+<li>Static <code>acceptedResponse</code> struct (no per-request maps), <code>Retry-After</code> on both throttled (429) and full (503).</li>
+<li>Dedup <code>Forget</code> only on retriable enqueue failures.</li>
+</ul>
+<h3 id="dedup-rate-limiting-dedup-httpxredis_rate_limitergo-httpxmiddlewarego">Dedup + rate limiting (<code>dedup/</code>, <code>httpx/redis_rate_limiter.go</code>, <code>httpx/middleware.go</code>)<a class="headerlink" href="#dedup-rate-limiting-dedup-httpxredis_rate_limitergo-httpxmiddlewarego" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Memory dedup: 32-shard <code>RWMutex</code>, read-first fast path, 200k cap, background expiry.</li>
+<li>Redis dedup/rate-limit: 100ms/50ms budgets, fail-open, <code>FNV-1a</code> keys, ctx-aware (<code>SeenWithContext</code>, <code>AllowWithContext</code>).</li>
+<li><code>IPRateLimiter</code>: 16 shards, per-shard caps, background sweep (no full-map scan in hot path).</li>
+<li>CIDR parse cached (<code>sync.Map</code>), <code>ClientIP</code> fast-path when no trusted proxies.</li>
+<li>Probes (<code>/healthz|/readyz|/metrics|/assets/*</code>) bypass timeout + rate limits.</li>
+<li><code>RouteTemplate</code> (<code>/webhooks/:source</code>, <code>/admin/:endpoint</code>) bounds metric cardinality.</li>
+<li><code>AccessLog</code>: <code>Debug</code> on success, <code>Info</code> on ≥400/slow; <code>MaxInflight(512)</code> fail-fast 503+<code>Retry-After</code>.</li>
+<li><code>RequestID</code>: counter-based IDs, lazy traceparent (no crypto on unsampled traffic), sanitize only when dirty.</li>
+<li>JWT: pre-derived secret, reused <code>jwt.Parser</code>, strict <code>Bearer</code> (no <code>ToLower</code> alloc).</li>
+<li>Recorder supports <code>Flusher</code>/<code>Hijacker</code>; middleware order fixed (Recoverer outermost → RequestID/OTEL → AccessLog → inflight/timeout → limits/auth).</li>
+</ul>
+<h3 id="queue-internalqueue">Queue (<code>internal/queue/</code>)<a class="headerlink" href="#queue-internalqueue" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>AsyncPublisher</code>: default workers 16, lock-free depth pre-check, single <code>Snapshot</code>, 10s worker budget, stale-deadline floor (1s), readiness fails only at 100% full / 25% failures.</li>
+<li><code>PubSubPublisher</code>: bundling <code>20ms/500/1MiB</code>, <code>NumGoroutines 16</code>, flow-control <code>signal_error/2000/100MiB</code>, 1MiB guard, health cached 10s/2s.</li>
+<li><code>Bulkhead</code>: enabled by default, allowlist (<code>slack|github|gitlab|teams</code> + <code>other</code>), <code>maxSources 8</code>, no double <code>Snapshot</code>, <code>Close</code> outside lock, 5s aggregate cache.</li>
+<li><code>CircuitBreaker</code>: threshold 25/recovery 8s (env-tuned), single-flight half-open probe, ignores <code>ErrQueueFull/Throttled</code>.</li>
+<li><code>Factory</code>: PII scrub moved <strong>inside workers</strong> (<code>SizeGatedScrubPublisher</code>, <code>PII_SCRUB_ASYNC=true</code>, <code>PII_MAX_SCRUB_BYTES=256KiB</code>), memory-bound clamp, combined close errors.</li>
+<li>Scrub fast-paths: <code>ScrubEmails</code> skips without <code>@</code>, <code>ScrubTokens</code> skips without <code>=</code>/<code>:</code>; <code>StructuralScrubber</code> uses <code>map</code> set + <code>containsFold</code> + 4KiB hint scan.</li>
+</ul>
+<h3 id="persistence-failstore-replayaudit-securityaudit-eventstore-retry">Persistence (<code>failstore/</code>, <code>replayaudit/</code>, <code>securityaudit/</code>, <code>eventstore/</code>, <code>retry/</code>)<a class="headerlink" href="#persistence-failstore-replayaudit-securityaudit-eventstore-retry" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New <code>AsyncStore</code> wrappers (512/1024 buffers, 300–500ms budgets, drop counters) so rejects/replays return immediately.</li>
+<li><code>FileStore</code>: <code>MkdirAll</code> once, <code>RWMutex</code> (reads concurrent), limit caps; security audit prunes in background, not per-<code>Save</code>.</li>
+<li><code>PostgresStore (eventstore)</code>: <code>ON CONFLICT DO NOTHING</code> + <code>SELECT</code> fallback, dropped <code>body_hash</code> index, new <code>SaveBatch</code> (<code>pgx.Batch</code>).</li>
+<li><code>Consumer</code>: poison-pill Ack after 5 deliveries, backoff sleep before <code>Nack</code>, sampled logging (Debug + Info every 100).</li>
+<li><code>cmd/eventstore</code>: <code>2000 msgs/256MiB/16 goroutines/10m extension</code>, pg pool <code>32/8</code>, statement cache, client retry with backoff.</li>
+<li><code>cmd/server</code> pg pool <code>20/2</code>, Redis pool <code>32/8/100ms/MaxRetries 0</code>, retry workers 8 + jittered ticks + parallel retries, leader TTL <code>3×interval</code>.</li>
+<li><code>Healthz</code>: fan-out with 1.5s overall budget (was 3s serial).</li>
+<li><code>Admin</code>: batch replay with 5 workers (order-preserving), <code>bodyPreview</code> truncates before redact.</li>
+<li><code>Schema</code>: precomputed <code>requiredSet</code>, small <code>seen</code> map (no full field-set alloc).</li>
+<li><code>Telemetry</code>: 6 buckets (not 11/9), top-8 source cap, sampler <code>OTEL_TRACES_SAMPLER_RATIO=0.02</code>, batcher <code>2s/256</code>, probe spans named <code>probe</code>.</li>
+<li><code>Logger</code>: <code>AddSource:false</code> in prod.</li>
+<li>Server: <code>ReadHeader 3s</code>, <code>MaxHeaderBytes 8KiB</code>, <code>Shutdown 30s</code>; compose limits + <code>GOMEMLIMIT/GOMAXPROCS</code>.</li>
+</ul>
+<h2 id="env-knobs-see-envexample">Env knobs (see <code>.env.example</code>)<a class="headerlink" href="#env-knobs-see-envexample" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>QUEUE_WORKERS=16  QUEUE_BULKHEAD_ENABLED=true  QUEUE_BULKHEAD_MAX_SOURCES=8
+PUBSUB_PUBLISH_GOROUTINES=16  PUBSUB_BATCH_DELAY_MS=20  PUBSUB_FLOW_CONTROL_BEHAVIOR=signal_error
+PII_SCRUB_ASYNC=true  PII_MAX_SCRUB_BYTES=262144
+REDIS_POOL_SIZE=32  REDIS_IO_TIMEOUT_MS=100
+HTTP_MAX_INFLIGHT=512  OTEL_TRACES_SAMPLER_RATIO=0.02
+EVENTSTORE_MAX_OUTSTANDING_MESSAGES=2000  EVENTSTORE_RECEIVE_GOROUTINES=16
+</code></pre></div>
+<h2 id="verify-like-a-senior">Verify like a senior<a class="headerlink" href="#verify-like-a-senior" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>services/ingestion-gateway
+gofmt<span class="w"> </span>-w<span class="w"> </span>./cmd<span class="w"> </span>./internal<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>go<span class="w"> </span>vet<span class="w"> </span>./...<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>./...<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-race<span class="w"> </span>./...
+go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-run<span class="o">=</span>^$<span class="w"> </span>-bench<span class="o">=</span>.<span class="w"> </span>-benchmem<span class="w"> </span>-benchtime<span class="o">=</span>5s<span class="w"> </span>./internal/handlers<span class="w"> </span>./internal/queue
+k6<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span><span class="nv">TARGET_URL</span><span class="o">=</span>http://localhost:8080<span class="w"> </span>../../load-tests/webhook-throughput.js
+k6<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span><span class="nv">TARGET_URL</span><span class="o">=</span>http://localhost:8080<span class="w"> </span>../../load-tests/webhook-all-sources.js
+k6<span class="w"> </span>run<span class="w"> </span>-e<span class="w"> </span><span class="nv">TARGET_URL</span><span class="o">=</span>http://localhost:8080<span class="w"> </span>-e<span class="w"> </span><span class="nv">ADMIN_JWT</span><span class="o">=</span><span class="nv">$JWT</span><span class="w"> </span>../../load-tests/admin-lists.js
+</code></pre></div>
+<p>Watch: <code>p95&lt;200ms</code> at 200VU, queue depth, <code>queue_backpressure_events_total</code>,
+<code>security_rejections_total{route}</code>, <code>pg_stat_activity</code>, Redis latency, no leader flap.</p>
+<h2 id="trade-offs-accepted">Trade-offs accepted<a class="headerlink" href="#trade-offs-accepted" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Fail-fast 429/503 + <code>Retry-After</code> over unbounded buffering (protects p99, clients retry).</li>
+<li>Async audit with tiny loss window on crash (drop counters expose it) over blocking rejects.</li>
+<li>Bulkhead <code>other</code> bucket over per-attacker-source queues (bounds goroutines).</li>
+<li>Local-first rollout: code defaults + compose first, then k8s HPA (<code>RPS/p95 + queue depth</code>), PDB, <code>requests/limits</code>.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
