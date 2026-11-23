@@ -64,6 +64,12 @@ services:
       ADMIN_JWT_ISSUER: local
       ADMIN_JWT_AUDIENCE: local
       ADMIN_JWT_SECRET: local-dev-must-be-32-chars-long-or-more
+      # Dummy values so the local stack boots with REQUIRE_SECRETS=true.
+      # Override via .env when using real webhook secrets.
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-test-slack-secret}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-test-github-secret}
+      GITLAB_WEBHOOK_TOKEN: ${GITLAB_WEBHOOK_TOKEN:-test-gitlab-token}
+      TEAMS_CLIENT_STATE: ${TEAMS_CLIENT_STATE:-test-teams-state}
       PUBSUB_EMULATOR_HOST: ${PUBSUB_EMULATOR_HOST:-}
       PUBSUB_PROJECT_ID: ${PUBSUB_PROJECT_ID:-test-project}
       PUBSUB_TOPIC_ID: ${PUBSUB_TOPIC_ID:-webhook-events}
