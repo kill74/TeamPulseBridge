@@ -65,6 +65,7 @@ type SecurityEvent struct {
 type slackChallenge struct {
 	Type      string `json:"type"`
 	Challenge string `json:"challenge"`
+	EventID   string `json:"event_id"`
 }
 
 func NewWebhookHandler(cfg config.Config, publisher queue.Publisher, logger *slog.Logger, record func(ctx context.Context, source string, status int)) *WebhookHandler {
@@ -127,11 +128,7 @@ func (h *WebhookHandler) HandleSlack(w http.ResponseWriter, r *http.Request) {
 
 	// Slack URL verification during webhook registration.
 	// Single decode yields both challenge and event_id to avoid 2-3 JSON passes.
-	var mini struct {
-		Type      string `json:"type"`
-		Challenge string `json:"challenge"`
-		EventID   string `json:"event_id"`
-	}
+	var mini slackChallenge
 	if err := json.Unmarshal(body, &mini); err == nil && mini.Type == "url_verification" && mini.Challenge != "" {
 		h.observe(r.Context(), "slack", http.StatusOK)
 		writeJSON(w, http.StatusOK, map[string]string{"challenge": mini.Challenge})
@@ -267,11 +264,10 @@ func (h *WebhookHandler) publishAndAck(w http.ResponseWriter, r *http.Request, s
 		}
 		status := http.StatusInternalServerError
 		errCode := apperr.CodePublishFailed
-		retryAfter := 0
 		if errors.Is(err, queue.ErrQueueThrottled) {
 			status = http.StatusTooManyRequests
 			errCode = apperr.CodeQueueThrottled
-			retryAfter = h.cfg.QueueThrottleRetryAfterSec
+			retryAfter := h.cfg.QueueThrottleRetryAfterSec
 			if retryAfter < 1 {
 				retryAfter = 2
 			}
@@ -280,7 +276,7 @@ func (h *WebhookHandler) publishAndAck(w http.ResponseWriter, r *http.Request, s
 			status = http.StatusServiceUnavailable
 			errCode = apperr.CodeQueueFull
 			// Fail fast with an explicit backoff hint so clients don't hammer us.
-			retryAfter = h.cfg.QueueThrottleRetryAfterSec
+			retryAfter := h.cfg.QueueThrottleRetryAfterSec
 			if retryAfter < 1 {
 				retryAfter = 2
 			}
@@ -367,7 +363,11 @@ func readBody(w http.ResponseWriter, r *http.Request) (body []byte, appErr *appe
 	// and so oversized bodies are detected without growing to 2x.
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes+1)
 	defer func() { _ = r.Body.Close() }()
-	bufPtr := bodyBufferPool.Get().(*[]byte)
+	bufPtr, ok := bodyBufferPool.Get().(*[]byte)
+	if !ok {
+		b := make([]byte, 0, 32*1024)
+		bufPtr = &b
+	}
 	buf := (*bufPtr)[:0]
 	defer func() {
 		*bufPtr = buf[:0]

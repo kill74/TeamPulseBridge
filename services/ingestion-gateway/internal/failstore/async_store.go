@@ -25,7 +25,6 @@ type AsyncStore struct {
 	ch        chan asyncSaveReq
 	dropped   atomic.Int64
 	closed    atomic.Bool
-	closeMu   sync.Mutex
 	closeCh   chan struct{}
 	closeOnce sync.Once
 }
@@ -104,7 +103,11 @@ func (a *AsyncStore) run() {
 // silently reporting success.
 func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (FailedEvent, error) {
 	if a.closed.Load() {
-		return a.inner.Save(ctx, in)
+		rec, err := a.inner.Save(ctx, in)
+		if err != nil {
+			return rec, fmt.Errorf("sync save failed event: %w", err)
+		}
+		return rec, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -119,7 +122,7 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (FailedEvent, error
 		case <-ctx.Done():
 			// Caller gave up; worker will still persist in background
 			// via WithoutCancel. Report cancellation accurately.
-			return FailedEvent{}, ctx.Err()
+			return FailedEvent{}, fmt.Errorf("wait for async save: %w", ctx.Err())
 		case <-time.After(500 * time.Millisecond):
 			// Worker is slow but will still persist in background;
 			// surface timeout so callers don't misreport success.
@@ -132,19 +135,33 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (FailedEvent, error
 }
 
 func (a *AsyncStore) GetByID(ctx context.Context, eventID string) (FailedEvent, error) {
-	return a.inner.GetByID(ctx, eventID)
+	rec, err := a.inner.GetByID(ctx, eventID)
+	if err != nil {
+		return rec, fmt.Errorf("get failed event %s: %w", eventID, err)
+	}
+	return rec, nil
 }
 
 func (a *AsyncStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, error) {
-	return a.inner.ListRecent(ctx, limit)
+	recs, err := a.inner.ListRecent(ctx, limit)
+	if err != nil {
+		return recs, fmt.Errorf("list recent failed events: %w", err)
+	}
+	return recs, nil
 }
 
 func (a *AsyncStore) Delete(ctx context.Context, eventID string) error {
-	return a.inner.Delete(ctx, eventID)
+	if err := a.inner.Delete(ctx, eventID); err != nil {
+		return fmt.Errorf("delete failed event %s: %w", eventID, err)
+	}
+	return nil
 }
 
 func (a *AsyncStore) UpdateRetryCount(ctx context.Context, eventID string, retryCount int) error {
-	return a.inner.UpdateRetryCount(ctx, eventID, retryCount)
+	if err := a.inner.UpdateRetryCount(ctx, eventID, retryCount); err != nil {
+		return fmt.Errorf("update retry count for event %s: %w", eventID, err)
+	}
+	return nil
 }
 
 // Dropped returns the count of fail-open drops (expose via metrics).

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -132,50 +131,4 @@ func validateRequiredFields(body []byte, requiredSet map[string]struct{}, requir
 		}
 	}
 	return nil
-}
-
-func topLevelObjectFields(body []byte) (map[string]struct{}, error) {
-	dec := json.NewDecoder(bytes.NewReader(body))
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok || delim != '{' {
-		return nil, fmt.Errorf("invalid JSON object")
-	}
-
-	fields := make(map[string]struct{})
-	for dec.More() {
-		keyTok, err := dec.Token()
-		if err != nil {
-			return nil, fmt.Errorf("invalid JSON object key: %w", err)
-		}
-		key, ok := keyTok.(string)
-		if !ok {
-			return nil, fmt.Errorf("invalid JSON object key")
-		}
-		fields[key] = struct{}{}
-
-		var raw json.RawMessage
-		if err := dec.Decode(&raw); err != nil {
-			return nil, fmt.Errorf("invalid JSON object value: %w", err)
-		}
-	}
-
-	endTok, err := dec.Token()
-	if err != nil {
-		return nil, fmt.Errorf("invalid JSON object: %w", err)
-	}
-	endDelim, ok := endTok.(json.Delim)
-	if !ok || endDelim != '}' {
-		return nil, fmt.Errorf("invalid JSON object")
-	}
-
-	if tok, err := dec.Token(); err == nil {
-		return nil, fmt.Errorf("invalid JSON: trailing data after %v", tok)
-	} else if err != io.EOF {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
-	}
-	return fields, nil
 }

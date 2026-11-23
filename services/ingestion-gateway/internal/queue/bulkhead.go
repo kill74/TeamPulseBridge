@@ -240,12 +240,6 @@ func (b *BulkheadPublisher) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-func (b *BulkheadPublisher) emitBackpressure(ctx context.Context, source, action string, snapshot PublisherSnapshot) {
-	if b.options.Hooks.OnBackpressure != nil {
-		b.options.Hooks.OnBackpressure(ctx, source, action, snapshot)
-	}
-}
-
 func limitFromRatio(capacity int, ratio float64) int {
 	if capacity <= 0 {
 		return 1

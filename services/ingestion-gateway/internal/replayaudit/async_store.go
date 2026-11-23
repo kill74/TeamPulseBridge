@@ -88,7 +88,11 @@ func (a *AsyncStore) run() {
 
 func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 	if a.closed.Load() {
-		return a.inner.Save(ctx, in)
+		rec, err := a.inner.Save(ctx, in)
+		if err != nil {
+			return rec, fmt.Errorf("sync save replay-audit record: %w", err)
+		}
+		return rec, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -100,7 +104,7 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 		case res := <-resCh:
 			return res.record, res.err
 		case <-ctx.Done():
-			return Record{}, ctx.Err()
+			return Record{}, fmt.Errorf("wait for replay-audit save: %w", ctx.Err())
 		case <-time.After(500 * time.Millisecond):
 			return Record{}, context.DeadlineExceeded
 		}
@@ -111,13 +115,17 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 }
 
 func (a *AsyncStore) List(ctx context.Context, q ListQuery) (ListResult, error) {
-	return a.inner.List(ctx, q)
+	out, err := a.inner.List(ctx, q)
+	if err != nil {
+		return out, fmt.Errorf("list replay-audit records: %w", err)
+	}
+	return out, nil
 }
 
 func (a *AsyncStore) ListRecent(ctx context.Context, limit int) ([]Record, error) {
 	out, err := a.inner.List(ctx, ListQuery{Limit: limit, Sort: SortDesc})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list recent replay-audit records: %w", err)
 	}
 	return out.Records, nil
 }

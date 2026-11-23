@@ -88,7 +88,7 @@ func (s *StructuralScrubber) isSensitive(key string) bool {
 // containsFold reports whether b contains pattern case-insensitively
 // without allocating a lowered copy of b.
 func containsFold(b []byte, pattern string) bool {
-	if len(pattern) == 0 || len(b) < len(pattern) {
+	if pattern == "" || len(b) < len(pattern) {
 		return false
 	}
 	for i := 0; i+len(pattern) <= len(b); i++ {

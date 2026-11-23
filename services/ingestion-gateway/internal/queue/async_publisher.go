@@ -250,13 +250,6 @@ func (p *AsyncPublisher) Snapshot() PublisherSnapshot {
 	return p.snapshotLocked()
 }
 
-func (p *AsyncPublisher) isHardLimited(snapshot PublisherSnapshot) bool {
-	if !p.options.Backpressure.Enabled {
-		return false
-	}
-	return snapshot.UsageRatio >= p.options.Backpressure.HardLimitRatio
-}
-
 func (p *AsyncPublisher) shouldThrottle(snapshot PublisherSnapshot) bool {
 	bp := p.options.Backpressure
 	if !bp.Enabled || snapshot.Capacity == 0 {

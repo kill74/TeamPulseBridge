@@ -3,9 +3,8 @@ package httpx
 import (
 	"bufio"
 	"context"
-	crand "crypto/rand"
-	"encoding/hex"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"log/slog"
 	mathrand "math/rand/v2"
@@ -238,7 +237,7 @@ func (r *statusRecorder) WriteHeader(code int) {
 func (r *statusRecorder) Write(b []byte) (int, error) {
 	n, err := r.ResponseWriter.Write(b)
 	r.size += n
-	return n, err
+	return n, err //nolint:wrapcheck // ResponseWriter.Write errors are passed through to net/http unchanged.
 }
 
 // Flush/Hijack passthrough so SSE/h2 don't break behind the recorder.
@@ -250,7 +249,11 @@ func (r *statusRecorder) Flush() {
 
 func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
-		return h.Hijack()
+		conn, rw, err := h.Hijack()
+		if err != nil {
+			return nil, nil, fmt.Errorf("hijack connection: %w", err)
+		}
+		return conn, rw, nil
 	}
 	return nil, nil, errors.New("hijack not supported")
 }
@@ -330,22 +333,6 @@ func RequestID() Middleware {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-func generateTraceID() string {
-	b := make([]byte, 16)
-	if _, err := crand.Read(b); err != nil {
-		return strings.Repeat("0", 32)
-	}
-	return hex.EncodeToString(b)
-}
-
-func generateSpanID() string {
-	b := make([]byte, 8)
-	if _, err := crand.Read(b); err != nil {
-		return strings.Repeat("0", 16)
-	}
-	return hex.EncodeToString(b)
 }
 
 type ChaosConfig struct {
@@ -467,7 +454,7 @@ func AccessLog(logger *slog.Logger, durationHistogram metric.Float64Histogram) M
 
 // MaxInflight caps concurrent requests with fail-fast 503 + Retry-After so
 // unbounded HTTP goroutines can't pile up behind Redis/queue saturation.
-func MaxInflight(limit int, retryAfterSec int) Middleware {
+func MaxInflight(limit, retryAfterSec int) Middleware {
 	if limit <= 0 {
 		return func(next http.Handler) http.Handler { return next }
 	}
@@ -623,7 +610,7 @@ func SourceRateLimit(cfg SourceRateLimitConfig) Middleware {
 
 			ip := ClientIPFromRequest(r, trusted)
 			key := "source|" + source + "|" + ip
-			allowed := true
+			var allowed bool
 			if ctxLimiter, ok := limiter.(interface {
 				AllowWithContext(ctx context.Context, key string, limit int) bool
 			}); ok && isRedisLimiter(limiter) {

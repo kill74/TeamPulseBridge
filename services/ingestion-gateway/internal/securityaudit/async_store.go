@@ -88,7 +88,11 @@ func (a *AsyncStore) run() {
 
 func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 	if a.closed.Load() {
-		return a.inner.Save(ctx, in)
+		rec, err := a.inner.Save(ctx, in)
+		if err != nil {
+			return rec, fmt.Errorf("sync save security-audit record: %w", err)
+		}
+		return rec, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -100,7 +104,7 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 		case res := <-resCh:
 			return res.record, res.err
 		case <-ctx.Done():
-			return Record{}, ctx.Err()
+			return Record{}, fmt.Errorf("wait for security-audit save: %w", ctx.Err())
 		case <-time.After(300 * time.Millisecond):
 			return Record{}, context.DeadlineExceeded
 		}
@@ -111,7 +115,11 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 }
 
 func (a *AsyncStore) ListRecent(ctx context.Context, limit int) ([]Record, error) {
-	return a.inner.ListRecent(ctx, limit)
+	recs, err := a.inner.ListRecent(ctx, limit)
+	if err != nil {
+		return recs, fmt.Errorf("list recent security-audit records: %w", err)
+	}
+	return recs, nil
 }
 
 func (a *AsyncStore) Dropped() int64 { return a.dropped.Load() }

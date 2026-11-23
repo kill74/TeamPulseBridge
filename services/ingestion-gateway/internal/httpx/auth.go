@@ -219,27 +219,6 @@ func validateTokenWithParser(parser *jwt.Parser, tokenString string, secret []by
 	return nil
 }
 
-func validateToken(tokenString string, cfg JWTConfig) error {
-	token, err := jwt.Parse(tokenString,
-		func(t *jwt.Token) (interface{}, error) {
-			if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
-				return nil, fmt.Errorf("unexpected signing method %s", t.Method.Alg())
-			}
-			return []byte(cfg.Secret), nil
-		},
-		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
-		jwt.WithIssuer(cfg.Issuer),
-		jwt.WithAudience(cfg.Audience),
-	)
-	if err != nil {
-		return fmt.Errorf("parse token: %w", err)
-	}
-	if !token.Valid {
-		return fmt.Errorf("token invalid")
-	}
-	return nil
-}
-
 func rejectSecurity(w http.ResponseWriter, r *http.Request, status int, reason string, onReject func(r *http.Request, reason string, status int), err *apperr.Error) {
 	if onReject != nil {
 		onReject(r, reason, status)

@@ -24,7 +24,7 @@ func NewRedisRateLimiter(client redis.UniversalClient, prefix string, window tim
 
 // NewRedisRateLimiterWithTimeout lets services use a tight 20-50ms budget in
 // the hot path so Redis saturation fails open fast instead of stalling.
-func NewRedisRateLimiterWithTimeout(client redis.UniversalClient, prefix string, window time.Duration, timeout time.Duration) *RedisRateLimiter {
+func NewRedisRateLimiterWithTimeout(client redis.UniversalClient, prefix string, window, timeout time.Duration) *RedisRateLimiter {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
 		prefix = "rate_limit"
@@ -116,7 +116,7 @@ func (l *RedisRateLimiter) CombinedCheckWithContext(ctx context.Context, general
 	if l.client == nil {
 		return failOpen()
 	}
-	gKey := ""
+	var gKey string
 	if strings.TrimSpace(generalKey) != "" {
 		gKey = l.redisKey(windowStart, generalKey)
 	} else {
@@ -124,7 +124,7 @@ func (l *RedisRateLimiter) CombinedCheckWithContext(ctx context.Context, general
 		// instead send a throwaway key in our namespace to keep script arity.
 		gKey = l.prefix + ":noop:" + strconv.FormatInt(windowStart, 10)
 	}
-	sKey := ""
+	var sKey string
 	if strings.TrimSpace(sourceKey) != "" {
 		sKey = l.redisKey(windowStart, sourceKey)
 	} else {
