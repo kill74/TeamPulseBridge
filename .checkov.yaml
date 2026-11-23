@@ -13,6 +13,10 @@ download-external-modules: false
 # Current IaC enforcement is scoped to the project's implemented baseline.
 # The controls below remain tracked backlog items rather than merge blockers.
 skip-check:
+  # Cloud SQL is private-network-only (ipv4_enabled=false) and uses
+  # ssl_mode=ENCRYPTED_ONLY. Checkov CKV_GCP_6 still looks for the removed
+  # google provider v8 `require_ssl` attribute, so it cannot detect this.
+  - CKV_GCP_6
   # Terraform/GCP baseline gaps still under active platform hardening.
   - CKV2_GCP_13
   - CKV_GCP_20

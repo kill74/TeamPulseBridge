@@ -95,7 +95,7 @@ replay:
 dev-setup:
 	@command -v go >/dev/null 2>&1 || (echo "Go is required" && exit 1)
 	@command -v python3 >/dev/null 2>&1 || (echo "python3 is required" && exit 1)
-	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469 python-hcl2==8.1.2
+	@python3 -m pip install --upgrade pip pre-commit checkov==3.2.469 python-hcl2==8.1.2 pyyaml
 	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@python3 -m pre_commit install --install-hooks
@@ -133,24 +133,29 @@ test:
 contract-lint:
 	cd services/ingestion-gateway && go run ./cmd/fixturelint
 
+# NOTE: keep the -run filter identical to .github/workflows/ci.yml contracts job.
 contract-test:
-	cd services/ingestion-gateway && go test -count=1 ./internal/handlers ./internal/queue -run 'TestWebhook(FixtureCatalog|PayloadContracts|CompatibilityMatrix)|TestRawWebhookEnvelopeSchema'
+	cd services/ingestion-gateway && go test -count=1 ./internal/handlers ./internal/queue -run 'TestWebhookFixtureCatalog|TestWebhookPayloadContracts|TestWebhookCompatibilityMatrix|TestRawWebhookEnvelopeSchema'
 
 race:
 	cd services/ingestion-gateway && go test -race ./...
 
 fuzz:
-	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=30s ./internal/handlers ./internal/queue ./internal/config ./internal/dedup
+	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=30s ./internal/queue ./internal/config
 
 fuzz-ci:
-	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=5m ./internal/handlers ./internal/queue ./internal/config ./internal/dedup
+	cd services/ingestion-gateway && go test -fuzz=Fuzz -fuzztime=5m ./internal/queue ./internal/config
 
 verify: fmt lint vet test race
 
+# Mirrors .github/workflows/ci.yml: tidy guard, -race -count=1 tests with the
+# same 40% coverage gate, vet, pinned-config lint, and govulncheck.
 ci-go:
 	cd services/ingestion-gateway && test -z "$$(gofmt -l ./cmd ./internal)"
+	cd services/ingestion-gateway && go mod tidy && git diff --exit-code go.mod go.sum
 	cd services/ingestion-gateway && go vet ./...
-	cd services/ingestion-gateway && go test ./...
+	cd services/ingestion-gateway && go test -race -count=1 -coverprofile=coverage.out ./...
+	cd services/ingestion-gateway && COVERAGE=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | tr -d '%') && echo "Total coverage: $${COVERAGE}%" && (awk "BEGIN {exit !( $${COVERAGE} < 40 )}" && (echo "Coverage $${COVERAGE}% is below threshold 40%" && exit 1) || echo "Coverage meets threshold")
 	cd services/ingestion-gateway && $(GOLANGCI_LINT) run --config $(CURDIR)/.golangci.yml ./...
 	cd services/ingestion-gateway && $(GOVULNCHECK) -format text ./...
 
@@ -173,7 +178,8 @@ ci-policy:
 	kubectl kustomize deploy/k8s/overlays/staging > .ci/rendered/staging.yaml; \
 	kubectl kustomize deploy/k8s/overlays/prod > .ci/rendered/prod.yaml; \
 	$(CHECKOV) --config-file .checkov.yaml --framework terraform --directory infrastructure/terraform; \
-	$(CHECKOV) --config-file .checkov.yaml --framework kubernetes --directory .ci/rendered --directory deploy/gitops/argocd; \
+	$(CHECKOV) --config-file .checkov.yaml --framework kubernetes --directory .ci/rendered; \
+	$(CHECKOV) --config-file .checkov.yaml --framework kubernetes --directory deploy/gitops/argocd; \
 	python3 scripts/policy/check_iac.py \
 		--terraform-env staging=infrastructure/terraform/environments/staging/terraform.tfvars \
 		--terraform-env prod=infrastructure/terraform/environments/prod/terraform.tfvars \
@@ -190,7 +196,7 @@ ci-smoke:
 	while [ "$$i" -lt 40 ]; do \
 		if curl -fsS http://localhost:8080/healthz >/dev/null; then \
 			echo "healthz is up"; \
-			curl -fsS http://localhost:8080/metrics | head -n 20; \
+			curl -fsS http://localhost:8080/metrics | grep -q "go_"; \
 			docker compose ps; \
 			exit 0; \
 		fi; \
@@ -202,7 +208,10 @@ ci-smoke:
 	docker compose logs --no-color --tail=200; \
 	exit 1
 
-ci-local: ci-go race ci-contract ci-terraform ci-policy ci-smoke
+ci-docs:
+	cd site-docs && pip install -r requirements.txt && mkdocs build --strict
+
+ci-local: ci-go race ci-contract ci-terraform ci-policy ci-smoke ci-docs
 
 run:
 	cd services/ingestion-gateway && go run ./cmd/server

@@ -38,9 +38,9 @@ database_availability_type   = "ZONAL"
 database_deletion_protection = false
 
 # Storage
-data_retention_days   = 30
-backup_retention_days = 7
-log_retention_days    = 7
+data_retention_days               = 30
+backup_retention_days             = 7
+log_retention_days                = 7
 security_audit_log_retention_days = 30
 
 # Application domain

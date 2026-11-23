@@ -19,6 +19,7 @@ type Scheduler struct {
 	logger     *slog.Logger
 	maxRetries int
 	interval   time.Duration
+	workers    int
 	ticker     *time.Ticker
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
@@ -32,6 +33,7 @@ type Scheduler struct {
 type SchedulerOptions struct {
 	MaxRetries     int
 	Interval       time.Duration
+	Workers        int
 	OnRetry        func(ctx context.Context, source string, success bool, attempt int)
 	LeaderElection *LeaderElection
 }
@@ -43,6 +45,12 @@ func NewScheduler(store failstore.Store, publisher queue.Publisher, logger *slog
 	if opts.Interval <= 0 {
 		opts.Interval = 10 * time.Second
 	}
+	if opts.Workers <= 0 {
+		opts.Workers = 8
+	}
+	if opts.Workers > 32 {
+		opts.Workers = 32
+	}
 
 	return &Scheduler{
 		store:      store,
@@ -50,6 +58,7 @@ func NewScheduler(store failstore.Store, publisher queue.Publisher, logger *slog
 		logger:     logger,
 		maxRetries: opts.MaxRetries,
 		interval:   opts.Interval,
+		workers:    opts.Workers,
 		onRetry:    opts.OnRetry,
 		leader:     opts.LeaderElection,
 	}
@@ -66,7 +75,9 @@ func (s *Scheduler) Start() {
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.running = true
-	s.ticker = time.NewTicker(s.interval)
+	// Jitter the tick (0-20%) so N replicas don't fire together (thundering herd).
+	jittered := s.interval + time.Duration(rand.Float64()*0.2*float64(s.interval))
+	s.ticker = time.NewTicker(jittered)
 	s.wg.Add(1)
 	go s.run(runCtx)
 }
@@ -123,11 +134,13 @@ func (s *Scheduler) processRetries(parent context.Context) {
 		return
 	}
 
-	seenEventIDs := make(map[string]struct{}, len(events))
+	// Bounded worker pool: previously sequential 1+2*N RTTs blocked the next tick.
+	sem := make(chan struct{}, s.workers)
+	var wg sync.WaitGroup
 	for _, event := range events {
-		seenEventIDs[event.EventID] = struct{}{}
 		select {
 		case <-ctx.Done():
+			wg.Wait()
 			return
 		default:
 		}
@@ -152,8 +165,15 @@ func (s *Scheduler) processRetries(parent context.Context) {
 			continue
 		}
 
-		s.retryEvent(ctx, event)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(ev failstore.FailedEvent) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			s.retryEvent(ctx, ev)
+		}(event)
 	}
+	wg.Wait()
 }
 
 func (s *Scheduler) retryEvent(ctx context.Context, event failstore.FailedEvent) {

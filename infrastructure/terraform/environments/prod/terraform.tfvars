@@ -38,9 +38,9 @@ database_availability_type   = "REGIONAL"
 database_deletion_protection = true
 
 # Storage
-data_retention_days   = 90
-backup_retention_days = 30
-log_retention_days    = 30
+data_retention_days               = 90
+backup_retention_days             = 30
+log_retention_days                = 30
 security_audit_log_retention_days = 180
 
 # Application domain

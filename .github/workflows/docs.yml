@@ -2,22 +2,33 @@ name: docs
 
 on:
   pull_request:
+    paths:
+      - "site-docs/**"
+      - ".github/workflows/docs.yml"
   push:
     branches: ['main', 'master']
+    paths:
+      - "site-docs/**"
+      - ".github/workflows/docs.yml"
 
 permissions:
   contents: read
 
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docs-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: site-docs
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

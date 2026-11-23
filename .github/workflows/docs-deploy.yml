@@ -3,6 +3,9 @@ name: docs-deploy
 on:
   push:
     branches: ['main', 'master']
+    paths:
+      - "site-docs/**"
+      - ".github/workflows/docs-deploy.yml"
 
 permissions:
   contents: write
@@ -13,20 +16,15 @@ concurrency:
 
 jobs:
   deploy:
+    # Skip (not fail) on non-default branches; the push trigger still lists
+    # both main/master for repos whose default may be either.
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Safety check - only deploy from default branch
-        shell: bash
-        run: |
-          if [[ "${GITHUB_REF_NAME}" != "${{ github.event.repository.default_branch }}" ]]; then
-            echo "Error: docs-deploy must run from the default branch (${{ github.event.repository.default_branch }}), got ${GITHUB_REF_NAME}"
-            exit 1
-          fi
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

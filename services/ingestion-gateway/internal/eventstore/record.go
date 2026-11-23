@@ -18,6 +18,12 @@ type SaveInput struct {
 	Envelope        queue.RawWebhookEnvelope
 	PublishedAt     time.Time
 	DeliveryAttempt *int
+	// BodyHashHint, when set (e.g. from Pub/Sub message attributes populated by
+	// the publisher worker), skips recomputing SHA256 over the body.
+	BodyHashHint string
+	// Attrs carries Pub/Sub message attributes for zero-copy hints (event_id,
+	// body_hash) without extra unmarshalling.
+	Attrs map[string]string
 }
 
 // Event is the persisted representation of a queued webhook event.
@@ -68,8 +74,21 @@ func BuildRecord(in SaveInput) (Record, error) {
 		return Record{}, fmt.Errorf("marshal event headers: %w", err)
 	}
 
-	bodyJSON := append([]byte(nil), in.Envelope.Body...)
-	sum := sha256.Sum256(bodyJSON)
+	// Zero-copy: envelope.Body is already owned (async clone); reference it
+	// directly instead of append(nil) copying up to 1MiB per row.
+	bodyJSON := in.Envelope.Body
+	var bodyHash string
+	if h := strings.TrimSpace(in.BodyHashHint); h != "" {
+		bodyHash = h
+	} else if in.Attrs != nil {
+		if h := strings.TrimSpace(in.Attrs["body_hash"]); h != "" {
+			bodyHash = h
+		}
+	}
+	if bodyHash == "" {
+		sum := sha256.Sum256(bodyJSON)
+		bodyHash = hex.EncodeToString(sum[:])
+	}
 
 	return Record{
 		MessageID:       messageID,
@@ -82,18 +101,20 @@ func BuildRecord(in SaveInput) (Record, error) {
 		DeliveryAttempt: in.DeliveryAttempt,
 		HeadersJSON:     headersJSON,
 		BodyJSON:        bodyJSON,
-		BodyHash:        hex.EncodeToString(sum[:]),
+		BodyHash:        bodyHash,
 	}, nil
 }
 
 func providerEventID(headers map[string]string) string {
 	candidates := []string{
+		"X-Event-ID",
 		"X-GitHub-Delivery",
 		"X-Gitlab-Event-UUID",
 		"X-GitLab-Event-UUID",
 		"X-Slack-Retry-Num",
 		"X-Request-Id",
 		"X-Request-ID",
+		"event_id",
 	}
 	for _, key := range candidates {
 		if value := strings.TrimSpace(headers[key]); value != "" {

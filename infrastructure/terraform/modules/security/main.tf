@@ -259,76 +259,6 @@ resource "kubernetes_network_policy" "app_egress" {
   }
 }
 
-# Pod Security Policy
-resource "kubernetes_pod_security_policy" "restricted" {
-  count = var.manage_kubernetes_security_resources && var.enable_pod_security_policy ? 1 : 0
-
-  metadata {
-    name = "${var.app_name}-restricted-psp"
-  }
-
-  spec {
-    privileged                 = false
-    allow_privilege_escalation = false
-
-    required_drop_capabilities = [
-      "ALL"
-    ]
-
-    allowed_capabilities = [
-      "NET_BIND_SERVICE"
-    ]
-
-    volumes = [
-      "configMap",
-      "emptyDir",
-      "projected",
-      "secret",
-      "downwardAPI",
-      "persistentVolumeClaim"
-    ]
-
-    host_network = false
-    host_ipc     = false
-    host_pid     = false
-
-    run_as_user {
-      rule = "MustRunAsNonRoot"
-    }
-
-    se_linux {
-      rule = "MustRunAs"
-
-      se_linux_options {
-        user  = "system_u"
-        role  = "system_r"
-        type  = "container_t"
-        level = "s0:c123,c456"
-      }
-    }
-
-    fs_group {
-      rule = "MustRunAs"
-
-      range {
-        min = 1000
-        max = 65535
-      }
-    }
-
-    supplemental_groups {
-      rule = "MustRunAs"
-
-      range {
-        min = 1000
-        max = 65535
-      }
-    }
-
-    read_only_root_filesystem = true
-  }
-}
-
 # ClusterRoleBinding for PSP
 resource "kubernetes_cluster_role_binding" "psp_restricted" {
   count = var.manage_kubernetes_security_resources && var.enable_pod_security_policy ? 1 : 0
@@ -348,8 +278,6 @@ resource "kubernetes_cluster_role_binding" "psp_restricted" {
     name      = "system:serviceaccounts"
     api_group = "rbac.authorization.k8s.io"
   }
-
-  depends_on = [kubernetes_pod_security_policy.restricted]
 }
 
 # Service account key for application

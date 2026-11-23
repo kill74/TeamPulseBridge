@@ -29,12 +29,23 @@ func ValidateSlack(secret, timestamp, body, providedSignature string, now time.T
 		return fmt.Errorf("slack request timestamp outside allowed skew")
 	}
 
-	base := "v0:" + timestamp + ":" + body
+	// Write components incrementally to avoid building a ~1MiB concat string.
 	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(base))
-	expected := "v0=" + hex.EncodeToString(mac.Sum(nil))
+	_, _ = mac.Write([]byte("v0:"))
+	_, _ = mac.Write([]byte(timestamp))
+	_, _ = mac.Write([]byte(":"))
+	_, _ = mac.Write([]byte(body))
+	expectedMAC := mac.Sum(nil)
 
-	if subtle.ConstantTimeCompare([]byte(expected), []byte(providedSignature)) != 1 {
+	trimmed := strings.TrimSpace(providedSignature)
+	if !strings.HasPrefix(trimmed, "v0=") {
+		return fmt.Errorf("invalid slack signature")
+	}
+	providedBytes, err := hex.DecodeString(strings.TrimPrefix(trimmed, "v0="))
+	if err != nil {
+		return fmt.Errorf("invalid slack signature")
+	}
+	if !hmac.Equal(expectedMAC, providedBytes) {
 		return fmt.Errorf("invalid slack signature")
 	}
 	return nil
@@ -53,9 +64,13 @@ func ValidateGitHub(secret string, body []byte, provided string) error {
 
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write(body)
-	expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	expectedMAC := mac.Sum(nil)
 
-	if subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
+	providedBytes, err := hex.DecodeString(strings.TrimSpace(strings.TrimPrefix(provided, "sha256=")))
+	if err != nil {
+		return fmt.Errorf("invalid github signature")
+	}
+	if !hmac.Equal(expectedMAC, providedBytes) {
 		return fmt.Errorf("invalid github signature")
 	}
 	return nil
@@ -69,11 +84,14 @@ func ValidateGitLab(token, provided string) error {
 		return fmt.Errorf("missing gitlab webhook token")
 	}
 
-	// Hash both strings to prevent length leakage in ConstantTimeCompare
-	tokenHash := sha256.Sum256([]byte(token))
-	providedHash := sha256.Sum256([]byte(provided))
-
-	if subtle.ConstantTimeCompare(tokenHash[:], providedHash[:]) != 1 {
+	// Constant-time compare without hashing tiny tokens twice.
+	if len(token) != len(provided) {
+		// Compare same-length dummy buffers to keep timing stable, then fail.
+		dummy := make([]byte, len(token))
+		_ = subtle.ConstantTimeCompare([]byte(token), dummy)
+		return fmt.Errorf("invalid gitlab token")
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(provided)) != 1 {
 		return fmt.Errorf("invalid gitlab token")
 	}
 	return nil
@@ -87,11 +105,12 @@ func ValidateTeamsClientState(expected, provided string) error {
 		return fmt.Errorf("missing teams client state")
 	}
 
-	// Hash both strings to prevent length leakage in ConstantTimeCompare
-	expectedHash := sha256.Sum256([]byte(expected))
-	providedHash := sha256.Sum256([]byte(provided))
-
-	if subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) != 1 {
+	if len(expected) != len(provided) {
+		dummy := make([]byte, len(expected))
+		_ = subtle.ConstantTimeCompare([]byte(expected), dummy)
+		return fmt.Errorf("invalid teams client state")
+	}
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) != 1 {
 		return fmt.Errorf("invalid teams client state")
 	}
 	return nil

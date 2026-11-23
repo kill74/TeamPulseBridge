@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: ./.github/actions/setup-ingestion-gateway-go
@@ -57,11 +57,11 @@ jobs:
           echo "Coverage meets threshold"
 
       - name: Run linter
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           version: v2.12.2
           working-directory: services/ingestion-gateway
-          args: --timeout=5m
+          args: --config ../../.golangci.yml --timeout=5m
 
   contracts:
     runs-on: ubuntu-latest
@@ -72,7 +72,7 @@ jobs:
         working-directory: services/ingestion-gateway
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
         uses: ./.github/actions/setup-ingestion-gateway-go

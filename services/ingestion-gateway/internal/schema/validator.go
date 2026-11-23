@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,9 +15,10 @@ type Validator struct {
 }
 
 type jsonSchema struct {
-	Required   []string       `json:"required"`
-	Type       string         `json:"type"`
-	Properties map[string]any `json:"properties"`
+	Required    []string            `json:"required"`
+	requiredSet map[string]struct{} `json:"-"`
+	Type        string              `json:"type"`
+	Properties  map[string]any      `json:"properties"`
 }
 
 func NewValidator(schemaPath string) (*Validator, error) {
@@ -59,6 +59,10 @@ func (v *Validator) loadSchemas(schemaPath string) error {
 		if err := json.Unmarshal(data, &schema); err != nil {
 			return fmt.Errorf("parse schema file %s: %w", file, err)
 		}
+		schema.requiredSet = make(map[string]struct{}, len(schema.Required))
+		for _, f := range schema.Required {
+			schema.requiredSet[f] = struct{}{}
+		}
 
 		v.schemas[source] = &schema
 	}
@@ -82,61 +86,49 @@ func (v *Validator) Validate(source string, body []byte) error {
 		return nil
 	}
 
-	fields, err := topLevelObjectFields(body)
-	if err != nil {
-		return err
-	}
-	for _, field := range schema.Required {
-		if _, ok := fields[field]; !ok {
-			return fmt.Errorf("missing required field: %s", field)
+	// Streaming required-field check with early exit: no full field-set map.
+	if len(schema.Required) == 0 {
+		if !json.Valid(body) {
+			return fmt.Errorf("invalid JSON")
 		}
+		return nil
 	}
-
-	return nil
+	return validateRequiredFields(body, schema.requiredSet, schema.Required)
 }
 
-func topLevelObjectFields(body []byte) (map[string]struct{}, error) {
+func validateRequiredFields(body []byte, requiredSet map[string]struct{}, required []string) error {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	tok, err := dec.Token()
 	if err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
+		return fmt.Errorf("invalid JSON: %w", err)
 	}
 	delim, ok := tok.(json.Delim)
 	if !ok || delim != '{' {
-		return nil, fmt.Errorf("invalid JSON object")
+		return fmt.Errorf("invalid JSON object")
 	}
-
-	fields := make(map[string]struct{})
+	seen := make(map[string]struct{}, len(required))
 	for dec.More() {
 		keyTok, err := dec.Token()
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON object key: %w", err)
+			return fmt.Errorf("invalid JSON object key: %w", err)
 		}
 		key, ok := keyTok.(string)
 		if !ok {
-			return nil, fmt.Errorf("invalid JSON object key")
+			return fmt.Errorf("invalid JSON object key")
 		}
-		fields[key] = struct{}{}
-
+		if _, ok := requiredSet[key]; ok {
+			seen[key] = struct{}{}
+		}
+		// Skip value without retaining it.
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
-			return nil, fmt.Errorf("invalid JSON object value: %w", err)
+			return fmt.Errorf("invalid JSON object value: %w", err)
 		}
 	}
-
-	endTok, err := dec.Token()
-	if err != nil {
-		return nil, fmt.Errorf("invalid JSON object: %w", err)
+	for _, field := range required {
+		if _, ok := seen[field]; !ok {
+			return fmt.Errorf("missing required field: %s", field)
+		}
 	}
-	endDelim, ok := endTok.(json.Delim)
-	if !ok || endDelim != '}' {
-		return nil, fmt.Errorf("invalid JSON object")
-	}
-
-	if tok, err := dec.Token(); err == nil {
-		return nil, fmt.Errorf("invalid JSON: trailing data after %v", tok)
-	} else if err != io.EOF {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
-	}
-	return fields, nil
+	return nil
 }

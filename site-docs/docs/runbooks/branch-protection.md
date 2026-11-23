@@ -14,13 +14,19 @@ Use these settings on the default branch to keep quality and release safety high
 
 ## Required Status Checks
 
-- ci / verify
-- ci / race-linux
-- smoke / smoke-compose
-- docs / docs-build
-- pr-governance / governance
+Check names are `<workflow name> / <job id>` as defined in `.github/workflows/`:
 
-Keep `ci / verify` and `ci / race-linux` separate. The first covers the broader Go verification path, while the second makes Linux race detection visible as its own required signal.
+- CI / ci (unit tests with `-race`, 40% coverage gate, lint)
+- CI / contracts (fixture lint + webhook contract tests)
+- smoke / smoke-compose (integration compose health + metrics)
+- smoke / smoke-root-compose (full root-stack parity with `make ci-smoke`)
+- docs / docs-build (`mkdocs build --strict`)
+- Integration Tests / integration-tests (Pub/Sub emulator suite)
+- Integration Tests / docker-compose-integration
+- Policy / policy (checkov + IaC policy checks)
+- Terraform / terraform (fmt, init, validate)
+- security-scan / trivy-image-scan, trivy-fs-scan, govulncheck
+- pr-governance / governance
 
 ## Admin Settings
 

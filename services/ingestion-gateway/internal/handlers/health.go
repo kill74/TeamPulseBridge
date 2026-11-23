@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"teampulsebridge/services/ingestion-gateway/internal/dedup"
 	"teampulsebridge/services/ingestion-gateway/internal/failstore"
@@ -28,11 +31,17 @@ func NewRedisPingWrapper(pingFunc func(ctx context.Context) error) RedisHealthCh
 }
 
 type HealthChecker struct {
-	publisher     queue.Publisher
-	failStore     failstore.Store
-	deduper       dedup.Store
-	redisClient   RedisHealthChecker
-	startTime     time.Time
+	publisher   queue.Publisher
+	failStore   failstore.Store
+	deduper     dedup.Store
+	redisClient RedisHealthChecker
+	startTime   time.Time
+	// Coalesce concurrent /healthz scrapes (kube + prom can stampede).
+	sf        singleflight.Group
+	mu        sync.Mutex
+	cached    healthResponse
+	cachedAt  time.Time
+	cachedTTL time.Duration
 }
 
 func NewHealthChecker(publisher queue.Publisher, failStore failstore.Store, deduper dedup.Store) *HealthChecker {
@@ -41,6 +50,7 @@ func NewHealthChecker(publisher queue.Publisher, failStore failstore.Store, dedu
 		failStore: failStore,
 		deduper:   deduper,
 		startTime: time.Now().UTC(),
+		cachedTTL: 2 * time.Second,
 	}
 }
 
@@ -51,6 +61,7 @@ func NewHealthCheckerWithRedis(publisher queue.Publisher, failStore failstore.St
 		deduper:     deduper,
 		redisClient: redisClient,
 		startTime:   time.Now().UTC(),
+		cachedTTL:   2 * time.Second,
 	}
 }
 
@@ -68,56 +79,103 @@ type componentHealth struct {
 }
 
 func (h *HealthChecker) Healthz(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// 2s memoize + singleflight: concurrent kube + prom scrapes share one probe.
+	h.mu.Lock()
+	if h.cachedTTL > 0 && !h.cachedAt.IsZero() && time.Since(h.cachedAt) < h.cachedTTL && len(h.cached.Components) > 0 {
+		cached := h.cached
+		cached.UptimeSec = time.Since(h.startTime).Seconds()
+		h.mu.Unlock()
+		writeHealthJSON(w, cached)
+		return
+	}
+	h.mu.Unlock()
+
+	v, _, _ := h.sf.Do("healthz", func() (any, error) {
+		return h.computeHealth(r.Context()), nil
+	})
+	resp, _ := v.(healthResponse)
+	resp.UptimeSec = time.Since(h.startTime).Seconds()
+	h.mu.Lock()
+	h.cached = resp
+	h.cachedAt = time.Now()
+	h.mu.Unlock()
+	writeHealthJSON(w, resp)
+}
+
+func writeHealthJSON(w http.ResponseWriter, resp healthResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	statusCode := http.StatusOK
+	if resp.Status == "degraded" {
+		statusCode = http.StatusServiceUnavailable
+	}
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *HealthChecker) computeHealth(ctx context.Context) healthResponse {
+	type namedResult struct {
+		name   string
+		health componentHealth
+	}
+	results := make(chan namedResult, 4)
+
+	// Fan-out: previously sequential 1s+1s+1s = up to 3s blocked handler.
+	go func() { results <- namedResult{"queue", h.checkQueue(ctx)} }()
+	if h.failStore != nil {
+		go func() { results <- namedResult{"fail_store", h.checkFailStore(ctx)} }()
+	}
+	if h.redisClient != nil {
+		go func() { results <- namedResult{"redis", h.checkRedis(ctx)} }()
+	}
+
 	components := make(map[string]componentHealth)
 	overallStatus := "healthy"
 
-	queueStatus := h.checkQueue(ctx)
-	components["queue"] = queueStatus
-	if queueStatus.Status != "ok" {
-		overallStatus = "degraded"
-	}
-
-	if h.failStore != nil {
-		storeStatus := h.checkFailStore(ctx)
-		components["fail_store"] = storeStatus
-		if storeStatus.Status != "ok" {
-			overallStatus = "degraded"
-		}
-	} else {
-		components["fail_store"] = componentHealth{Status: "disabled"}
-	}
-
+	// Dedup is config-only, no I/O.
 	if h.deduper != nil {
 		components["dedup"] = componentHealth{Status: "ok"}
 	} else {
 		components["dedup"] = componentHealth{Status: "disabled"}
 	}
-
-	if h.redisClient != nil {
-		redisStatus := h.checkRedis(ctx)
-		components["redis"] = redisStatus
-		if redisStatus.Status != "ok" {
-			overallStatus = "degraded"
-		}
-	} else {
+	if h.failStore == nil {
+		components["fail_store"] = componentHealth{Status: "disabled"}
+	}
+	if h.redisClient == nil {
 		components["redis"] = componentHealth{Status: "disabled"}
 	}
 
-	resp := healthResponse{
+	expected := 1
+	if h.failStore != nil {
+		expected++
+	}
+	if h.redisClient != nil {
+		expected++
+	}
+	timeout := time.After(1500 * time.Millisecond)
+	for i := 0; i < expected; i++ {
+		select {
+		case res := <-results:
+			components[res.name] = res.health
+			if res.health.Status != "ok" && res.health.Status != "disabled" {
+				overallStatus = "degraded"
+			}
+		case <-timeout:
+			overallStatus = "degraded"
+			// Fill missing with timeout status.
+			if _, ok := components["queue"]; !ok {
+				components["queue"] = componentHealth{Status: "error", Error: "health check timeout"}
+			}
+			i = expected // break
+		case <-ctx.Done():
+			overallStatus = "degraded"
+			i = expected
+		}
+	}
+
+	return healthResponse{
 		Status:     overallStatus,
 		UptimeSec:  time.Since(h.startTime).Seconds(),
 		Components: components,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	statusCode := http.StatusOK
-	if overallStatus == "degraded" {
-		statusCode = http.StatusServiceUnavailable
-	}
-	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		return
 	}
 }
 

@@ -34,6 +34,8 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 			body BYTEA NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_failed_events_failed_at ON failed_events(failed_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_failed_events_source_failed_at ON failed_events(source, failed_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_failed_events_reason_failed_at ON failed_events(reason, failed_at DESC);
 	`
 	if _, err := pool.Exec(ctx, query); err != nil {
 		return nil, fmt.Errorf("create failstore tables: %w", err)

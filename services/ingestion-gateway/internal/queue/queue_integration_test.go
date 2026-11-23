@@ -18,6 +18,27 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/testhelpers/pubsubtest"
 )
 
+// gatedPublisher blocks downstream publishes until release is closed, so a
+// small async queue can be filled deterministically regardless of worker
+// count or emulator speed.
+type gatedPublisher struct {
+	inner   queue.Publisher
+	release <-chan struct{}
+}
+
+func (p *gatedPublisher) Publish(ctx context.Context, source string, body []byte, headers map[string]string) error {
+	<-p.release
+	return p.inner.Publish(ctx, source, body, headers)
+}
+
+func (p *gatedPublisher) Close() error {
+	return p.inner.Close()
+}
+
+func (p *gatedPublisher) HealthCheck(ctx context.Context) error {
+	return p.inner.HealthCheck(ctx)
+}
+
 // TestPubSubPublisherIntegration tests the PubSubPublisher against the Pub/Sub emulator.
 // Requires PUBSUB_EMULATOR_HOST to be set.
 func TestPubSubPublisherIntegration(t *testing.T) {
@@ -317,8 +338,18 @@ func TestAsyncPublisherWithPubSub(t *testing.T) {
 		err := pubsubtest.PurgeSubscription(ctx, sub)
 		require.NoError(t, err, "failed to purge subscription")
 
-		// Create publisher with very small buffer
-		smallBufferPublisher := queue.NewAsyncPublisher(innerPublisher, 5, logger)
+		// Create publisher with very small buffer. Gate the inner publisher so
+		// workers cannot drain the buffer while it is being filled; otherwise
+		// the result depends on worker count and emulator latency.
+		release := make(chan struct{})
+		smallBufferPublisher := queue.NewAsyncPublisherWithOptions(&gatedPublisher{
+			inner:   innerPublisher,
+			release: release,
+		}, 5, logger, queue.AsyncPublisherOptions{WorkerCount: 1})
+		defer func() {
+			close(release)
+			require.NoError(t, smallBufferPublisher.Close())
+		}()
 
 		// Act - fill buffer and try to overflow
 		var lastErr error

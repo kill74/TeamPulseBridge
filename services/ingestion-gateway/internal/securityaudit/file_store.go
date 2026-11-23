@@ -52,7 +52,7 @@ type FileStore struct {
 	now           func() time.Time
 	pruneInterval time.Duration
 
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	lastPruned time.Time
 }
 
@@ -74,11 +74,15 @@ func newFileStore(path string, retentionDays int, now func() time.Time, pruneInt
 	if pruneInterval <= 0 {
 		pruneInterval = time.Hour
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create security audit dir: %w", err)
+	}
 	return &FileStore{
 		path:          path,
 		retention:     time.Duration(retentionDays) * 24 * time.Hour,
 		now:           now,
 		pruneInterval: pruneInterval,
+		lastPruned:    now(),
 	}, nil
 }
 
@@ -96,11 +100,13 @@ func (s *FileStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return Record{}, fmt.Errorf("create security audit dir: %w", err)
-	}
-	if err := s.pruneExpiredLocked(ctx, record.OccurredAt); err != nil {
-		return Record{}, err
+	// Prune on a time interval, not on every Save: the old code did a full
+	// scan+rewrite under the Save lock on every 401/429. Keep it synchronous
+	// so pruning cannot outlive Save and race with readers or file cleanup.
+	if s.shouldPruneLocked(record.OccurredAt) {
+		if err := s.pruneExpiredLocked(ctx, s.now().UTC()); err != nil {
+			return Record{}, err
+		}
 	}
 
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -125,8 +131,8 @@ func (s *FileStore) ListRecent(ctx context.Context, limit int) ([]Record, error)
 		return nil, errors.New("limit must be > 0")
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	f, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -217,6 +223,15 @@ func (s *FileStore) newRecord(in SaveInput) (Record, error) {
 		ClientIP:   strings.TrimSpace(in.ClientIP),
 		OccurredAt: s.now().UTC(),
 	}, nil
+}
+
+// shouldPruneLocked reports whether enough time has elapsed since the last
+// prune. The caller must hold s.mu for writing.
+func (s *FileStore) shouldPruneLocked(now time.Time) bool {
+	if s.lastPruned.IsZero() {
+		return false
+	}
+	return now.Sub(s.lastPruned) >= s.pruneInterval
 }
 
 func (s *FileStore) pruneExpiredLocked(ctx context.Context, now time.Time) error {
