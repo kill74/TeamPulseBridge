@@ -86,7 +86,7 @@ func newFileStore(path string, retentionDays int, now func() time.Time, pruneInt
 	}, nil
 }
 
-func (s *FileStore) Save(_ context.Context, in SaveInput) (Record, error) {
+func (s *FileStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 	record, err := s.newRecord(in)
 	if err != nil {
 		return Record{}, err
@@ -97,19 +97,17 @@ func (s *FileStore) Save(_ context.Context, in SaveInput) (Record, error) {
 		return Record{}, fmt.Errorf("marshal security audit record: %w", err)
 	}
 
-	// Prune on a time interval, not on every Save: the old code did a full
-	// scan+rewrite under the Save lock on every 401/429.
-	if s.shouldPrune(record.OccurredAt) {
-		// Best-effort background prune; don't block the reject path.
-		go func() {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			_ = s.pruneExpiredLocked(context.Background(), s.now().UTC())
-		}()
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Prune on a time interval, not on every Save: the old code did a full
+	// scan+rewrite under the Save lock on every 401/429. Keep it synchronous
+	// so pruning cannot outlive Save and race with readers or file cleanup.
+	if s.shouldPruneLocked(record.OccurredAt) {
+		if err := s.pruneExpiredLocked(ctx, s.now().UTC()); err != nil {
+			return Record{}, err
+		}
+	}
 
 	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -227,14 +225,13 @@ func (s *FileStore) newRecord(in SaveInput) (Record, error) {
 	}, nil
 }
 
-func (s *FileStore) shouldPrune(now time.Time) bool {
-	s.mu.RLock()
-	last := s.lastPruned
-	s.mu.RUnlock()
-	if last.IsZero() {
+// shouldPruneLocked reports whether enough time has elapsed since the last
+// prune. The caller must hold s.mu for writing.
+func (s *FileStore) shouldPruneLocked(now time.Time) bool {
+	if s.lastPruned.IsZero() {
 		return false
 	}
-	return now.Sub(last) >= s.pruneInterval
+	return now.Sub(s.lastPruned) >= s.pruneInterval
 }
 
 func (s *FileStore) pruneExpiredLocked(ctx context.Context, now time.Time) error {
