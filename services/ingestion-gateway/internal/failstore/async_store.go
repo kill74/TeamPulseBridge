@@ -7,12 +7,25 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"teampulsebridge/services/ingestion-gateway/internal/platform/storeutil"
 )
 
 // ErrAsyncDropped is returned when the async queue is full and the record
 // is dropped fail-open. Callers must treat this as a real persistence
 // failure (log + metrics), not success.
 var ErrAsyncDropped = errors.New("async store queue full, record dropped")
+
+// ErrStoreUnavailable is returned when the wrapped store is nil (including a
+// typed nil from a failed constructor), so the store is disabled.
+var ErrStoreUnavailable = errors.New("store unavailable")
+
+// unavailableError returns a descriptive ErrStoreUnavailable for the given
+// operation. It keeps health checks and request paths panic-free when the
+// underlying store could not be initialized.
+func unavailableError(operation string) error {
+	return fmt.Errorf("%s: %w", operation, ErrStoreUnavailable)
+}
 
 // AsyncStore wraps a Store with a non-blocking enqueue channel so webhook
 // error paths return 429/503 immediately instead of blocking on fsync.
@@ -102,6 +115,9 @@ func (a *AsyncStore) run() {
 // ErrAsyncDropped so callers surface the loss via logs/metrics instead of
 // silently reporting success.
 func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (FailedEvent, error) {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return FailedEvent{}, unavailableError("save failed event")
+	}
 	if a.closed.Load() {
 		rec, err := a.inner.Save(ctx, in)
 		if err != nil {
@@ -135,6 +151,9 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (FailedEvent, error
 }
 
 func (a *AsyncStore) GetByID(ctx context.Context, eventID string) (FailedEvent, error) {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return FailedEvent{}, unavailableError("get failed event")
+	}
 	rec, err := a.inner.GetByID(ctx, eventID)
 	if err != nil {
 		return rec, fmt.Errorf("get failed event %s: %w", eventID, err)
@@ -143,6 +162,9 @@ func (a *AsyncStore) GetByID(ctx context.Context, eventID string) (FailedEvent, 
 }
 
 func (a *AsyncStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, error) {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return nil, unavailableError("list recent failed events")
+	}
 	recs, err := a.inner.ListRecent(ctx, limit)
 	if err != nil {
 		return recs, fmt.Errorf("list recent failed events: %w", err)
@@ -151,6 +173,9 @@ func (a *AsyncStore) ListRecent(ctx context.Context, limit int) ([]FailedEvent, 
 }
 
 func (a *AsyncStore) Delete(ctx context.Context, eventID string) error {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return unavailableError("delete failed event")
+	}
 	if err := a.inner.Delete(ctx, eventID); err != nil {
 		return fmt.Errorf("delete failed event %s: %w", eventID, err)
 	}
@@ -158,6 +183,9 @@ func (a *AsyncStore) Delete(ctx context.Context, eventID string) error {
 }
 
 func (a *AsyncStore) UpdateRetryCount(ctx context.Context, eventID string, retryCount int) error {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return unavailableError("update failed event retry count")
+	}
 	if err := a.inner.UpdateRetryCount(ctx, eventID, retryCount); err != nil {
 		return fmt.Errorf("update retry count for event %s: %w", eventID, err)
 	}

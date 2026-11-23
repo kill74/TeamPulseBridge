@@ -7,11 +7,21 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"teampulsebridge/services/ingestion-gateway/internal/platform/storeutil"
 )
 
 // ErrAsyncDropped is returned when the async queue is full and the record
 // is dropped fail-open.
 var ErrAsyncDropped = errors.New("async store queue full, record dropped")
+
+// ErrStoreUnavailable is returned when the wrapped store is nil (including a
+// typed nil from a failed constructor), so the store is disabled.
+var ErrStoreUnavailable = errors.New("store unavailable")
+
+func unavailableError(operation string) error {
+	return fmt.Errorf("%s: %w", operation, ErrStoreUnavailable)
+}
 
 // AsyncStore makes replay-audit writes non-blocking. Admin replay returns
 // immediately; persistence happens on a background goroutine with fail-open
@@ -87,6 +97,9 @@ func (a *AsyncStore) run() {
 }
 
 func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return Record{}, unavailableError("save replay-audit record")
+	}
 	if a.closed.Load() {
 		rec, err := a.inner.Save(ctx, in)
 		if err != nil {
@@ -115,6 +128,9 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 }
 
 func (a *AsyncStore) List(ctx context.Context, q ListQuery) (ListResult, error) {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return ListResult{}, unavailableError("list replay-audit records")
+	}
 	out, err := a.inner.List(ctx, q)
 	if err != nil {
 		return out, fmt.Errorf("list replay-audit records: %w", err)
@@ -123,6 +139,9 @@ func (a *AsyncStore) List(ctx context.Context, q ListQuery) (ListResult, error) 
 }
 
 func (a *AsyncStore) ListRecent(ctx context.Context, limit int) ([]Record, error) {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return nil, unavailableError("list recent replay-audit records")
+	}
 	out, err := a.inner.List(ctx, ListQuery{Limit: limit, Sort: SortDesc})
 	if err != nil {
 		return nil, fmt.Errorf("list recent replay-audit records: %w", err)

@@ -7,11 +7,21 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"teampulsebridge/services/ingestion-gateway/internal/platform/storeutil"
 )
 
 // ErrAsyncDropped is returned when the async queue is full and the record
 // is dropped fail-open.
 var ErrAsyncDropped = errors.New("async store queue full, record dropped")
+
+// ErrStoreUnavailable is returned when the wrapped store is nil (including a
+// typed nil from a failed constructor), so the store is disabled.
+var ErrStoreUnavailable = errors.New("store unavailable")
+
+func unavailableError(operation string) error {
+	return fmt.Errorf("%s: %w", operation, ErrStoreUnavailable)
+}
 
 // AsyncStore makes security-reject logging non-blocking. Every 401/405/429
 // previously did file I/O (MkdirAll+Write+Sync+prune scan) on the request
@@ -87,6 +97,9 @@ func (a *AsyncStore) run() {
 }
 
 func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return Record{}, unavailableError("save security-audit record")
+	}
 	if a.closed.Load() {
 		rec, err := a.inner.Save(ctx, in)
 		if err != nil {
@@ -115,6 +128,9 @@ func (a *AsyncStore) Save(ctx context.Context, in SaveInput) (Record, error) {
 }
 
 func (a *AsyncStore) ListRecent(ctx context.Context, limit int) ([]Record, error) {
+	if storeutil.IsNil(a) || storeutil.IsNil(a.inner) {
+		return nil, unavailableError("list recent security-audit records")
+	}
 	recs, err := a.inner.ListRecent(ctx, limit)
 	if err != nil {
 		return recs, fmt.Errorf("list recent security-audit records: %w", err)

@@ -24,6 +24,7 @@ import (
 	"teampulsebridge/services/ingestion-gateway/internal/httpx"
 	"teampulsebridge/services/ingestion-gateway/internal/observability"
 	"teampulsebridge/services/ingestion-gateway/internal/platform/resilience"
+	"teampulsebridge/services/ingestion-gateway/internal/platform/storeutil"
 	"teampulsebridge/services/ingestion-gateway/internal/queue"
 	"teampulsebridge/services/ingestion-gateway/internal/replayaudit"
 	"teampulsebridge/services/ingestion-gateway/internal/retry"
@@ -367,7 +368,7 @@ func run() int {
 			}
 		}
 
-		if store != nil {
+		if !storeutil.IsNil(store) {
 			cbThreshold := cfg.CircuitBreakerThreshold
 			if cbThreshold <= 0 {
 				cbThreshold = 25
@@ -401,7 +402,7 @@ func run() int {
 				)
 			}
 		}
-		if store != nil {
+		if !storeutil.IsNil(store) {
 			replayAuditStore = replayaudit.NewAsyncStore(store, 512)
 		}
 	}
@@ -425,7 +426,7 @@ func run() int {
 				)
 			}
 		}
-		if store != nil {
+		if !storeutil.IsNil(store) {
 			securityAuditStore = securityaudit.NewAsyncStore(store, 1024)
 		}
 	}
